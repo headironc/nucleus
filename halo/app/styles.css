@@ -5,6 +5,215 @@
   overflow-wrap: anywhere;
 }
 
+@layer components {
+  .mobile-change-layout {
+    max-width: 1080px;
+    min-height: 680px;
+    margin: auto;
+    padding: 40px 32px 72px;
+  }
+  .mobile-change-back {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    color: var(--sub);
+    font-size: 14px;
+    text-underline-offset: 5px;
+  }
+  .mobile-change-heading {
+    margin: 20px 0 28px;
+  }
+  .mobile-change-heading h1 {
+    font-size: 32px;
+    margin-bottom: 12px;
+    overflow-wrap: anywhere;
+  }
+  .mobile-change-heading h1:focus {
+    outline: none;
+    text-decoration: underline solid var(--accent) 3px;
+    text-underline-offset: 8px;
+  }
+  .mobile-change-heading > p:last-child {
+    color: var(--sub);
+    font-size: 15px;
+    line-height: 1.9;
+  }
+  .mobile-change-columns {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    gap: 28px;
+    align-items: start;
+  }
+  .mobile-change-columns > :only-child {
+    grid-column: 1 / -1;
+  }
+  .mobile-change-panel,
+  .mobile-change-guide {
+    min-width: 0;
+    padding: 32px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-m);
+    background: var(--surface);
+  }
+  .mobile-change-panel h2 {
+    font-size: 24px;
+    margin-bottom: 12px;
+    overflow-wrap: anywhere;
+  }
+  .mobile-change-panel p,
+  .mobile-change-guide p {
+    font-size: 14px;
+    line-height: 1.9;
+    color: var(--sub);
+    overflow-wrap: anywhere;
+  }
+  .mobile-change-status {
+    display: inline-block;
+    margin-bottom: 14px;
+    color: var(--accent);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+  }
+  .mobile-change-steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 20px;
+    padding: 0 0 18px;
+    margin: 0 0 20px;
+    border-bottom: 1px solid var(--line);
+    list-style: none;
+    font-size: 13px;
+    color: var(--sub);
+  }
+  .mobile-change-steps [aria-current="step"] {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .mobile-change-lead {
+    margin-bottom: 16px;
+  }
+  .mobile-change-number {
+    margin: 8px 0 20px;
+    font-size: 26px;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 2px;
+    overflow-wrap: anywhere;
+    color: var(--ink);
+  }
+  .mobile-change-consequences {
+    padding-left: 20px;
+    margin: 16px 0 24px;
+    font-size: 15px;
+    line-height: 1.9;
+  }
+  .mobile-change-consequences li + li {
+    margin-top: 10px;
+  }
+  .mobile-change-time {
+    color: var(--sub);
+    font-size: 14px;
+    line-height: 1.9;
+    margin: 12px 0;
+  }
+  .mobile-change-person {
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    color: var(--sub);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+  }
+  .mobile-change-person strong {
+    color: var(--ink);
+    overflow-wrap: anywhere;
+  }
+  .mobile-change-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 16px;
+    margin-top: 24px;
+  }
+  .mobile-change-actions .primary,
+  .mobile-change-actions .quiet-link {
+    min-height: 48px;
+    white-space: normal;
+    text-align: center;
+    line-height: 1.6;
+  }
+  .mobile-change-layout button:disabled {
+    opacity: 1;
+    color: var(--ink);
+    background: var(--muted);
+    border: 1px solid var(--control-line);
+    cursor: wait;
+  }
+  .mobile-change-guide {
+    border-top: 2px solid var(--accent);
+  }
+  .mobile-change-guide h2 {
+    font-size: 19px;
+    line-height: 1.7;
+    margin: 4px 0 10px;
+  }
+  .mobile-change-guide hr {
+    border: 0;
+    border-top: 1px solid var(--line);
+    margin: 18px 0;
+  }
+  .mobile-change-dialog {
+    position: fixed;
+    inset: 0;
+    margin: auto;
+    width: min(480px, calc(100% - 32px));
+    max-height: calc(100dvh - 32px);
+    overflow: auto;
+    padding: 28px;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-m);
+  }
+  .mobile-change-dialog::backdrop {
+    background: rgb(0 0 0 / 45%);
+  }
+  .mobile-change-dialog h2 {
+    font-size: 22px;
+    line-height: 1.6;
+    margin-bottom: 16px;
+  }
+  .mobile-change-dialog p {
+    color: var(--sub);
+    font-size: 15px;
+    line-height: 1.9;
+  }
+  .mobile-change-dialog .mobile-change-actions {
+    justify-content: flex-end;
+  }
+  .mobile-change-panel .code-field {
+    margin-top: 8px;
+  }
+  @media (max-width: 800px) {
+    .mobile-change-layout {
+      padding: 28px 20px 48px;
+    }
+    .mobile-change-columns {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .mobile-change-panel,
+    .mobile-change-guide {
+      padding: 24px 20px;
+    }
+    .mobile-change-heading h1 {
+      font-size: 26px;
+    }
+    .mobile-change-actions {
+      flex-direction: column;
+      align-items: stretch;
+    }
+  }
+}
+
 .workforce-number {
   margin-top: 28px;
   padding: 24px;
@@ -464,10 +673,10 @@
     align-items: center;
     justify-content: center;
   }
-  .current-content > .danger-link {
+  .account-actions > .danger-link {
     color: var(--danger);
   }
-  .current-content > .danger-link:hover {
+  .account-actions > .danger-link:hover {
     color: var(--danger);
     text-decoration-thickness: 2px;
   }
@@ -720,13 +929,15 @@
     font-size: 14px;
     margin-bottom: 28px;
   }
-  .authentication-card label {
+  .authentication-card label,
+  .mobile-change-panel form > label {
     display: block;
     font-size: 14px;
     font-weight: 600;
     margin-bottom: 8px;
   }
-  .authentication-card input {
+  .authentication-card input,
+  .mobile-change-panel input[type="tel"] {
     width: 100%;
     min-height: 48px;
     border: 1px solid var(--control-line);
@@ -736,11 +947,13 @@
     background: var(--field);
     font-size: 16px;
   }
-  .authentication-card input::placeholder {
+  .authentication-card input::placeholder,
+  .mobile-change-panel input[type="tel"]::placeholder {
     color: var(--placeholder);
     font-size: 13px;
   }
-  .authentication-card input[aria-invalid="true"] {
+  .authentication-card input[aria-invalid="true"],
+  .mobile-change-panel input[type="tel"][aria-invalid="true"] {
     border-color: var(--danger);
   }
   .field-hint,
@@ -809,6 +1022,19 @@
   }
   .current-content {
     text-align: center;
+  }
+  .account-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px 20px;
+    margin: 16px 0;
+  }
+  .account-actions .quiet-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    white-space: nowrap;
   }
   .correction-panel {
     margin-top: 24px;

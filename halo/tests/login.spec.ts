@@ -7,6 +7,7 @@ import { ownHistory } from "./history";
 import { ownWorkforce } from "./workforce";
 import { ownNumbers } from "./numbers";
 import { ownTermination } from "./termination";
+import { ownMobileChange } from "./mobile-change";
 import { cookieDigests, identityObservation, identityReads } from "./identity";
 import { affiliationObservation } from "./affiliation";
 import type { Account } from "../app/protocol/session";
@@ -15,7 +16,7 @@ async function message(
   page: Page,
   mobile: string,
   bookkeepingFailure = false,
-  resume: boolean | "all-logout-result" | "service-termination" = false,
+  resume: boolean | "all-logout-result" | "service-termination" | "mobile-change" = false,
 ) {
   await page.route(
     "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit",
@@ -24,7 +25,9 @@ async function message(
   await page.setExtraHTTPHeaders({ "X-Halo-Fixture-Source": mobile.slice(-2) });
   if (resume)
     await expect(page).toHaveURL(
-      resume === "service-termination"
+      resume === "mobile-change"
+        ? /\/authentication\/codes\?return=mobile-change$/
+        : resume === "service-termination"
         ? /\/authentication\/codes\?return=service-termination$/
         : resume === "all-logout-result"
           ? /\/authentication\/codes\?return=all-logout-result$/
@@ -241,6 +244,13 @@ async function choose(
     { session, revision: attempt?.revision ?? randomUUID(), attempt },
   );
 }
+
+test("real self mobile change revokes both original sessions and reads its result after login", async ({
+  page,
+}) => {
+  test.setTimeout(240_000);
+  await ownMobileChange(page, message);
+});
 
 async function selectedSession(page: Page) {
   return page.evaluate(async () => {

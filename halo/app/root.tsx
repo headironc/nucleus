@@ -13,6 +13,7 @@ import bootstrap from "./bootstrap.js?url";
 import { expireMaterial } from "./codes/material";
 import { maintainMaterial } from "./authentication/material";
 import { maintain as maintainRegistration } from "./registration/material";
+import { maintain as maintainMobileChange } from "./mobile-change/material";
 import "./styles.css";
 
 export function Layout({ children }: { children: React.ReactNode }) {
@@ -23,6 +24,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         expireMaterial(sessionStorage, Date.now());
         maintainMaterial(sessionStorage, Date.now());
         maintainRegistration(sessionStorage, Date.now());
+        maintainMobileChange(sessionStorage, Date.now());
       } catch {
         // The next lifecycle event retries without interrupting the public page.
       }

@@ -19,7 +19,8 @@ export default async function handleRequest(
 ) {
   const nonce = randomBytes(24).toString("base64");
   const codes = context.staticHandlerContext.matches.some(
-    ({ route }) => route.id === "routes/codes",
+    ({ route }) =>
+      route.id === "routes/codes" || route.id === "routes/mobile-change",
   );
   // Current-avatar views and client-side navigation keep the document's
   // policy, so every document must allow the configured media origin.

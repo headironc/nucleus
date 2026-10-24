@@ -479,6 +479,7 @@ function Codes({ recovery }: { recovery: Recovery }) {
             <Turnstile
               siteKey={siteKey}
               operation={widgetOperation.current}
+              action="send_authentication_code"
               waiting={!editing}
               reset={reset}
               onToken={setToken}

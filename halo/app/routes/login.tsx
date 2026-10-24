@@ -14,6 +14,7 @@ import {
   logoutReturn,
   allLogoutReturn,
   terminationReturn,
+  mobileChangeReturn,
 } from "../logout/return";
 
 export function meta() {
@@ -224,6 +225,12 @@ function LoginForm({ controller }: { controller: Login }) {
         void navigate(`/sessions/logout-all?return=all-logout-result`, {
           replace: true,
         });
+        return;
+      }
+      if (mobileChangeReturn(search)) {
+        // The change page renders a Turnstile widget, so it needs the policy
+        // of its own document rather than this login document's CSP.
+        location.replace("/account/mobile?return=mobile-change");
         return;
       }
       void navigate(
