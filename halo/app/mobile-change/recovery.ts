@@ -101,6 +101,7 @@ export type State =
   | {
       kind: "unknown";
       step: Step;
+      sending: boolean;
       account: Account;
       notice: Reason | null;
       retryAt: number;
@@ -853,6 +854,7 @@ export class MobileChange {
     return {
       kind: "unknown",
       step: active.step,
+      sending: active.delivery === "sending" && !active.reason,
       account,
       notice: active.reason ?? null,
       retryAt: active.retryAt,
@@ -1277,6 +1279,23 @@ export class MobileChange {
     const record = this.record();
     if (!record) return;
     const deadline = messageDeadline(previous.createdAt, message.expiresAt);
+    if (message.delivery === "sending") {
+      const { reason: _reason, ...pending } = previous;
+      this.flash = null;
+      this.handoff({
+        version: 1,
+        known: record.known,
+        active: {
+          ...pending,
+          attempted: true,
+          delivery: "sending",
+          expiresAt: Math.min(previous.expiresAt, deadline),
+          retryAt: Math.max(previous.retryAt, this.backoff()),
+        },
+        closed: null,
+      });
+      return;
+    }
     const next: Active = {
       ...this.nextBase(
         previous,

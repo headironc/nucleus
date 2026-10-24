@@ -55,6 +55,7 @@ let people: Record<string, Person>;
 let calls: Call[];
 let status: "pending" | "completed" | "expired";
 let sendFault: "none" | "disconnect" | "limited";
+let delivery: "sending" | "sent";
 let establishFault: "none" | "disconnect" | "wrong-code";
 let completeFault: "none" | "disconnect";
 let queryFault: "none" | "unavailable";
@@ -85,7 +86,7 @@ function accountResponse(person: Person) {
 function message() {
   return {
     code: "ok",
-    message: { id: messageId, delivery: "sent", expiresAt },
+    message: { id: messageId, delivery, expiresAt },
   };
 }
 
@@ -184,6 +185,7 @@ test.beforeEach(async ({ page }) => {
   calls = [];
   status = "pending";
   sendFault = "none";
+  delivery = "sent";
   establishFault = "none";
   completeFault = "none";
   queryFault = "none";
@@ -398,6 +400,62 @@ async function confirm(page: Page) {
   await expect(
     page.getByRole("heading", { name: "确认更换手机号" }),
   ).toBeVisible();
+}
+
+for (const stage of ["current", "new"] as const) {
+  test(`${stage} sending survives reload and only checks the original send`, async ({
+    page,
+  }) => {
+    await open(page);
+    if (stage === "new") await establish(page);
+    delivery = "sending";
+    const label = stage === "current" ? "当前手机号" : "新手机号";
+    const path =
+      stage === "current"
+        ? "/api/v1/accounts/current/codes"
+        : `/api/v1/mobile-changes/${transferId}/codes`;
+    await page
+      .getByLabel(label, { exact: true })
+      .fill(stage === "current" ? currentMobile : newMobile);
+    await page
+      .getByRole("button", { name: "完成安全验证（测试替身）" })
+      .click();
+    const startedAt = Date.now();
+    await page.getByRole("button", { name: `获取${label}验证码` }).click();
+    await expect(
+      page.getByRole("heading", { name: "短信仍在发送", exact: true }),
+    ).toBeVisible();
+    const original = calls.filter((call) => call.path === path)[0];
+    const saved = await material(page);
+    expect(saved.active.token).toBeTruthy();
+    expect(saved.active.retryAt).toBeGreaterThanOrEqual(startedAt + 5000);
+    await page.reload();
+    await expect(
+      page.getByRole("heading", { name: "短信仍在发送", exact: true }),
+    ).toBeVisible();
+    expect((await material(page)).active.retryAt).toBe(saved.active.retryAt);
+    expect(calls.filter((call) => call.path === path)).toEqual([original]);
+    await expect(page.getByRole("button", { name: /重新获取/ })).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: `输入${label}验证码` }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "完成安全验证（测试替身）" }),
+    ).toHaveCount(0);
+    delivery = "sent";
+    await page
+      .getByRole("button", { name: "查看发送结果", exact: true })
+      .click({ timeout: 10_000 });
+    expect(Date.now()).toBeGreaterThanOrEqual(saved.active.retryAt);
+    await expect(
+      page.getByRole("heading", { name: `输入${label}验证码` }),
+    ).toBeVisible();
+    expect(calls.filter((call) => call.path === path)).toEqual([
+      original,
+      original,
+    ]);
+    expect((await material(page)).active.token).toBeUndefined();
+  });
 }
 
 test("four stages keep independent operations and a completed result", async ({

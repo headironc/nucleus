@@ -3,6 +3,7 @@ import type { Account, CurrentResult } from "../protocol/session";
 import type {
   CompleteInput,
   EstablishInput,
+  Message,
   Result,
   SendInput,
 } from "../protocol/mobile";
@@ -34,9 +35,9 @@ const account = (id = accountId, person = personId): Account => ({
   binding: null,
 });
 
-const message = {
+const message: Message = {
   id: messageId,
-  delivery: "sent" as const,
+  delivery: "sent",
   expiresAt: expires,
 };
 const transfer = { id: transferId, expiresAt: expires };
@@ -204,6 +205,164 @@ async function ready(options: { readonly?: boolean } = {}) {
 }
 
 describe("self mobile change flow", () => {
+  for (const stage of ["current", "new"] as const) {
+    it.each([false, true])(
+      `retains the original ${stage} send while sending (replay: %s)`,
+      async (replay) => {
+        const h = await ready();
+        if (stage === "new") {
+          await h.controller.submitCurrent("13900000000", "original-current");
+          await h.controller.submitCurrentCode("012345");
+        }
+        const write =
+          stage === "current" ? h.results.sendCurrent : h.results.sendNew;
+        const deadline = h.clock + 60_000;
+        const sending: Result<Message> = {
+          kind: "ok",
+          value: {
+            ...message,
+            delivery: "sending",
+            expiresAt: new Date(deadline).toISOString(),
+          },
+        };
+        write.mockResolvedValueOnce(
+          replay ? { kind: "disconnected" } : sending,
+        );
+        if (stage === "current")
+          await h.controller.submitCurrent("13900000000", "original-current");
+        else await h.controller.submitNew("13800000000", "original-new");
+        const original = write.mock.calls[0].slice(0, -1);
+        if (replay) {
+          h.advance(5000);
+          write.mockResolvedValueOnce(sending);
+          await h.controller.retry();
+        }
+        const attempts = replay ? 2 : 1;
+        expect(h.controller.snapshot()).toMatchObject({
+          kind: "unknown",
+          step: `${stage}-send`,
+          sending: true,
+          retryAt: h.clock + 5000,
+          canRetry: true,
+          persisted: true,
+        });
+        expect(h.material()!.active).toMatchObject({
+          attempted: true,
+          token: `original-${stage}`,
+          operation: original[0],
+          delivery: "sending",
+          expiresAt: deadline,
+        });
+        await h.controller.resend();
+        await h.controller.submitCurrentCode("012345");
+        await h.controller.submitNewCode("654321");
+        expect(write).toHaveBeenCalledTimes(attempts);
+        const reopened = h.reopen();
+        await reopened.verify();
+        expect(reopened.snapshot()).toMatchObject({
+          kind: "unknown",
+          sending: true,
+        });
+        await reopened.retry();
+        h.advance(4999);
+        await reopened.retry();
+        expect(write).toHaveBeenCalledTimes(attempts);
+        h.advance(1);
+        write.mockResolvedValueOnce({
+          kind: "ok",
+          value: { ...message, delivery: "sending" },
+        });
+        await reopened.retry();
+        expect(h.material()!.active).toMatchObject({
+          expiresAt: deadline,
+          retryAt: h.clock + 5000,
+          token: `original-${stage}`,
+        });
+        h.advance(5000);
+        await reopened.retry();
+        expect(write).toHaveBeenCalledTimes(attempts + 2);
+        for (const call of write.mock.calls)
+          expect(call.slice(0, -1)).toEqual(original);
+        expect(reopened.snapshot()).toMatchObject({
+          kind: "coding",
+          stage,
+          delivery: "sent",
+        });
+        expect(h.material()!.active!.token).toBeUndefined();
+        expect(h.material()!.active!.expiresAt).toBe(deadline);
+      },
+    );
+
+    it(`does not replay an expired ${stage} send that was still sending`, async () => {
+      const h = await ready();
+      if (stage === "new") {
+        await h.controller.submitCurrent("13900000000", "original-current");
+        await h.controller.submitCurrentCode("012345");
+      }
+      const write =
+        stage === "current" ? h.results.sendCurrent : h.results.sendNew;
+      write.mockResolvedValueOnce({
+        kind: "ok",
+        value: {
+          ...message,
+          delivery: "sending",
+          expiresAt: new Date(h.clock + 1000).toISOString(),
+        },
+      });
+      if (stage === "current")
+        await h.controller.submitCurrent("13900000000", "original-current");
+      else await h.controller.submitNew("13800000000", "original-new");
+      h.advance(5000);
+      const reopened = h.reopen();
+      await reopened.verify();
+      await reopened.retry();
+      expect(write).toHaveBeenCalledTimes(1);
+      expect(h.storage.values.get(KEY)).not.toContain(`original-${stage}`);
+      expect(reopened.snapshot().kind).not.toBe("coding");
+    });
+
+    it(`keeps the original ${stage} proof when saving sending fails`, async () => {
+      const h = await ready();
+      if (stage === "new") {
+        await h.controller.submitCurrent("13900000000", "original-current");
+        await h.controller.submitCurrentCode("012345");
+      }
+      const write =
+        stage === "current" ? h.results.sendCurrent : h.results.sendNew;
+      const setItem = h.storage.setItem;
+      write.mockImplementationOnce(async () => {
+        h.storage.setItem = () => {
+          throw Error("storage unavailable");
+        };
+        return { kind: "ok", value: { ...message, delivery: "sending" } };
+      });
+      if (stage === "current")
+        await h.controller.submitCurrent("13900000000", "original-current");
+      else await h.controller.submitNew("13800000000", "original-new");
+      expect(h.controller.snapshot()).toMatchObject({
+        kind: "storage",
+        pending: true,
+      });
+      expect(h.material()!.active).toMatchObject({
+        attempted: true,
+        token: `original-${stage}`,
+      });
+      h.storage.setItem = setItem;
+      const reopened = h.reopen();
+      await reopened.verify();
+      expect(reopened.snapshot().kind).toBe("unknown");
+      expect(write).toHaveBeenCalledTimes(1);
+      await reopened.retry();
+      expect(write.mock.calls[1].slice(0, -1)).toEqual(
+        write.mock.calls[0].slice(0, -1),
+      );
+      expect(reopened.snapshot()).toMatchObject({
+        kind: "coding",
+        delivery: "sent",
+      });
+    });
+  }
+
   for (const action of [
     "sendCurrent",
     "establish",

@@ -152,7 +152,7 @@ function active(value: unknown): value is Active {
   if (value.attempted && value.step !== "transfer") required.add("operation");
   switch (value.step) {
     case "current-send":
-      optional(["operation", "currentMobile", "token", "reason"]);
+      optional(["operation", "currentMobile", "token", "reason", "delivery"]);
       break;
     case "current-code":
       optional([
@@ -188,6 +188,7 @@ function active(value: unknown): value is Active {
         "newMobile",
         "token",
         "reason",
+        "delivery",
       ]);
       break;
     case "new-code":
@@ -224,7 +225,7 @@ function active(value: unknown): value is Active {
       break;
   }
   if (
-    value.reason === "limited" &&
+    (value.reason === "limited" || value.delivery !== undefined) &&
     (value.step === "current-send" || value.step === "new-send")
   ) {
     for (const key of [
@@ -233,6 +234,11 @@ function active(value: unknown): value is Active {
       value.step === "current-send" ? "currentMobile" : "newMobile",
     ])
       required.add(key);
+    if (
+      value.delivery !== undefined &&
+      (value.delivery !== "sending" || value.attempted !== true)
+    )
+      return false;
   }
   if (
     ![...required].every((key) => keys.includes(key)) ||

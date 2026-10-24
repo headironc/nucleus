@@ -217,6 +217,11 @@ function title(state: State): [string, string] {
               ]
             : ["正在查询本次更换", "只查询本次办理，不会重新提交。"];
     case "unknown":
+      if (state.sending)
+        return [
+          "短信仍在发送",
+          "请先留意手机短信，稍后查看本次发送结果。暂时不用重新获取验证码。",
+        ];
       return state.step === "current-send" || state.step === "new-send"
         ? [
             "暂时无法确认验证码是否已发送",

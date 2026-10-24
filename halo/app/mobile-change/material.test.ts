@@ -67,6 +67,38 @@ const known = {
 };
 
 describe("mobile change material", () => {
+  it("requires original attempted proof for a persisted sending result", () => {
+    const store = storage();
+    for (const step of ["current-send", "new-send"] as const) {
+      const pending = active(step, {
+        operation,
+        attempted: true,
+        token: "original-proof",
+        delivery: "sending",
+        ...(step === "current-send"
+          ? { currentMobile: "13900000000" }
+          : { transfer, newMobile: "13800000000" }),
+      });
+      store.setItem(KEY, JSON.stringify(material(pending)));
+      expect(read(store)).toEqual(material(pending));
+      for (const changed of [
+        { operation: undefined },
+        { token: undefined },
+        { attempted: false },
+        { delivery: "sent" },
+        step === "current-send"
+          ? { currentMobile: undefined }
+          : { newMobile: undefined },
+      ]) {
+        store.setItem(
+          KEY,
+          JSON.stringify(material({ ...pending, ...changed } as Active)),
+        );
+        expect(read(store)).toBe("missing");
+      }
+    }
+  });
+
   it("round-trips every stage with only its own facts", () => {
     const store = storage();
     const values: Active[] = [
