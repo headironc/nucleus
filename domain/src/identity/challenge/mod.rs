@@ -1,6 +1,5 @@
 pub mod client;
 pub mod credentials;
-pub mod mobile;
 pub mod proof;
 pub mod response;
 pub mod settings;
@@ -51,6 +50,10 @@ impl ToSql for Id {
 }
 
 impl Id {
+    pub(crate) fn as_bytes(&self) -> &[u8; 16] {
+        self.0.as_bytes()
+    }
+
     /// Create a new Challenge ID with UUIDv4.
     pub fn new() -> Self {
         Self(Uuid::new_v4())

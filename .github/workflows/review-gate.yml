@@ -1,0 +1,140 @@
+name: Review gate
+
+# Every trigger runs the gate from the default branch, never from pull request code.
+on:
+  pull_request_target:
+    # Working-branch layers relay through the credential-free context workflow.
+    branches: [dev, main]
+    types:
+      - edited
+      - synchronize
+      - reopened
+      - closed
+      - converted_to_draft
+      - ready_for_review
+  push:
+    branches: [dev, main]
+  issue_comment:
+    types: [created, edited, deleted]
+  workflow_run:
+    workflows: [Rust, Docs, Halo, Review context, Review activity]
+    types: [completed]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+permissions: {}
+
+# Coalesce pending notifications for the same PR, full sweep or queue candidate.
+# Required main lifecycle runs must survive unrelated notifications for that PR.
+# Running workflows retain the global job lock through writes and read-back.
+concurrency:
+  group: >-
+    ${{ format('review-gate-events-{0}',
+      (github.event_name == 'pull_request_target' && github.event.pull_request.base.ref == 'main' &&
+        (github.event.action == 'opened' || github.event.action == 'synchronize' || github.event.action == 'reopened') &&
+        format('lifecycle-{0}', github.run_id)) ||
+      (github.event_name == 'pull_request_target' && github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number)) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]' && github.event.issue.number && format('pr-{0}', github.event.issue.number)) ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event != 'merge_group' && github.event.workflow_run.pull_requests[0].number && !github.event.workflow_run.pull_requests[1] && format('pr-{0}', github.event.workflow_run.pull_requests[0].number)) ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.event == 'merge_group' &&
+        github.event.workflow_run.repository.full_name == github.repository &&
+        (github.event.workflow_run.path == '.github/workflows/rust.yml' || startsWith(github.event.workflow_run.path, '.github/workflows/rust.yml@') ||
+         github.event.workflow_run.path == '.github/workflows/docs.yml' || startsWith(github.event.workflow_run.path, '.github/workflows/docs.yml@') ||
+         github.event.workflow_run.path == '.github/workflows/halo.yml' || startsWith(github.event.workflow_run.path, '.github/workflows/halo.yml@')) &&
+        startsWith(github.event.workflow_run.head_branch, 'gh-readonly-queue/dev/pr-') && github.event.workflow_run.head_sha &&
+        format('queue-{0}-{1}', github.event.workflow_run.head_branch, github.event.workflow_run.head_sha)) ||
+      ((github.event_name == 'push' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch') && 'sweep') ||
+      format('run-{0}', github.run_id)) }}
+  cancel-in-progress: false
+  queue: single
+
+jobs:
+  gate:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      github.event_name == 'schedule' ||
+      github.event_name == 'workflow_run' ||
+      github.event_name == 'pull_request_target' ||
+      github.event_name == 'push' ||
+      (github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    # Keep targeted events instead of replacing another PR's pending refresh.
+    # The hourly sweep also reconciles events beyond GitHub's 100-entry queue.
+    concurrency:
+      group: review-gate
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .tool-versions
+      - name: Check Bun runtime
+        run: bun tools/check-bun.ts
+      # The organization app Cladiron reads review state and submits the approval.
+      - name: Create app token
+        id: app
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        with:
+          client-id: ${{ vars.CLADIRON_CLIENT_ID }}
+          private-key: ${{ secrets.CLADIRON_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-pull-requests: write
+          permission-contents: read
+          permission-checks: ${{ vars.DEV_REVIEW_QUEUE == 'true' && 'write' || 'read' }}
+          permission-statuses: read
+      - name: Resolve affected pull requests
+        id: target
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          case "$GITHUB_EVENT_NAME" in
+            pull_request_target) numbers=$(jq '[.pull_request.number]' "$GITHUB_EVENT_PATH") ;;
+            issue_comment) numbers=$(jq '[.issue.number]' "$GITHUB_EVENT_PATH") ;;
+            workflow_run)
+              # Queue CI is routed by a read-back run and live queue entry in
+              # the controller. Never execute a secret-bearing merge_group workflow.
+              if test "$(jq -r '.workflow_run.event' "$GITHUB_EVENT_PATH")" = merge_group; then
+                printf 'numbers=[]\n' >> "$GITHUB_OUTPUT"
+                exit 0
+              fi
+              numbers=$(jq '[.workflow_run.pull_requests[]?.number]' "$GITHUB_EVENT_PATH")
+              if test "$numbers" = '[]'; then
+                # Target-context runs can omit pull_requests. Their frozen name
+                # identifies the PR, but is never accepted as review evidence here.
+                numbers=$(jq '[.workflow_run | if (.path | split("@")[0]) == ".github/workflows/review-context.yml" then .display_title | capture("^context:(?<number>[1-9][0-9]*):") elif (.path | split("@")[0]) == ".github/workflows/review-activity.yml" then .display_title | capture("^activity:(?<number>[1-9][0-9]*)$") else empty end | .number | tonumber]' "$GITHUB_EVENT_PATH")
+              fi
+              ;;
+            *) numbers='[]' ;;
+          esac
+          if test "$GITHUB_EVENT_NAME" != pull_request_target && test "$GITHUB_EVENT_NAME" != issue_comment &&
+             { test "$GITHUB_EVENT_NAME" != workflow_run || test "$numbers" = '[]'; }; then
+            # Fork CI runs may omit the PR association. Match the source repo and
+            # branch; never turn an unassociated completion into a full sweep.
+            pulls=$(gh api graphql --paginate --slurp -f owner="${GITHUB_REPOSITORY%/*}" -f name="${GITHUB_REPOSITORY#*/}" -f query='query($owner: String!, $name: String!, $endCursor: String) { repository(owner: $owner, name: $name) { pullRequests(first: 100, after: $endCursor, states: OPEN, orderBy: {field: CREATED_AT, direction: ASC}) { nodes { number headRefName headRepository { nameWithOwner } } pageInfo { hasNextPage endCursor } } } }')
+            if test "$GITHUB_EVENT_NAME" = workflow_run; then
+              numbers=$(printf '%s' "$pulls" | jq --slurpfile event "$GITHUB_EVENT_PATH" '[.[].data.repository.pullRequests.nodes[] | select(.headRefName == $event[0].workflow_run.head_branch and .headRepository.nameWithOwner == $event[0].workflow_run.head_repository.full_name) | .number]')
+            else
+              numbers=$(printf '%s' "$pulls" | jq '[.[].data.repository.pullRequests.nodes[].number]')
+            fi
+          fi
+          numbers=$(printf '%s' "$numbers" | bun tools/review-gate.ts --validate-numbers)
+          printf 'numbers=%s\n' "$numbers" >> "$GITHUB_OUTPUT"
+      - name: Approve clean heads
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          GH_ACTIONS_TOKEN: ${{ github.token }}
+          APPROVER: ${{ steps.app.outputs.app-slug }}[bot]
+          DEV_REVIEW_QUEUE: ${{ vars.DEV_REVIEW_QUEUE }}
+          NUMBERS: ${{ steps.target.outputs.numbers }}
+        run: |
+          bun tools/review-gate.ts

@@ -1,6 +1,7 @@
 //! Cryptographic algorithms, typed encodings, and envelopes for application-owned protocols.
 
 pub mod envelope;
+pub mod hkdf;
 pub mod hmac;
 pub mod key;
 pub mod sha256;
@@ -21,11 +22,15 @@ pub struct Encoded(Zeroizing<Vec<u8>>);
 
 impl Encoded {
     pub fn new<const N: usize>(input: &impl Input<N>) -> Result<Self, Error> {
-        let fields = input.fields();
-        let mut lengths = [0_u32; N];
+        Self::fields(&input.fields())
+    }
+
+    /// Encodes fields whose count the protocol owner fixes outside one array, such as a shared
+    /// prefix followed by an owner's fields.
+    pub fn fields(fields: &[&[u8]]) -> Result<Self, Error> {
         let mut size = 0_usize;
-        for (field, length) in fields.iter().zip(&mut lengths) {
-            *length = u32::try_from(field.len())?;
+        for field in fields {
+            u32::try_from(field.len())?;
             size = size
                 .checked_add(4)
                 .and_then(|size| size.checked_add(field.len()))
@@ -33,8 +38,8 @@ impl Encoded {
         }
         let mut encoded = Zeroizing::new(Vec::new());
         encoded.try_reserve_exact(size)?;
-        for (field, length) in fields.into_iter().zip(lengths) {
-            encoded.extend_from_slice(&length.to_be_bytes());
+        for field in fields {
+            encoded.extend_from_slice(&u32::try_from(field.len())?.to_be_bytes());
             encoded.extend_from_slice(field);
         }
         Ok(Self(encoded))
@@ -49,6 +54,8 @@ pub enum Error {
     Size,
     #[error("cannot allocate cryptographic encoding")]
     Allocation(#[from] std::collections::TryReserveError),
+    #[error("cannot derive key material")]
+    Derivation,
 }
 
 #[cfg(test)]

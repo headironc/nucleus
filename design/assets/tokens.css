@@ -1,0 +1,106 @@
+/* 司籍处设计令牌：网站稿与小程序稿共同引用本文件，明暗两套均按 WCAG AA 核对。 */
+:root {
+  color-scheme: light;
+  --paper: #f8f6ef;
+  --surface: #fffefa;
+  --field: #ffffff;
+  --muted: #f1ede3;
+  --muted-strong: #e9e3d5;
+  --line: #ddd6c6;
+  --control-line: #7d8578;
+  --ink: #2f3731;
+  --sub: #5b655c;
+  --placeholder: #5c655a;
+  --sage: #55684e;
+  --accent: #a3402b;
+  --accent-hover: #8a3422;
+  --accent-soft: #f7e9e4;
+  --on-accent: #fffdf8;
+  --accent-fill-hover: #8a3422;
+  --accent-fill: #a3402b;
+  --ok: #42644d;
+  --ok-soft: #eaf1e6;
+  --ok-rule: #6f8466;
+  --warn: #795d27;
+  --warn-soft: #f5eedc;
+  --warn-rule: #9a7838;
+  --danger: #9b2a4a;
+  --danger-soft: #f9edf1;
+  --neutral-rule: #868b7e;
+  --art-dim: none;
+  --shadow: #26322726;
+  --backdrop: #28302666;
+  --sans:
+    -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei",
+    sans-serif;
+  --song: "Songti SC", "STSong", "Noto Serif CJK SC", serif;
+  --radius-s: 4px;
+  --radius-m: 8px;
+  --radius-art: 48px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #1a1816;
+    --surface: #23201d;
+    --field: #1f1c19;
+    --muted: #2c2824;
+    --muted-strong: #34302b;
+    --line: #3a352f;
+    --control-line: #7b756b;
+    --ink: #ece8df;
+    --sub: #ada79b;
+    --placeholder: #a09a8e;
+    --sage: #9db594;
+    --accent: #ee8f76;
+    --accent-hover: #f4a893;
+    --accent-soft: #3a2a24;
+    --on-accent: #fffdf8;
+    --accent-fill-hover: #9c3a27;
+    --accent-fill: #b8452f;
+    --ok: #9cc29f;
+    --ok-soft: #1f2a21;
+    --ok-rule: #7f9a76;
+    --warn: #dcbc7c;
+    --warn-soft: #2b2619;
+    --warn-rule: #b8955a;
+    --danger: #f09ab4;
+    --danger-soft: #2e1c22;
+    --neutral-rule: #7c8279;
+    --art-dim: brightness(0.82) saturate(0.9);
+    --shadow: #00000066;
+    --backdrop: #000000a0;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #1a1816;
+  --surface: #23201d;
+  --field: #1f1c19;
+  --muted: #2c2824;
+  --muted-strong: #34302b;
+  --line: #3a352f;
+  --control-line: #7b756b;
+  --ink: #ece8df;
+  --sub: #ada79b;
+  --placeholder: #a09a8e;
+  --sage: #9db594;
+  --accent: #ee8f76;
+  --accent-hover: #f4a893;
+  --accent-soft: #3a2a24;
+  --on-accent: #fffdf8;
+  --accent-fill-hover: #9c3a27;
+  --accent-fill: #b8452f;
+  --ok: #9cc29f;
+  --ok-soft: #1f2a21;
+  --ok-rule: #7f9a76;
+  --warn: #dcbc7c;
+  --warn-soft: #2b2619;
+  --warn-rule: #b8955a;
+  --danger: #f09ab4;
+  --danger-soft: #2e1c22;
+  --neutral-rule: #7c8279;
+  --art-dim: brightness(0.82) saturate(0.9);
+  --shadow: #00000066;
+  --backdrop: #000000a0;
+}

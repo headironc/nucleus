@@ -1,6 +1,6 @@
 # Turnstile 人机校验
 
-状态：Siteverify 单次 HTTP 客户端、上下文核对及时间接纳规则已交付。C1 库接口已接入可信数据库时间、调用占用、结论回写和短信发送。C1 HTTP 已接入共同协议，实际入口及验证限制见[入口交付状态](../http/api.md#已交付入口)；网站仍为目标设计。本文拥有发码入口的 Turnstile 上下文、Siteverify 协议、响应接纳及外部调用预算。[短信认证](../identity/authentication.md) 拥有 C1 的持久事实、调用占用、事务和原操作恢复；[匿名身份办理 HTTP](../http/identity.md) 拥有匿名发码输入与结果。[HTTP 来源与入口资源预算](../http/admission.md) 拥有可信来源提取。
+交付状态见[能力状态](../README.md#能力状态)。本文拥有发码入口的 Turnstile 上下文、Siteverify 协议、响应接纳及外部调用预算。[短信认证](../identity/authentication.md) 拥有 C1 的持久事实、调用占用、事务和原操作恢复；[匿名身份办理 HTTP](../http/identity.md) 拥有匿名发码输入与结果。[HTTP 来源与入口资源预算](../http/admission.md) 拥有可信来源提取。
 
 ## 入口与上下文
 
@@ -8,19 +8,21 @@
 
 `domain::identity::challenge::Purpose` 的 `AsRef<str>` 已实现下表 `action` 映射。当前 C1 库入口固定选择 authentication；其余用途随所属入口接入。供应商响应中的 `action` 反序列化为枚举，`domain::identity::challenge::response::Response::check` 用固定用途核对。未知值视为上下文不匹配。
 
-| 发码入口                          | Challenge 用途   | widget `action`            |
-| --------------------------------- | ---------------- | -------------------------- |
-| `POST /codes`                     | `authentication` | `send_authentication_code` |
-| `POST /accounts/current/codes`    | `mobile_change`  | `send_mobile_change_code`  |
-| `POST /mobile-changes/{id}/codes` | `mobile_binding` | `send_mobile_binding_code` |
+| 发码入口                                 | Challenge 用途   | widget `action`            |
+| ---------------------------------------- | ---------------- | -------------------------- |
+| `POST /api/v1/codes`                     | `authentication` | `send_authentication_code` |
+| `POST /api/v1/accounts/current/codes`    | `mobile_change`  | `send_mobile_change_code`  |
+| `POST /api/v1/mobile-changes/{id}/codes` | `mobile_binding` | `send_mobile_binding_code` |
 
 目标客户端先生成 UUIDv4 `Operation-Id`，再以 Managed widget、对应 `action` 和 `cData` 取得 token。`cData` 是同一操作标识，不是字面字符串 `C1`。发码请求携带该标识、手机号和 token，不另传 `cData`。供应商响应中的字段拼作 `cdata`，Rust 字段 `operation_id` 以 `operation::Id` 反序列化。手机号仅绑定在本地 Challenge，不放入 widget 上下文。服务端用原操作和部署配置确定期望值，不能信任客户端另报的上下文。
 
 ## 网站 widget 与 token 生命周期
 
-本节是尚未实施的网站接入目标，不规定原生小程序如何承载供应商组件。网站在所属发码入口嵌入 Managed widget；人机校验只增加发码前置条件，不替代该入口的身份、权限、限流和事务判断。浏览器只取得公开 site key，服务端 Secret 按[供应商凭据](credentials.md)装载。生产后端的主机白名单只包含实际生产前端主机，不包含 `localhost` 或 `127.0.0.1`；本地验收使用对应的本地设置。widget 配置允许某个主机，不代替后端白名单核对。
+本节规定网站接入，不规定原生小程序如何承载供应商组件。网站在所属发码入口嵌入 Managed widget；人机校验只增加发码前置条件，不替代该入口的身份、权限、限流和事务判断。浏览器只取得公开 site key，服务端 Secret 按[供应商凭据](credentials.md)装载。生产后端的主机白名单只包含实际生产前端主机，不包含 `localhost` 或 `127.0.0.1`；本地验收使用对应的本地设置。widget 配置允许某个主机，不代替后端白名单核对。
 
 每个发码入口显式渲染并保存自己的 widget ID。实例绑定该入口固定 `action` 和本次 `Operation-Id` 对应的 `cData`，不跨入口共享 token。更换操作标识时重新配置 widget 上下文，不能仅重置仍携带旧 `cData` 的实例。同页多个实例分别重置或移除；离页时移除所属实例。旧实例或旧操作的迟到回调不得覆盖当前输入和证明。
+
+新办理重新读取公开 site key，读取成功后才渲染对应实例，避免继续使用已轮换的旧配置。Turnstile 脚本加载失败显示组件自身的重试入口，保留当前输入；网站构建资源失效才进入整页重新加载流程。
 
 widget 成功回调只表示取得候选 token。首次发码前，客户端保存原操作标识、规范输入和原 token；保存失败则不提交。首次提交前发生过期、组件错误或交互超时时，清除候选 token 并阻止发码，提示用户重新完成挑战。前端计时与回调用于交互，不替代服务端截止判断。
 
@@ -30,7 +32,7 @@ widget 生命周期依据 [Cloudflare 组件配置](https://developers.cloudflar
 
 ## Siteverify 请求与结果
 
-本节区分现有客户端与目标流程。当前 `operation::Id` 已按[项目标识](../identifiers.md)解析 UUID 值，Challenge ID 已使用 UUIDv4 生成。[C1 库接口](../identity/authentication.md#已实现的人机校验)已接入持久调用占用、Siteverify 外呼、结论回写和原结果恢复。短信发送见[已实现的短信发送](../identity/authentication.md#已实现的短信发送)。C1 HTTP 已接入，网站仍未交付。
+本节区分现有客户端与目标流程。当前 `operation::Id` 已按[项目标识](../identifiers.md)解析 UUID 值，Challenge ID 已使用 UUIDv4 生成。[C1 库接口](../identity/authentication.md#人机校验)已接入持久调用占用、Siteverify 外呼、结论回写和原结果恢复。短信发送见[短信发送](../identity/authentication.md#短信发送)，HTTP 与网站的交付状态见[能力状态](../README.md#能力状态)。
 
 应用向 `POST https://challenges.cloudflare.com/turnstile/v0/siteverify` 发送 JSON：服务端 `secret`、客户端 token 对应的 `response`，以及固定验证身份 UUID 对应的 `idempotency_key`。可省略 `remoteip`；若发送，只使用[可信来源](../http/admission.md#可信来源)。服务端密钥与短信认证请求的客户端 `secret` 不同。token 是不透明值，最多 2048 字符。`domain::identity::challenge::Token` 只校验非空和字符数，并保留原文供原调用重试。持有的文本在释放时清零，调试输出隐藏内容。[Cloudflare Siteverify 文档](https://developers.cloudflare.com/turnstile/get-started/server-side-validation/)将 token 描述为生成后有效 300 秒且只能验证一次，并提供固定 `idempotency_key` 支持同次验证重试。这是供应商的协议声明，尚无本项目的单次消费保证验证。真实样本的限制见[设计证据](../engineering/evidence.md#turnstile-真实样本边界)。本地 Challenge 占用承担跨 C1 防重复责任；供应商语义不提供数据库或短信调用的原子性，也不承诺无限期返回原结果。
 
@@ -71,7 +73,7 @@ HTTP 状态不替代正文的 `success` 判定。[Cloudflare 官方服务端示�
 
 ## 验收与证据边界
 
-C1 原工作保留响应供[本地回写恢复](../identity/authentication.md#c1-阶段与外部调用)再次核对。`Context::accept` 借用响应，每次按传入的数据库时间核验，不延长原证明截止。结论回写、重启核对及故障验证见[人机校验交付](../identity/authentication.md#已实现的人机校验)。
+C1 原工作保留响应供[本地回写恢复](../identity/authentication.md#c1-阶段与外部调用)再次核对。`Context::accept` 借用响应，每次按传入的数据库时间核验，不延长原证明截止。结论回写、重启核对及故障验证见[人机校验交付](../identity/authentication.md#人机校验)。
 
 C1 可重试的网络错误只有连接失败和超时。供应商错误只接受单独的 internal-error。可重试 HTTP 状态只有 500、502、503、504。上述错误状态的正文读取失败保留状态分类。其他 HTTP 状态、明确拒绝、超限或无效响应不因此重试。次数与截止仍由原持久调用占用约束。
 
@@ -79,8 +81,8 @@ C1 可重试的网络错误只有连接失败和超时。供应商错误只接�
 
 前端验收覆盖三个用途、多实例隔离、首次提交前 token 过期、材料保存失败、提交后断连、组件重置、页面重进和旧回调迟到。原 C1 待核对时，即使 widget 已产生新 token，恢复请求仍携带原材料。确定需要新证明后，验证新操作的 `cData` 已更新；仅重置旧上下文不能通过该验收。
 
-nucleus 已支持从导出的环境变量装载主机白名单。白名单的字符、域名和去重规则见[部署设置](../settings.md#31-主机名集合)，直接构造和环境装载共享校验。前端 site key 尚未接入。
+nucleus 从导出的环境变量装载主机白名单和公开 site key。白名单的字符、域名和去重规则见[部署设置](../settings.md#31-主机名集合)，直接构造和环境装载共享校验。site key 通过[公开设置](../http/site.md#入口与响应)供浏览器读取，与服务端 Secret 分开。
 
-本地 HTTP 替身已验证同一客户端先后处理不同 token 和 Challenge ID，并按每次用途与 Operation ID 独立核对响应。错配操作、用途或部署主机白名单均不能得到匹配结论。测试还覆盖密钥与客户端脱敏、调用次数、零预算、2xx 供应商拒绝、异常状态、无效 JSON、截断响应及响应丢失。正文上限覆盖声明长度、分块和关闭连接定界的传输。错误来源链与诊断脱敏也有测试覆盖。原有响应和证明时间边界测试保持覆盖。凭据文件装载由 [nucleus](../README.md#实际交付状态) 交付。C1 已接入可信数据库时间；本片未调用真实供应商。
+本地 HTTP 替身已验证同一客户端先后处理不同 token 和 Challenge ID，并按每次用途与 Operation ID 独立核对响应。错配操作、用途或部署主机白名单均不能得到匹配结论。测试还覆盖密钥与客户端脱敏、调用次数、零预算、2xx 供应商拒绝、异常状态、无效 JSON、截断响应及响应丢失。正文上限覆盖声明长度、分块和关闭连接定界的传输。错误来源链与诊断脱敏也有测试覆盖。原有响应和证明时间边界测试保持覆盖。凭据文件装载由 [nucleus](../README.md#能力状态) 交付。C1 已接入可信数据库时间；本片未调用真实供应商。
 
 用可控供应商替身验证三种用途的 `action` 与 `cdata`、允许主机名、挑战时间容差两侧和截止等号。记录实际调用次数，覆盖并发原请求、调用占用后中断、响应丢失、一次允许的重试与次数耗尽。数据库提交未知时，先证明旧事务结束并核对原结果；不得把空查询当作重新验证许可。再证明任何失败都不建立发送许可或替换旧码。本地替身通过不证明真实部署已满足这些条件。有限真实样本也不构成完整 C1 或供应商单次消费保证的验收。

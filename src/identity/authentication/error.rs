@@ -1,4 +1,4 @@
-//! Map C1 outcomes while preserving unknown and failed-termination classifications.
+//! Map authentication outcomes while preserving unknown and failed-termination classifications.
 
 use std::time::Duration;
 
@@ -16,7 +16,6 @@ use utoipa::{
 };
 
 use crate::{
-    identity::authentication::input,
     json::Json,
     response::{self, Common},
 };
@@ -29,6 +28,9 @@ pub(super) enum Code {
     Common(Common),
     VerificationInvalid,
     VerificationRequired,
+    TargetChanged,
+    TargetUnavailable,
+    StateConflict,
 }
 
 impl From<Common> for Code {
@@ -49,9 +51,7 @@ impl ToSchema for Code {}
 
 #[derive(Debug, Error)]
 pub(super) enum Error {
-    #[error("invalid C1 request body")]
-    Input(#[from] input::Error),
-    #[error("C1 operation failed")]
+    #[error("authentication operation failed")]
     Operation {
         #[source]
         cause: authentication::Error,
@@ -64,20 +64,19 @@ pub(super) enum Error {
         cause: authentication::Error,
         wait: Duration,
     },
-    #[error("C1 caller wait expired")]
+    #[error("authentication caller wait expired")]
     Timeout(#[from] tokio::time::error::Elapsed),
     #[error("C1 retry delay is unavailable")]
     Retry {
-        quota: authentication::Error,
+        quota: Box<authentication::Error>,
         #[source]
-        cause: authentication::Error,
+        cause: domain::startup::Error,
     },
 }
 
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
         let (status, code) = match self {
-            Self::Input(cause) => return cause.into_response(),
             Self::Operation { status, code, .. } => (status, code),
             Self::Limited { wait, .. } => return response::limited(wait),
             Self::Timeout(_) => (
@@ -96,7 +95,7 @@ impl IntoResponse for Error {
 /// Prepare response data explicitly; synchronous error conversions never sample time.
 pub(super) async fn prepare(
     cause: authentication::Error,
-    service: &authentication::Service,
+    service: &domain::startup::Services,
     operation_id: operation::Id,
 ) -> Error {
     let failure = cause.failure();
@@ -114,7 +113,7 @@ pub(super) async fn prepare(
     };
     tracing::error!(%operation_id, stage = "quota_response", kind = "unavailable", error = ?error);
     Error::Retry {
-        quota: cause,
+        quota: Box::new(cause),
         cause: error,
     }
 }
@@ -127,8 +126,15 @@ fn classify(failure: authentication::Failure) -> (StatusCode, Code) {
             StatusCode::UNAUTHORIZED,
             Common::AuthenticationInvalid.into(),
         ),
+        Failure::Denied => (StatusCode::FORBIDDEN, Common::PermissionDenied.into()),
+        Failure::Absent => (StatusCode::NOT_FOUND, Code::TargetUnavailable),
         Failure::Mismatch => (StatusCode::CONFLICT, Common::RequestMismatch.into()),
-        Failure::Rejected => (StatusCode::FORBIDDEN, Code::VerificationInvalid),
+        Failure::TargetChanged => (StatusCode::CONFLICT, Code::TargetChanged),
+        Failure::Conflict => (StatusCode::CONFLICT, Code::StateConflict),
+        Failure::Rejected | Failure::CodeInvalid => {
+            (StatusCode::FORBIDDEN, Code::VerificationInvalid)
+        }
+        Failure::Suspended => (StatusCode::FORBIDDEN, Common::PermissionDenied.into()),
         Failure::Verification => (StatusCode::GONE, Code::VerificationRequired),
         Failure::Quota { .. } => (StatusCode::TOO_MANY_REQUESTS, Common::RateLimited.into()),
         Failure::Unknown => (
@@ -187,8 +193,8 @@ mod tests {
             ),
             (
                 error::Error::Retry {
-                    quota: Error::Quota { retry_at },
-                    cause: Error::Closed,
+                    quota: Box::new(Error::Quota { retry_at }),
+                    cause: domain::startup::Error::Work(domain::runtime::work::Error::Closed),
                 },
                 StatusCode::SERVICE_UNAVAILABLE,
                 "dependency_unavailable",
@@ -215,12 +221,12 @@ mod tests {
     #[test]
     fn classifies_business_refusals_and_preserves_recovery_meaning() {
         assert_eq!(
-            serde_json::to_value(error::Code::schema()).expect("C1 code schema"),
+            serde_json::to_value(error::Code::schema()).expect("authentication code schema"),
             serde_json::json!({"type":"string"})
         );
         assert_eq!(
             serde_json::to_value(response::Failure::<error::Code>::schema())
-                .expect("C1 failure schema"),
+                .expect("authentication failure schema"),
             serde_json::to_value(response::Failure::<Common>::schema())
                 .expect("common failure schema")
         );
@@ -271,6 +277,35 @@ mod tests {
                 StatusCode::TOO_MANY_REQUESTS,
                 error::Code::Common(Common::RateLimited)
             )
+        );
+    }
+
+    #[tokio::test]
+    async fn rollback_timeout_keeps_the_technical_response_without_retry_after() {
+        let elapsed = tokio::time::timeout(Duration::ZERO, std::future::pending::<()>())
+            .await
+            .expect_err("rollback deadline");
+        let cause = Error::Rollback {
+            cause: Box::new(Error::Quota {
+                retry_at: chrono::DateTime::from_timestamp(1_800_000_000, 0).expect("fixture time"),
+            }),
+            rollback: domain::database::transaction::EndError::RollbackTimeout(elapsed),
+        };
+        let (status, code) = classify(cause.failure());
+        let response = error::Error::Operation {
+            cause,
+            status,
+            code,
+        }
+        .into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert!(!response.headers().contains_key("retry-after"));
+        let body = to_bytes(response.into_body(), 1024)
+            .await
+            .expect("safe response");
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).expect("JSON"),
+            serde_json::json!({"code":"dependency_unavailable"})
         );
     }
 

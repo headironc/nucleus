@@ -1,4 +1,4 @@
-//! C1 ingress budgets are independent of durable message permits.
+//! Identity source groups share one process budget independently of durable permits.
 
 use std::{
     collections::HashMap,
@@ -22,18 +22,76 @@ const SOURCE_CAPACITY: usize = 10_000;
 // Even an empty source bucket is full twenty seconds after its last debit.
 const SOURCE_RECOVERY: Duration = Duration::from_secs(20);
 
+#[cfg(not(test))]
+type AdmissionClock = DefaultClock;
+
+#[cfg(test)]
 #[derive(Clone)]
-pub(crate) struct Admission(Arc<Mutex<Budget<DefaultClock>>>);
+enum AdmissionClock {
+    Real(DefaultClock),
+    Frozen(<DefaultClock as Clock>::Instant),
+}
+
+#[cfg(test)]
+impl Default for AdmissionClock {
+    fn default() -> Self {
+        Self::Real(DefaultClock::default())
+    }
+}
+
+#[cfg(test)]
+impl Clock for AdmissionClock {
+    type Instant = <DefaultClock as Clock>::Instant;
+
+    fn now(&self) -> Self::Instant {
+        match self {
+            Self::Real(clock) => clock.now(),
+            Self::Frozen(now) => *now,
+        }
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct Admission(
+    Arc<Mutex<Budget<AdmissionClock>>>,
+    Arc<tokio::sync::Semaphore>,
+);
 
 impl Admission {
     pub(crate) fn new() -> Result<Self, Error> {
-        Ok(Self(Arc::new(Mutex::new(Budget::new(
-            DefaultClock::default(),
-        )?))))
+        Self::with_clock(AdmissionClock::default())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_frozen_clock() -> Result<Self, Error> {
+        Self::with_clock(AdmissionClock::Frozen(DefaultClock::default().now()))
+    }
+
+    fn with_clock(clock: AdmissionClock) -> Result<Self, Error> {
+        Ok(Self(
+            Arc::new(Mutex::new(Budget::new(clock)?)),
+            Arc::new(tokio::sync::Semaphore::new(8)),
+        ))
     }
 
     pub(crate) fn accept(&self, source: IpAddr) -> Result<(), Error> {
         self.0.lock().map_err(poisoned)?.accept(source)
+    }
+
+    pub(crate) fn create_session(&self, source: IpAddr) -> Result<(), Error> {
+        self.0.lock().map_err(poisoned)?.accept_session(source)
+    }
+    pub(crate) fn read(&self, source: IpAddr) -> Result<(), Error> {
+        self.0.lock().map_err(poisoned)?.metadata.accept(source)
+    }
+    pub(crate) fn write(&self, source: IpAddr) -> Result<(), Error> {
+        self.0.lock().map_err(poisoned)?.writes.accept(source)
+    }
+    pub(crate) fn image(&self, source: IpAddr) -> Result<(), Error> {
+        self.0.lock().map_err(poisoned)?.images.accept(source)
+    }
+    pub(crate) fn transfer(&self) -> Result<tokio::sync::OwnedSemaphorePermit, Error> {
+        Ok(Arc::clone(&self.1).try_acquire_owned()?)
     }
 }
 
@@ -42,10 +100,42 @@ fn poisoned<T>(_: std::sync::PoisonError<T>) -> Error {
 }
 
 struct Budget<C: Clock> {
-    sources: HashMap<IpAddr, Source<C>>,
-    reclaim_at: C::Instant,
+    challenges: Sources<C>,
+    sessions: Sources<C>,
     total: Limiter<C>,
+    metadata: Group<C>,
+    images: Group<C>,
+    writes: Group<C>,
+}
+
+struct Group<C: Clock> {
+    sources: Sources<C>,
+    total: Limiter<C>,
+}
+
+impl<C: Clock + Clone> Group<C> {
+    fn new(clock: &C, quota: Quota, recovery: Duration, total: Quota) -> Self {
+        Self {
+            sources: Sources::new(clock, quota, recovery),
+            total: RateLimiter::direct_with_clock(total, clock.clone()),
+        }
+    }
+    fn accept(&mut self, source: IpAddr) -> Result<(), Error> {
+        self.sources.accept(source, self.total.clock())?;
+        if let Err(denied) = self.total.check() {
+            return Err(Error::Limited(
+                denied.wait_time_from(self.total.clock().now()),
+            ));
+        }
+        Ok(())
+    }
+}
+
+struct Sources<C: Clock> {
+    entries: HashMap<IpAddr, Source<C>>,
+    reclaim_at: C::Instant,
     quota: Quota,
+    recovery: Duration,
 }
 
 struct Source<C: Clock> {
@@ -56,40 +146,52 @@ struct Source<C: Clock> {
 impl<C: Clock + Clone> Budget<C> {
     fn new(clock: C) -> Result<Self, Error> {
         Ok(Self {
-            sources: HashMap::new(),
-            reclaim_at: clock.now(),
+            writes: Group::new(
+                &clock,
+                Quota::per_second(nonzero(2)?).allow_burst(nonzero(4)?),
+                Duration::from_secs(2),
+                Quota::per_second(nonzero(10)?).allow_burst(nonzero(20)?),
+            ),
+            metadata: Group::new(
+                &clock,
+                Quota::per_second(nonzero(20)?).allow_burst(nonzero(40)?),
+                Duration::from_secs(2),
+                Quota::per_second(nonzero(100)?).allow_burst(nonzero(100)?),
+            ),
+            images: Group::new(
+                &clock,
+                Quota::per_minute(nonzero(120)?).allow_burst(nonzero(20)?),
+                Duration::from_secs(10),
+                Quota::per_second(nonzero(100)?).allow_burst(nonzero(100)?),
+            ),
+            challenges: Sources::new(
+                &clock,
+                Quota::per_minute(nonzero(6)?).allow_burst(nonzero(2)?),
+                SOURCE_RECOVERY,
+            ),
+            sessions: Sources::new(
+                &clock,
+                Quota::per_minute(nonzero(60)?).allow_burst(nonzero(10)?),
+                Duration::from_secs(10),
+            ),
             total: RateLimiter::direct_with_clock(
                 Quota::per_second(nonzero(20)?).allow_burst(nonzero(40)?),
                 clock,
             ),
-            quota: Quota::per_minute(nonzero(6)?).allow_burst(nonzero(2)?),
         })
     }
 
     fn accept(&mut self, address: IpAddr) -> Result<(), Error> {
-        if !self.sources.contains_key(&address) {
-            if self.sources.len() >= SOURCE_CAPACITY {
-                self.reclaim();
-            }
-            if self.sources.len() >= SOURCE_CAPACITY {
-                return Err(Error::Capacity);
-            }
-            self.sources.insert(
-                address,
-                Source {
-                    limiter: RateLimiter::direct_with_clock(self.quota, self.total.clock().clone()),
-                    expires_at: self.total.clock().now(),
-                },
-            );
-        }
-        let source = self.sources.get_mut(&address).ok_or(Error::State)?;
-        if let Err(denied) = source.limiter.check() {
-            return Err(Error::Limited(
-                denied.wait_time_from(source.limiter.clock().now()),
-            ));
-        }
-        // Sample after the debit so expiry can never precede full replenishment.
-        source.expires_at = source.limiter.clock().now() + SOURCE_RECOVERY.into();
+        self.challenges.accept(address, self.total.clock())?;
+        self.debit_total()
+    }
+
+    fn accept_session(&mut self, address: IpAddr) -> Result<(), Error> {
+        self.sessions.accept(address, self.total.clock())?;
+        self.debit_total()
+    }
+
+    fn debit_total(&self) -> Result<(), Error> {
         if let Err(denied) = self.total.check() {
             // A process rejection does not refund the source debit.
             return Err(Error::Limited(
@@ -98,15 +200,53 @@ impl<C: Clock + Clone> Budget<C> {
         }
         Ok(())
     }
+}
 
-    fn reclaim(&mut self) {
-        let now = self.total.clock().now();
+impl<C: Clock + Clone> Sources<C> {
+    fn new(clock: &C, quota: Quota, recovery: Duration) -> Self {
+        Self {
+            entries: HashMap::new(),
+            reclaim_at: clock.now(),
+            quota,
+            recovery,
+        }
+    }
+
+    fn accept(&mut self, address: IpAddr, clock: &C) -> Result<(), Error> {
+        if !self.entries.contains_key(&address) {
+            if self.entries.len() >= SOURCE_CAPACITY {
+                self.reclaim(clock);
+            }
+            if self.entries.len() >= SOURCE_CAPACITY {
+                return Err(Error::Capacity);
+            }
+            self.entries.insert(
+                address,
+                Source {
+                    limiter: RateLimiter::direct_with_clock(self.quota, clock.clone()),
+                    expires_at: clock.now(),
+                },
+            );
+        }
+        let source = self.entries.get_mut(&address).ok_or(Error::State)?;
+        if let Err(denied) = source.limiter.check() {
+            return Err(Error::Limited(
+                denied.wait_time_from(source.limiter.clock().now()),
+            ));
+        }
+        // Sample after the debit so expiry can never precede full replenishment.
+        source.expires_at = source.limiter.clock().now() + self.recovery.into();
+        Ok(())
+    }
+
+    fn reclaim(&mut self, clock: &C) {
+        let now = clock.now();
         if now < self.reclaim_at {
             return;
         }
         // Repeated capacity refusals cannot reclaim anything before this bound.
-        let mut reclaim_at = now + SOURCE_RECOVERY.into();
-        self.sources.retain(|_, source| {
+        let mut reclaim_at = now + self.recovery.into();
+        self.entries.retain(|_, source| {
             if source.expires_at <= now {
                 return false;
             }
@@ -127,6 +267,8 @@ pub enum Error {
     Limited(Duration),
     #[error("HTTP source capacity exhausted")]
     Capacity,
+    #[error("HTTP image transfer permit is unavailable")]
+    Transfer(#[from] tokio::sync::TryAcquireError),
     #[error("HTTP ingress budget state is unavailable")]
     State,
 }
@@ -171,12 +313,12 @@ mod tests {
         budget
             .accept("198.51.100.2".parse().expect("IP"))
             .expect("another source");
-        assert!(budget.sources.contains_key(&address));
+        assert!(budget.challenges.entries.contains_key(&address));
         clock.advance(Duration::from_secs(1));
         budget
             .accept("198.51.100.3".parse().expect("IP"))
             .expect("recovery boundary");
-        assert!(budget.sources.contains_key(&address));
+        assert!(budget.challenges.entries.contains_key(&address));
         budget.accept(address).expect("retained source refill");
         budget.accept(address).expect("retained source burst");
         assert!(
@@ -220,7 +362,7 @@ mod tests {
                 _ => assert!(matches!(result, Err(Error::Capacity))),
             }
         }
-        assert_eq!(budget.sources.len(), 10_000);
+        assert_eq!(budget.challenges.entries.len(), 10_000);
         clock.advance(Duration::from_secs(1));
         let existing = IpAddr::V4(Ipv4Addr::from(0));
         budget
@@ -235,8 +377,8 @@ mod tests {
         budget
             .accept("192.0.2.1".parse().expect("IP"))
             .expect("reclaim before allocating");
-        assert_eq!(budget.sources.len(), 2);
-        assert!(budget.sources.contains_key(&existing));
+        assert_eq!(budget.challenges.entries.len(), 2);
+        assert!(budget.challenges.entries.contains_key(&existing));
     }
 
     #[test]
@@ -261,11 +403,134 @@ mod tests {
         assert!(matches!(budget.accept(newcomer), Err(Error::Capacity)));
         clock.advance(Duration::from_secs(1));
         budget.accept(newcomer).expect("reclaimed capacity");
-        assert_eq!(budget.sources.len(), 2);
-        assert!(!budget.sources.contains_key(&rejected));
+        assert_eq!(budget.challenges.entries.len(), 2);
+        assert!(!budget.challenges.entries.contains_key(&rejected));
         assert!(
             matches!(budget.accept(active), Err(Error::Limited(wait)) if wait == Duration::from_secs(9))
         );
+    }
+
+    #[test]
+    fn session_sources_are_independent_and_debit_the_shared_process_budget() {
+        let clock = FakeRelativeClock::default();
+        let mut budget = Budget::new(clock.clone()).expect("fixed quotas");
+        let address = "192.0.2.1".parse().expect("IP");
+        budget.accept(address).expect("challenge first");
+        budget.accept(address).expect("challenge burst");
+        for _ in 0..10 {
+            budget
+                .accept_session(address)
+                .expect("separate session burst");
+        }
+        assert!(
+            matches!(budget.accept_session(address), Err(Error::Limited(wait)) if wait == Duration::from_secs(1))
+        );
+        for octet in 2..30 {
+            budget
+                .accept_session(IpAddr::V4(Ipv4Addr::new(192, 0, 2, octet)))
+                .expect("remaining total burst");
+        }
+        assert!(
+            matches!(budget.accept("198.51.100.1".parse().expect("IP")), Err(Error::Limited(wait)) if wait == Duration::from_millis(50))
+        );
+        clock.advance(Duration::from_secs(1));
+        budget
+            .accept_session(address)
+            .expect("session one-second refill");
+        assert!(
+            matches!(budget.accept(address), Err(Error::Limited(wait)) if wait == Duration::from_secs(9))
+        );
+    }
+
+    #[test]
+    fn metadata_and_images_have_independent_source_and_total_budgets() {
+        let clock = FakeRelativeClock::default();
+        let mut budget = Budget::new(clock.clone()).expect("fixed quotas");
+        let address = "192.0.2.1".parse().expect("IP");
+        for _ in 0..40 {
+            budget.metadata.accept(address).expect("metadata burst");
+        }
+        assert!(
+            matches!(budget.metadata.accept(address), Err(Error::Limited(wait)) if wait == Duration::from_millis(50))
+        );
+        for _ in 0..20 {
+            budget
+                .images
+                .accept(address)
+                .expect("independent image burst");
+        }
+        assert!(
+            matches!(budget.images.accept(address), Err(Error::Limited(wait)) if wait == Duration::from_millis(500))
+        );
+        for value in 1..=80 {
+            let source = IpAddr::V4(Ipv4Addr::from(value));
+            budget
+                .images
+                .accept(source)
+                .expect("remaining image process burst");
+            if value <= 60 {
+                budget
+                    .metadata
+                    .accept(source)
+                    .expect("remaining metadata process burst");
+            }
+        }
+        let other = "198.51.100.1".parse().expect("IP");
+        assert!(
+            matches!(budget.images.accept(other), Err(Error::Limited(wait)) if wait == Duration::from_millis(10))
+        );
+        assert!(
+            matches!(budget.metadata.accept(other), Err(Error::Limited(wait)) if wait == Duration::from_millis(10))
+        );
+        budget.accept(address).expect("reading does not debit C1");
+        budget
+            .accept_session(address)
+            .expect("reading does not debit R1/R2");
+        clock.advance(Duration::from_millis(50));
+        budget.metadata.accept(address).expect("metadata refill");
+        assert!(
+            matches!(budget.images.accept(address), Err(Error::Limited(wait)) if wait == Duration::from_millis(450))
+        );
+    }
+
+    #[test]
+    fn authenticated_writes_have_independent_source_and_process_limits() {
+        let clock = FakeRelativeClock::default();
+        let mut budget = Budget::new(clock.clone()).expect("fixed quotas");
+        let source = "192.0.2.1".parse().expect("source");
+        for _ in 0..4 {
+            budget.writes.accept(source).expect("write burst");
+        }
+        assert!(
+            matches!(budget.writes.accept(source), Err(Error::Limited(wait)) if wait == Duration::from_millis(500))
+        );
+        for value in 1..=16 {
+            budget
+                .writes
+                .accept(IpAddr::V4(Ipv4Addr::from(value)))
+                .expect("remaining process burst");
+        }
+        assert!(
+            matches!(budget.writes.accept("192.0.2.2".parse().expect("other source")), Err(Error::Limited(wait)) if wait == Duration::from_millis(100))
+        );
+        budget
+            .metadata
+            .accept(source)
+            .expect("metadata is independent");
+        budget
+            .images
+            .accept(source)
+            .expect("images are independent");
+        budget.accept(source).expect("C1 is independent");
+        budget
+            .accept_session(source)
+            .expect("R1/R2 are independent");
+        clock.advance(Duration::from_millis(499));
+        assert!(
+            matches!(budget.writes.accept(source), Err(Error::Limited(wait)) if wait == Duration::from_millis(1))
+        );
+        clock.advance(Duration::from_millis(1));
+        budget.writes.accept(source).expect("exact source refill");
     }
 
     #[test]

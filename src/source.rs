@@ -41,34 +41,47 @@ where
         let Extension(ConnectInfo(peer)) =
             Extension::<ConnectInfo<Peer>>::from_request_parts(parts, state).await?;
         Ok(Self(
-            Settings::from_ref(state).resolve(peer, &parts.headers)?,
+            Settings::from_ref(state).resolve(&peer, &parts.headers)?,
         ))
     }
 }
 
-// A local connect-info type supports both the bounded listener and TcpListener.
-#[derive(Clone, Copy)]
-pub(crate) struct Peer(SocketAddr);
+// Every serving connection carries the bounded listener's actual transfer owner.
+#[derive(Clone)]
+pub(crate) struct Peer {
+    address: SocketAddr,
+    transmission: crate::listener::Transmission,
+}
 
-impl Connected<IncomingStream<'_, tokio::net::TcpListener>> for Peer {
-    fn connect_info(stream: IncomingStream<'_, tokio::net::TcpListener>) -> Self {
-        Self(*stream.remote_addr())
+impl Peer {
+    #[cfg(test)]
+    fn new(address: SocketAddr) -> Self {
+        Self {
+            address,
+            transmission: crate::listener::Transmission::new(tokio::sync::watch::channel(false).1),
+        }
+    }
+    pub(crate) fn transmission(&self) -> &crate::listener::Transmission {
+        &self.transmission
     }
 }
 
 impl Connected<IncomingStream<'_, crate::listener::Listener>> for Peer {
     fn connect_info(stream: IncomingStream<'_, crate::listener::Listener>) -> Self {
-        Self(*stream.remote_addr())
+        Self {
+            address: *stream.remote_addr(),
+            transmission: stream.io().transmission(),
+        }
     }
 }
 
 #[derive(Clone)]
-pub(crate) struct Settings {
+pub struct Settings {
     proxies: Arc<[IpNet]>,
 }
 
 impl Settings {
-    pub(crate) fn new(proxies: Vec<IpNet>) -> Result<Self, SettingsError> {
+    pub fn new(proxies: Vec<IpNet>) -> Result<Self, SettingsError> {
         if proxies.is_empty() {
             return Err(SettingsError::Empty);
         }
@@ -85,8 +98,8 @@ impl Settings {
         })
     }
 
-    pub(crate) fn resolve(&self, peer: Peer, headers: &HeaderMap) -> Result<IpAddr, Error> {
-        let peer = peer.0.ip().to_canonical();
+    pub(crate) fn resolve(&self, peer: &Peer, headers: &HeaderMap) -> Result<IpAddr, Error> {
+        let peer = peer.address.ip().to_canonical();
         if !self.proxies.iter().any(|network| network.contains(&peer)) {
             return Err(Error::Untrusted);
         }
@@ -191,10 +204,10 @@ mod tests {
     fn accepts_only_one_address_from_a_trusted_direct_proxy() {
         let settings =
             Settings::new(vec!["10.0.0.0/8".parse().expect("CIDR")]).expect("trusted proxy");
-        let peer = Peer("10.0.0.2:8080".parse().expect("peer"));
+        let peer = Peer::new("10.0.0.2:8080".parse().expect("peer"));
         let mut headers = HeaderMap::new();
         assert!(matches!(
-            settings.resolve(peer, &headers),
+            settings.resolve(&peer, &headers),
             Err(Error::Missing)
         ));
         headers.insert(
@@ -202,17 +215,17 @@ mod tests {
             HeaderValue::from_static("192.0.2.1, 10.0.0.1"),
         );
         assert!(matches!(
-            settings.resolve(peer, &headers),
+            settings.resolve(&peer, &headers),
             Err(Error::Missing)
         ));
         headers.insert("forwarded", HeaderValue::from_static("for=192.0.2.1"));
         assert!(matches!(
-            settings.resolve(peer, &headers),
+            settings.resolve(&peer, &headers),
             Err(Error::Missing)
         ));
         headers.insert("x-real-ip", HeaderValue::from_static("198.51.100.1"));
         assert_eq!(
-            settings.resolve(peer, &headers).expect("single address"),
+            settings.resolve(&peer, &headers).expect("single address"),
             "198.51.100.1".parse::<IpAddr>().expect("IP")
         );
         headers.insert(
@@ -220,19 +233,19 @@ mod tests {
             HeaderValue::from_static("invalid ignored chain"),
         );
         assert_eq!(
-            settings.resolve(peer, &headers).expect("no chain parsing"),
+            settings.resolve(&peer, &headers).expect("no chain parsing"),
             "198.51.100.1".parse::<IpAddr>().expect("IP")
         );
         for address in ["192.0.2.8:1234", "[::ffff:192.0.2.8]:1234"] {
-            let peer = Peer(address.parse().expect("untrusted peer"));
+            let peer = Peer::new(address.parse().expect("untrusted peer"));
             assert!(matches!(
-                settings.resolve(peer, &headers),
+                settings.resolve(&peer, &headers),
                 Err(Error::Untrusted)
             ));
         }
         headers.append("x-real-ip", HeaderValue::from_static("198.51.100.1"));
         assert!(matches!(
-            settings.resolve(peer, &headers),
+            settings.resolve(&peer, &headers),
             Err(Error::Repeated)
         ));
         for address in [
@@ -245,7 +258,7 @@ mod tests {
         ] {
             headers.insert("x-real-ip", HeaderValue::from_str(address).expect("header"));
             assert!(matches!(
-                settings.resolve(peer, &headers),
+                settings.resolve(&peer, &headers),
                 Err(Error::Address(_))
             ));
         }
@@ -254,7 +267,7 @@ mod tests {
             HeaderValue::from_bytes(&[0xff]).expect("non-text header"),
         );
         assert!(matches!(
-            settings.resolve(peer, &headers),
+            settings.resolve(&peer, &headers),
             Err(Error::Header(_))
         ));
     }
@@ -264,7 +277,7 @@ mod tests {
         let settings = Settings::new(vec!["::ffff:10.0.0.0/104".parse().expect("CIDR")])
             .expect("trusted proxy");
         for peer in ["10.0.0.2:8080", "[::ffff:10.0.0.2]:8080"] {
-            let peer = Peer(peer.parse().expect("peer"));
+            let peer = Peer::new(peer.parse().expect("peer"));
             for (address, expected) in [
                 ("::ffff:192.0.2.1", "192.0.2.1"),
                 ("2001:db8::1", "2001:db8::1"),
@@ -274,7 +287,7 @@ mod tests {
                 let mut headers = HeaderMap::new();
                 headers.insert("x-real-ip", HeaderValue::from_str(address).expect("header"));
                 assert_eq!(
-                    settings.resolve(peer, &headers).expect("client address"),
+                    settings.resolve(&peer, &headers).expect("client address"),
                     expected.parse::<IpAddr>().expect("IP")
                 );
             }
@@ -301,7 +314,7 @@ mod tests {
             if let Some(peer) = option {
                 parts
                     .extensions
-                    .insert(ConnectInfo(Peer(peer.parse().expect("peer"))));
+                    .insert(ConnectInfo(Peer::new(peer.parse().expect("peer"))));
             }
             let response = match Source::from_request_parts(&mut parts, &settings).await {
                 Ok(_) => panic!("a header cannot establish a trusted connection"),

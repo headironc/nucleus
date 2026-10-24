@@ -1,0 +1,45 @@
+name: Rust package environment
+description: Verify the preinstalled PostgreSQL environment and restore image-bound package dependencies.
+inputs:
+  cache-key:
+    description: Separate cache owner for one package.
+    required: true
+  cache-lookup-only:
+    description: For prewarming, skip restoring an exact cache hit; otherwise restore normally.
+    default: "false"
+outputs:
+  cache-hit:
+    description: Whether an exact Rust dependency cache was found or restored.
+    value: ${{ steps.cache-lookup.outputs.cache-hit == 'true' || steps.cache.outputs.cache-hit == 'true' }}
+runs:
+  using: composite
+  steps:
+    - name: Verify the pinned dependency image
+      id: environment
+      shell: bash
+      run: |
+        set -euo pipefail
+        if ! [[ "$HALO_CI_IMAGE" =~ ^ghcr.io/silence-force/nucleus-halo-ci@sha256:[0-9a-f]{64}$ ]]; then
+          printf '%s\n' 'Rust packages require the pinned Nucleus dependency image.' >&2
+          exit 1
+        fi
+        bun tools/halo-ci-image.ts verify
+        printf 'key=%s\n' "${HALO_CI_IMAGE##*@}" >> "$GITHUB_OUTPUT"
+    - name: Look up Rust dependencies for prewarming
+      id: cache-lookup
+      if: ${{ inputs.cache-lookup-only == 'true' }}
+      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        shared-key: ${{ steps.environment.outputs.key }}-${{ inputs.cache-key }}
+        workspaces: ". -> target/cargo"
+        cache-bin: false
+        lookup-only: true
+        save-if: false
+    - name: Cache Rust dependencies
+      id: cache
+      if: ${{ steps.cache-lookup.outputs.cache-hit != 'true' }}
+      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        shared-key: ${{ steps.environment.outputs.key }}-${{ inputs.cache-key }}
+        workspaces: ". -> target/cargo"
+        cache-bin: false

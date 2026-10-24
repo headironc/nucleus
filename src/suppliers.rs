@@ -4,10 +4,7 @@ use std::fmt::{self, Formatter};
 
 use domain::identity::{
     challenge,
-    message::{
-        self,
-        access_key::{self, AccessKey},
-    },
+    message::{self, credentials::AccessKey},
 };
 use serde::Deserialize;
 use thiserror::Error;
@@ -46,8 +43,8 @@ impl Clients {
         let message = message::client::Client::new(
             message,
             AccessKey::new(
-                access_key::Id::new(std::mem::take(&mut *id))?,
-                access_key::Secret::new(std::mem::take(&mut *secret))?,
+                message::credentials::Id::new(std::mem::take(&mut *id))?,
+                message::credentials::Secret::new(std::mem::take(&mut *secret))?,
             ),
         )?;
         Ok(Self { challenge, message })
@@ -92,9 +89,9 @@ pub enum Error {
     #[error("{0}")]
     ChallengeSecret(#[from] challenge::credentials::ParseError),
     #[error("{0}")]
-    MessageId(#[from] access_key::IdError),
+    MessageId(#[from] message::credentials::IdError),
     #[error("{0}")]
-    MessageSecret(#[from] access_key::SecretError),
+    MessageSecret(#[from] message::credentials::SecretError),
     #[error("{0}")]
     Credentials(#[from] credentials::Error),
     #[error("cannot initialize the Siteverify client: {0}")]

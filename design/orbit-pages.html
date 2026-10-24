@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>司籍处小程序页面设计 · 目标设计版（orbit）</title>
+<link rel="stylesheet" href="assets/tokens.css">
+<link rel="stylesheet" href="assets/orbit.css">
+</head>
+<body>
+
+<header class="doc">
+  <h1><img src="assets/logo.png" alt="司籍处" style="width:46px;height:46px;border-radius:8px;vertical-align:middle;margin-right:12px">司籍处小程序页面设计 <span style="font-size:14px;color:var(--sub);font-weight:400">目标设计版 · 客户端代号 orbit</span></h1>
+  <p class="doc-links">页面说明、流程、配色约定与工程对齐见 <a href="orbit-notes.html">设计旁注</a>。</p>
+  <p class="font-notice" id="font-notice" hidden></p>
+</header>
+
+<nav class="toc">
+  <div class="group"><b>介绍与进入</b>
+    <a href="#p-intro">公开介绍</a><a href="#p-login">登录</a><a href="#p-register">注册账户</a><a href="#p-authfail">登录异常</a>
+  </div>
+  <div class="group"><b>员工服务与工号</b>
+    <a href="#p-home">公开首页与员工服务暂停</a><a href="#p-services">员工服务主页</a><a href="#services-ended">员工服务结束</a><a href="#p-invite">使用邀请码</a><a href="#p-number">申请工号</a><a href="#number-select">工号类别与确认</a><a href="#p-affiliation">政治面貌</a><a href="#affiliation-current">政治面貌已填写</a>
+  </div>
+  <div class="group"><b>工牌</b>
+    <a href="#p-photo">工牌照片</a><a href="#p-apply">填写工牌信息</a><a href="#p-preview">工牌预览（含加载异常）</a><a href="#p-changed">资料更新</a><a href="#p-detail">申请详情</a><a href="#p-resubmit">修改后再提交</a><a href="#p-history">申请记录</a>
+  </div>
+  <div class="group"><b>账户</b>
+    <a href="#p-me">我的</a><a href="#p-sessions">登录方式</a><a href="#sessions-unbound">微信未绑定</a>
+  </div>
+  <div class="group"><b>工程规范</b>
+    <a href="orbit-notes.html#eng">rust.md → 客户端约定</a>
+  </div>
+</nav>
+
+<section class="pages">
+
+<!-- ============ 1. 公开介绍 ============ -->
+<article class="page" id="p-intro">
+  <header class="page-head">
+    <h2>公开介绍</h2>
+    <a href="orbit-notes.html#p-intro">旁注 ›</a>
+  </header>
+  <div class="phones">
+    <div class="phone">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar">司籍处<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen intro-screen">
+        <div class="intro-brand">
+          <img class="logoimg" src="assets/logo.png" alt="司籍处 logo">
+          <h2>司籍处</h2>
+          <p>中医药文化宣传与推广中心</p>
+          <span class="brand-rule" aria-hidden="true"></span>
+        </div>
+        <div class="action-area">
+          <div class="btn primary">浏览首页</div>
+          <div class="btn ghost bold">员工登录</div>
+          <p class="faint small">员工可登录办理工号、工牌。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</article>
+
+<!-- ============ 2. 登录 ============ -->
+<article class="page" id="p-login">
+  <header class="page-head">
+    <h2>登录</h2>
+    <a href="orbit-notes.html#p-login">旁注 ›</a>
+  </header>
+  <div class="phones">
+    <div class="phone">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar">员工登录<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen white">
+        <div class="login-brand">
+          <img class="logoimg" src="assets/logo.png" alt="司籍处 logo">
+          <h2>员工服务</h2>
+        </div>
+        <div class="btn primary">手机号登录</div>
+        <div class="btn ghost bold">微信登录</div>
+        <div class="check-row"><span aria-hidden="true">✓</span><span>已阅读并同意《隐私政策》与《服务条款》</span></div>
+        <div class="divider"></div><p class="dim small">首次使用，请选择手机号登录。绑定微信后，也可使用微信登录。</p>
+      </div>
+    </div>
+  </div>
+</article>
+
+<!-- ============ 3. 正式注册 ============ -->
+<article class="page" id="p-register">
+  <header class="page-head">
+    <h2>正式注册（R2）</h2>
+    <a href="orbit-notes.html#p-register">旁注 ›</a>
+  </header>
+  <div class="phones">
+    <div class="phone">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar"><span class="back">‹</span>注册账户<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="page-lead"><p>请填写本人身份证上的姓名和证件号码。</p></div>
+        <div class="registration-window">请在 <span class="countdown">08:47</span> 内提交。超时未提交，请重新验证手机号。</div>
+        <div class="field"><label>姓名</label><div class="box"><span class="ph">与居民身份证一致</span></div></div>
+        <div class="field"><label>身份证号</label><div class="box"><span class="ph">18 位居民身份证号</span></div></div>
+        <div class="check-row"><span aria-hidden="true">✓</span><span>我确认以上信息真实、准确</span></div>
+      </div>
+      <div class="phone-footer">
+        <div class="btn primary">确认注册</div>
+        <div class="faint small">使用员工服务需医院邀请码，也可由管理员办理加入。</div>
+      </div>
+    </div>
+  </div>
+</article>
+
+<!-- ============ 4. 认证分流异常 ============ -->
+<article class="page" id="p-authfail">
+  <header class="page-head">
+    <h2>认证分流异常页</h2>
+    <a href="orbit-notes.html#p-authfail">旁注 ›</a>
+  </header>
+  <div class="phones">
+    <div class="phone" aria-label="手机号不支持">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar">登录提示<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen status-screen">
+        <div class="status-symbol restricted"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"></circle><line x1="9" x2="15" y1="15" y2="9"></line></svg></div>
+        <div class="status-title">暂不支持该手机号</div>
+        <div class="status-copy">请使用中国大陆手机号登录。</div>
+        <div class="action-area"><div class="btn primary">返回登录</div></div>
+      </div>
+    </div>
+    <div class="phone" aria-label="账户暂停使用">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar">无法登录<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen status-screen">
+        <div class="status-symbol"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="14" y="3" width="5" height="18" rx="1"></rect><rect x="5" y="3" width="5" height="18" rx="1"></rect></svg></div>
+        <div class="status-title">账户已暂停使用</div>
+        <div class="status-copy">如需恢复使用，请联系管理员。</div>
+        <div class="action-area"><div class="btn primary">返回登录页</div></div>
+      </div>
+    </div>
+    <div class="phone" aria-label="需要重新登录">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar">重新登录<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen status-screen">
+        <div class="status-symbol"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"></path><path d="M3 3v5h5"></path></svg></div>
+        <div class="status-title">请重新登录</div>
+        <div class="status-copy">此次登录无法继续，请返回登录页重试。</div>
+        <div class="action-area"><div class="btn primary">重新登录</div></div>
+      </div>
+    </div>
+  </div>
+</article>
+
+<!-- ============ 5. Homepage ============ -->
+<article class="page" id="p-home">
+  <header class="page-head">
+    <h2>首页（结构稿）</h2>
+    <a href="orbit-notes.html#p-home">旁注 ›</a>
+  </header>
+  <div class="phones">
+    <div id="siji-reference-home" >
+      <style>
+        #p-home .phones { align-items: flex-start; max-width: 100%; }
+        #siji-reference-home { width: 390px; max-width: 100%; padding: 0; }
+        #siji-reference-home .sr-phone {
+          --sr-paper: var(--paper); --sr-ink: var(--ink); --sr-sub: var(--sub);
+          --sr-red: var(--accent); --sr-rule: var(--line);
+          --sr-song: var(--song);
+          width: 100%; max-width: 390px; margin: auto;
+          color: var(--sr-ink); background: var(--sr-paper);
+          border: 1px solid var(--phone-edge); border-radius: 30px; overflow: hidden;
+          box-shadow: 0 8px 24px #30383008;
+          font: 15px/1.6 var(--sans);
+        }
+        #siji-reference-home .sr-phone * { box-sizing: border-box; }
+        #siji-reference-home .sr-phone h1,
+        #siji-reference-home .sr-phone h2,
+        #siji-reference-home .sr-phone h3,
+        #siji-reference-home .sr-phone p { margin: 0; }
+        #siji-reference-home .sr-phone button,
+        #siji-reference-home .sr-phone input { font: inherit; color: inherit; }
+        #siji-reference-home .sr-status { display: flex; align-items: center; justify-content: space-between; padding: 13px 24px 0; height: 40px; font-size: 13px; font-weight: 600; }
+        #siji-reference-home .sr-status-icons { display: flex; align-items: center; gap: 6px; }
+        #siji-reference-home .sr-status-icons svg { width: 15px; height: 15px; }
+        #siji-reference-home .sr-nav { height: 52px; display: flex; justify-content: space-between; align-items: center; padding: 0 24px; }
+        #siji-reference-home .sr-wordmark { display: flex; align-items: center; gap: 8px; }
+        #siji-reference-home .sr-wordmark h1 { font: 600 20px/1.4 var(--sr-song); letter-spacing: 3px; }
+        #siji-reference-home .sr-seal { width: 22px; height: 25px; display: grid; place-items: center; border: 1px solid var(--sr-red); border-radius: 2px; font: 16px/1 var(--sr-song); color: var(--sr-red); }
+        #siji-reference-home .sr-capsule { width: 83px; height: 29px; border: 1px solid var(--capsule); border-radius: 20px; display: flex; align-items: center; justify-content: space-evenly; }
+        #siji-reference-home .sr-dots { font-size: 15px; letter-spacing: 1px; margin-top: -6px; }
+        #siji-reference-home .sr-capsule-divider { width: 1px; height: 15px; background: var(--capsule); }
+        #siji-reference-home .sr-close { border: 1.5px solid currentColor; width: 13px; height: 13px; border-radius: 50%; display: grid; place-items: center; }
+        #siji-reference-home .sr-close::after { content: ""; width: 5px; height: 5px; background: currentColor; border-radius: 50%; }
+        #siji-reference-home .sr-search { display: flex; align-items: center; gap: 8px; height: 48px; margin: 12px 24px 20px; padding-left: 12px; border: 1px solid var(--control-line); border-radius: var(--radius); background: var(--field); }
+        #siji-reference-home .sr-search svg { width: 20px; height: 20px; color: var(--sr-sub); stroke-width: 1.75; flex-shrink: 0; }
+        #siji-reference-home .sr-search input { min-width: 0; width: 100%; border: 0; background: transparent; padding: 0; font-size: 14px; opacity: 1; -webkit-text-fill-color: var(--sr-sub); }
+        #siji-reference-home .sr-search input::placeholder { color: var(--sr-sub); opacity: 1; }
+        #siji-reference-home .sr-search button { height: 46px; flex-shrink: 0; padding: 0 12px; border: 0; border-left: 1px solid var(--sr-rule); background: transparent; font: 500 14px/1.5 var(--sans); }
+        #siji-reference-home .sr-hero { position: relative; isolation: isolate; margin: 0 16px; height: 240px; overflow: hidden; border-radius: var(--radius); background: #dedecb; }
+        #siji-reference-home .sr-landscape { position: absolute; inset: 0; z-index: -1; overflow: hidden; background: radial-gradient(ellipse at 26% 22%, #f4ead299 0, transparent 58%), linear-gradient(155deg, #d8dfd0, #efe6ce 56%, #c8b786); }
+        #siji-reference-home .sr-sun { position: absolute; width: 70px; height: 70px; border-radius: 50%; top: 37px; left: 64px; background: #fff3d282; box-shadow: 0 0 36px #fff3d25c; }
+        #siji-reference-home .sr-ridge { position: absolute; left: -12%; width: 130%; height: 140px; bottom: 0; transform: rotate(-8deg); border-radius: 45% 48% 0 0; }
+        #siji-reference-home .sr-ridge-back { bottom: 13px; background: linear-gradient(175deg, #778c783d, #b6bd9c16); clip-path: polygon(0 50%, 11% 34%, 24% 44%, 38% 18%, 52% 32%, 66% 0, 83% 24%, 100% 10%, 100% 100%, 0 100%); }
+        #siji-reference-home .sr-ridge-mid { height: 116px; bottom: -19px; transform: rotate(7deg); background: linear-gradient(170deg, #6b816660, #81966e12); clip-path: polygon(0 24%, 19% 0, 39% 35%, 56% 22%, 76% 53%, 100% 27%, 100% 100%, 0 100%); }
+        #siji-reference-home .sr-ridge-front { height: 92px; bottom: -28px; background: linear-gradient(165deg, #b69c5e7d, #cabc9299); }
+        #siji-reference-home .sr-herb { position: absolute; left: 51px; bottom: 24px; width: 86px; height: 135px; transform: rotate(-16deg); }
+        #siji-reference-home .sr-stem { position: absolute; left: 40px; top: 7px; width: 1px; height: 128px; background: #50694d99; transform: rotate(7deg); }
+        #siji-reference-home .sr-leaf { position: absolute; width: 31px; height: 13px; border-radius: 1px 90% 1px 90%; background: linear-gradient(15deg, #688061b3, #80907055); transform-origin: right bottom; }
+        #siji-reference-home .sr-leaf:nth-child(2) { left: 12px; top: 28px; transform: rotate(22deg); }
+        #siji-reference-home .sr-leaf:nth-child(3) { left: 41px; top: 43px; transform: rotate(-78deg); }
+        #siji-reference-home .sr-leaf:nth-child(4) { left: 10px; top: 67px; transform: rotate(18deg); }
+        #siji-reference-home .sr-leaf:nth-child(5) { left: 36px; top: 88px; transform: rotate(-70deg); }
+        #siji-reference-home .sr-leaf:nth-child(6) { left: 25px; top: 0; width: 27px; transform: rotate(-43deg); }
+        #siji-reference-home .sr-hero-label { position: absolute; top: 24px; left: 20px; writing-mode: vertical-rl; font: 12px/1.7 var(--sr-song); color: var(--on-accent); background: var(--accent-fill); padding: 8px 4px; border-radius: 2px; letter-spacing: 3px; }
+        #siji-reference-home .sr-hero-title { position: absolute; right: 33px; top: 34px; font: 500 42px/1.25 var(--sr-song); letter-spacing: 7px; writing-mode: vertical-rl; color: #394b3b; }
+        #siji-reference-home .sr-hero-copy { position: absolute; right: 101px; top: 38px; writing-mode: vertical-rl; font: 13px/1.7 var(--sr-song); letter-spacing: 3px; color: #565e4a; }
+        #siji-reference-home .sr-hero-caption { position: absolute; left: 20px; bottom: 16px; font-size: 12px; letter-spacing: 1px; color: #46543f; }
+        #siji-reference-home .sr-pagination { height: 44px; display: flex; align-items: center; justify-content: center; }
+        #siji-reference-home .sr-pagination button { width: 44px; height: 44px; border: 0; background: transparent; padding: 0; display: grid; place-items: center; }
+        #siji-reference-home .sr-slide-button { cursor: pointer; }
+        #siji-reference-home .sr-slide-button:focus-visible { outline: 2px solid var(--sr-red); outline-offset: -6px; border-radius: 8px; }
+        #siji-reference-home .sr-pagination button::after { content: ""; width: 5px; height: 5px; border-radius: 5px; background: var(--control-line); }
+        #siji-reference-home .sr-pagination button[aria-pressed="true"]::after { width: 16px; background: var(--accent-fill); }
+        #siji-reference-home .sr-entry-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 20px 16px; padding: 4px 28px 32px; }
+        #siji-reference-home .sr-entry { width: 100%; max-width: 80px; aspect-ratio: 1; justify-self: center; position: relative; display: grid; place-items: center; border: 1px solid var(--control-line); border-radius: 50%; padding: 0; background: transparent; }
+        #siji-reference-home .sr-entry:last-child { border-color: var(--sr-red); background: var(--accent-soft); }
+        #siji-reference-home .sr-entry span { font: 500 16px/1.6 var(--sr-song); letter-spacing: 2px; color: var(--sr-ink); padding-left: 2px; }
+        #siji-reference-home .sr-entry:last-child span { color: var(--sr-red); }
+        #siji-reference-home .sr-editorial { padding: 0 24px 24px; }
+        #siji-reference-home .sr-editorial-head { border-top: 1px solid var(--sr-rule); padding-top: 24px; margin-bottom: 16px; display: flex; align-items: baseline; justify-content: space-between; }
+        #siji-reference-home .sr-editorial-head h2 { font: 600 18px/1.4 var(--sr-song); letter-spacing: 2px; }
+        #siji-reference-home .sr-editorial-head span { font-size: 12px; color: var(--sr-sub); }
+        #siji-reference-home .sr-article { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 16px; padding-bottom: 20px; }
+        #siji-reference-home .sr-article + .sr-article { border-top: 1px solid var(--line); padding-top: 16px; padding-bottom: 0; }
+        #siji-reference-home .sr-thumb { height: 105px; position: relative; overflow: hidden; border-radius: 4px; background: linear-gradient(145deg, #e5e6d4, #bec9ad); }
+        #siji-reference-home .sr-thumb::before { content: ""; position: absolute; width: 125px; height: 90px; background: #7e94733b; left: -17px; top: 56px; border-radius: 50%; transform: rotate(-17deg); }
+        #siji-reference-home .sr-thumb span { position: absolute; font: 24px/1.3 var(--sr-song); writing-mode: vertical-rl; letter-spacing: 5px; top: 15px; right: 17px; color: #56674f; }
+        #siji-reference-home .sr-thumb.sr-ochre { background: linear-gradient(150deg, #efe5cd, #d6c399); }
+        #siji-reference-home .sr-thumb.sr-ochre::before { background: #a5895b33; }
+        #siji-reference-home .sr-thumb.sr-ochre span { color: #826d49; }
+        #siji-reference-home .sr-article h3 { font: 600 16px/1.5 var(--sans); margin: 0 0 8px; }
+        #siji-reference-home .sr-article p { font-size: 14px; line-height: 1.7; color: var(--sr-sub); }
+        #siji-reference-home .sr-article-foot { margin-top: 12px; display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--sr-sub); font-size: 12px; }
+        #siji-reference-home .sr-article-actions { display: flex; gap: 9px; }
+        #siji-reference-home .sr-article-actions svg { width: 16px; height: 16px; stroke-width: 1.75; }
+        #siji-reference-home .sr-safe-area { height: 22px; display: grid; place-items: center; }
+        #siji-reference-home .sr-safe-area span { width: 110px; height: 4px; background: var(--ink); border-radius: 4px; }
+        @media (max-width: 370px) {
+          #siji-reference-home { padding: 0; }
+          #siji-reference-home .sr-nav { padding-inline: 16px; }
+          #siji-reference-home .sr-search { margin-inline: 16px; }
+          #siji-reference-home .sr-entry-grid { padding-left: 24px; padding-right: 24px; gap: 20px 16px; }
+          #siji-reference-home .sr-editorial { padding-inline: 16px; }
+          #siji-reference-home .sr-article { grid-template-columns: 80px minmax(0, 1fr); gap: 11px; }
+        }
+      </style>
+      <!-- Icons: Lucide 1.17.0. License: assets/lucide-LICENSE.txt. -->
+      <section class="sr-phone" aria-label="司籍处首页">
+        <div class="sr-status" aria-hidden="true"><span>9:41</span><span class="sr-status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+        <header class="sr-nav">
+          <div class="sr-wordmark"><span class="sr-seal" aria-hidden="true">籍</span><h1>司籍处</h1></div>
+          <div class="sr-capsule" aria-hidden="true"><span class="sr-dots">•••</span><span class="sr-capsule-divider"></span><span class="sr-close"></span></div>
+        </header>
+        <div class="sr-search" role="search" aria-label="搜索">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m21 21-4.34-4.34"></path><circle cx="11" cy="11" r="8"></circle></svg><input aria-label="搜索文章、活动与服务" placeholder="搜索文章、活动与服务" disabled><button type="button" disabled>搜索</button>
+        </div>
+        <section class="sr-hero" aria-label="推荐专题" aria-live="polite">
+          <div class="sr-landscape" aria-hidden="true"><span class="sr-sun"></span><span class="sr-ridge sr-ridge-back"></span><span class="sr-ridge sr-ridge-mid"></span><span class="sr-ridge sr-ridge-front"></span><span class="sr-herb"><span class="sr-stem"></span><span class="sr-leaf"></span><span class="sr-leaf"></span><span class="sr-leaf"></span><span class="sr-leaf"></span><span class="sr-leaf"></span></span></div>
+          <span class="sr-hero-label">文化传承</span><h2 class="sr-hero-title">本草之间</h2><p class="sr-hero-copy">一草一木，皆有来处</p><span class="sr-hero-caption">走近本草 · 读懂传统</span>
+        </section>
+        <div class="sr-pagination" aria-label="切换专题">
+          <button type="button" class="sr-slide-button" aria-label="本草之间" aria-pressed="true" data-slide="0"></button>
+          <button type="button" class="sr-slide-button" aria-label="四时有序" aria-pressed="false" data-slide="1"></button>
+          <button type="button" class="sr-slide-button" aria-label="雅集相约" aria-pressed="false" data-slide="2"></button>
+        </div>
+        <nav class="sr-entry-grid" aria-label="服务与栏目">
+          <button class="sr-entry" type="button" disabled><span>线上<br>展馆</span></button>
+          <button class="sr-entry" type="button" disabled><span>知识<br>科普</span></button>
+          <button class="sr-entry" type="button" disabled><span>趣味<br>互动</span></button>
+          <button class="sr-entry" type="button" disabled><span>欢迎<br>投稿</span></button>
+          <button class="sr-entry" type="button" disabled><span>参与<br>活动</span></button>
+          <button class="sr-entry" type="button" disabled><span>员工<br>服务</span></button>
+        </nav>
+        <section class="sr-editorial" aria-label="推荐阅读">
+          <div class="sr-editorial-head"><h2>四时拾记</h2><span>文化 · 生活</span></div>
+          <article class="sr-article">
+            <div class="sr-thumb" aria-hidden="true"><span>春生</span></div>
+            <div><h3>四时有序，草木有时</h3><p>从一草一木出发，读一读藏在四季里的传统文化。</p><div class="sr-article-foot"><span>文化专栏</span><span class="sr-article-actions" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5"></path></svg></span></div></div>
+          </article>
+          <article class="sr-article">
+            <div class="sr-thumb sr-ochre" aria-hidden="true"><span>食趣</span></div>
+            <div><h3>人间烟火，一味一故事</h3><p>循着熟悉的食材，探寻日常饮食中的风物与记忆。</p><div class="sr-article-foot"><span>生活随笔</span><span class="sr-article-actions" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 9.5a5.5 5.5 0 0 1 9.591-3.676.56.56 0 0 0 .818 0A5.49 5.49 0 0 1 22 9.5c0 2.29-1.5 4-3 5.5l-5.492 5.313a2 2 0 0 1-3 .019L5 15c-1.5-1.5-3-3.2-3-5.5"></path></svg></span></div></div>
+          </article>
+        </section>
+        <div class="sr-safe-area" aria-hidden="true"><span></span></div>
+      </section>
+      <script>
+        (() => {
+          const root = document.getElementById('siji-reference-home');
+          const slides = [
+            ['文化传承', '本草之间', '一草一木，皆有来处', '走近本草 · 读懂传统'],
+            ['四时风物', '四时有序', '循着节气，读懂四季', '春生夏长 · 秋收冬藏'],
+            ['相聚时光', '雅集相约', '以文会友，共赴雅集', '文化相伴 · 好友同行']
+          ];
+          const controls = Array.from(root.querySelectorAll('[data-slide]'));
+          const labels = ['.sr-hero-label', '.sr-hero-title', '.sr-hero-copy', '.sr-hero-caption'].map(selector => root.querySelector(selector));
+          function selectSlide(index) {
+            if (!Number.isInteger(index) || !slides[index]) return;
+            labels.forEach((element, position) => { element.textContent = slides[index][position]; });
+            controls.forEach((button, position) => button.setAttribute('aria-pressed', String(position === index)));
+          }
+          controls.forEach(button => button.addEventListener('click', () => selectSlide(Number(button.dataset.slide))));
+        })();
+      </script>
+    </div>
+    <div class="phone" aria-label="员工服务暂停">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar">员工服务<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="page-lead"><h2>员工服务已暂停</h2><p>如需恢复，请联系医院管理员。</p></div>
+        <div class="alert warn">暂停期间无法申请工号或工牌。尚未发放的申请仍可取消。</div>
+        <div class="card">
+          <div class="row"><span class="bold small">新办工牌</span><span class="tag amber">审核通过 · 已暂停</span></div>
+          <div class="dim small mt">10-06 提交 · 尚未发放</div>
+          <div class="btn danger mt" style="margin-bottom:0">取消这份申请</div>
+        </div>
+        <div class="list">
+          <div class="item"><span style="color:var(--danger)">结束员工服务</span><span class="chev">›</span></div>
+        </div>
+        <div class="faint small">结束后，未发放的工牌申请将停止办理，重新加入也不会恢复。账户仍可使用。</div>
+      </div>
+      <div class="tabbar"><div class="on"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M3 9h18"></path><path d="M9 21V9"></path></svg>办理</div><div><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 10h2"></path><path d="M16 14h2"></path><path d="M6.17 15a3 3 0 0 1 5.66 0"></path><circle cx="9" cy="11" r="2"></circle><rect x="2" y="5" width="20" height="14" rx="2"></rect></svg>工牌</div><div><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="5"></circle><path d="M20 21a8 8 0 0 0-16 0"></path></svg>我的</div></div>
+    </div>
+  </div>
+</article>
+
+<!-- Employee services: normal state and shared page shell. -->
+<article class="page" id="p-services">
+  <header class="page-head">
+    <h2>员工服务主页与结束态</h2>
+    <a href="orbit-notes.html#p-services">旁注 ›</a>
+  </header>
+  <div class="phones">
+    <div class="phone">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 4v16"></path></svg><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 20h.01M2 8.82a15 15 0 0 1 20 0M5 12.859a10 10 0 0 1 14 0M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 10v4M14 10v4M22 14v-4M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar">员工服务<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="service-welcome"><div class="avatar-circle" aria-hidden="true">远</div><div><h2>陈思远，你好</h2><p class="dim small">欢迎使用员工服务</p></div></div>
+        <div class="card service-number"><div><span class="dim small">我的工号</span><strong>12607</strong></div><a class="text-link" href="#number-current">查看工号 ›</a></div>
+        <div class="section-heading"><h3>工号与工牌</h3></div>
+        <div class="list">
+          <a class="service-link" href="#p-apply"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><circle cx="9" cy="10" r="2"></circle><path d="M6 16a3 3 0 0 1 6 0M15 10h3M15 14h3"></path></svg><span><strong>申请工牌</strong><small>填写信息，预览并提交</small></span><span class="faint" aria-hidden="true">›</span></a>
+          <a class="service-link" href="#p-photo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="9" cy="9" r="2"></circle><path d="m21 15-5-5L5 21"></path></svg><span><strong>工牌照片</strong><small>上传或选择证件照</small></span><span class="faint" aria-hidden="true">›</span></a>
+        </div>
+        <div class="section-heading"><h3>最近申请</h3><a class="text-link" href="#p-history">全部记录 ›</a></div>
+        <a class="card history-card" href="#p-detail">
+          <div class="row"><strong class="small">换证 · 呼吸内科</strong><span class="tag amber">待审核</span></div>
+          <div class="dim small mt">10-08 提交 · 整套</div>
+          <div class="dim small mt">领取地点：门诊一楼服务台</div>
+        </a>
+        <div class="btn danger">结束员工服务</div>
+        <a class="text-link service-return" href="#p-home">浏览医院文化与科普 ›</a>
+      </div>
+      <nav class="tabbar" aria-label="员工服务导航">
+        <a class="on" href="#p-services" aria-current="page"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M3 9h18M9 21V9"></path></svg>办理</a>
+        <a href="#p-history"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 10h2M16 14h2M6.17 15a3 3 0 0 1 5.66 0"></path><circle cx="9" cy="11" r="2"></circle><rect x="2" y="5" width="20" height="14" rx="2"></rect></svg>工牌</a>
+        <a href="#p-me"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="5"></circle><path d="M20 21a8 8 0 0 0-16 0"></path></svg>我的</a>
+      </nav>
+    </div>
+    <div class="phone" id="services-ended" aria-label="员工服务">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar"><a class="back" href="#p-home" aria-label="返回">‹</a>员工服务<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="page-lead"><div class="eyebrow">服务状态</div><h2>员工服务已结束</h2><p>如需再次使用，请重新加入。</p></div>
+        <div class="card small">
+          <p>原有的未发放工牌申请已停止办理，重新加入后也不会恢复。</p>
+          <p class="mt">员工服务结束不影响已有工号。再次加入后，可按当前资料申请工牌。</p>
+        </div>
+        <p class="dim small">账户仍可使用，也可以继续浏览医院文化与科普。</p>
+        <div class="list mt"><a class="item" href="#p-me"><span>我的账户</span><span class="chev">›</span></a></div>
+        <p class="dim small mt">没有邀请码，请联系医院管理员。</p>
+      </div>
+      <div class="phone-footer"><a class="btn primary" href="#p-invite">使用邀请码重新加入</a><a class="btn ghost" href="#p-home">浏览首页</a></div>
+    </div>
+  </div>
+</article>
+
+<!-- ============ 6. 邀请码接纳 ============ -->
+<article class="page" id="p-invite">
+  <header class="page-head">
+    <h2>邀请码接纳</h2>
+    <a href="orbit-notes.html#p-invite">旁注 ›</a>
+  </header>
+  <div class="phones">
+    <div class="phone">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar"><span class="back">‹</span>使用邀请码<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="page-lead"><p>使用医院提供的邀请码，加入员工服务。</p></div>
+        <div class="field"><label>邀请码</label><div class="box"><span class="ph">请输入邀请码</span></div></div>
+        <div class="faint small">没有邀请码，请联系医院管理员。</div>
+        <a class="text-link service-return" href="#p-me">我的账户 ›</a>
+      </div>
+      <div class="phone-footer"><div class="btn primary">使用邀请码</div><div class="btn">扫描邀请二维码</div></div>
+    </div>
+  </div>
+</article>
+
+<!-- ============ 7. 首次领号 ============ -->
+<article class="page" id="p-number">
+  <header class="page-head">
+    <h2>工号</h2>
+    <a href="orbit-notes.html#p-number">旁注 ›</a>
+  </header>
+  <div class="phones">
+    <div class="phone" aria-label="尚无工号">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar"><span class="back">‹</span>工号<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="card number-card">
+          <div class="dim small">我的工号</div>
+          <div class="big mt">暂无工号</div>
+          <div class="dim small mt">申请时请选择人员类别</div>
+        </div>
+        <div class="faint small">往年入职但尚无工号，请联系管理员办理。</div>
+      </div>
+      <div class="phone-footer"><a class="btn primary" href="#number-select">申请工号</a></div>
+    </div>
+    <div class="phone" id="number-current" aria-label="已有工号">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar"><span class="back">‹</span>工号<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="card hero number-card">
+          <div class="dim small">工号</div>
+          <div class="number-value">12607</div>
+        </div>
+        <div class="faint small">工号有误，请联系管理员更正。</div>
+      </div>
+    </div>
+    <div class="phone" id="number-select" aria-label="选择人员类别">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar"><a class="back" href="#p-number" aria-label="返回">‹</a>选择人员类别<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="page-lead"><h2>请选择人员类别</h2><p>按本人的实际情况选择，用于分配工号。</p></div>
+        <div class="field"><label for="number-subtype">人员类别</label>
+          <select class="box state-select" id="number-subtype">
+            <option value="">请选择</option>
+            <option value="100">临床</option><option value="200">护理</option>
+            <option value="300">医技</option><option value="400">药剂</option>
+            <option value="500">财务</option><option value="600">行政</option>
+            <option value="700">后勤</option>
+            <optgroup label="第三方人员">
+              <option value="801">第三方公司</option><option value="802">保安</option>
+              <option value="803">物业</option><option value="804">志愿者</option>
+            </optgroup>
+            <optgroup label="学习及培训人员">
+              <option value="901">见习</option><option value="902">实习</option>
+              <option value="903">进修生</option><option value="904">学生</option>
+            </optgroup>
+            <option value="1000">临时人员</option>
+          </select>
+        </div>
+        <p class="dim small">第三方人员、学习及培训人员，请选择具体类别。</p>
+        <div class="divider"></div>
+        <p class="dim small">今年入职且尚无工号，可在此申请。往年入职或曾有工号，请联系管理员办理。</p>
+      </div>
+      <div class="phone-footer"><button class="btn primary state-next" id="number-next" type="button" disabled>下一步</button></div>
+    </div>
+    <div class="phone" id="number-confirm" aria-label="确认申请工号">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar"><a class="back" href="#number-select" aria-label="返回">‹</a>确认申请工号<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="page-lead"><h2>确认人员类别</h2><p>请核对后再申请。</p></div>
+        <div class="card small detail-card">
+          <div class="row"><span class="dim">姓名</span><span>陈思远</span></div>
+          <div class="row mt"><span class="dim">人员类别</span><span id="number-confirm-category">临床</span></div>
+        </div>
+        <p class="dim small">确认后，系统将为你分配工号，无需等待审核。</p>
+        <p class="dim small mt">类别选错了，请返回修改。工号分配后如需更正，请联系管理员。</p>
+      </div>
+      <div class="phone-footer"><div class="btn primary">确认申请</div><a class="btn ghost" href="#number-select">返回修改</a></div>
+    </div>
+  </div>
+</article>
+
+<!-- ============ 8. 政治面貌 ============ -->
+<article class="page" id="p-affiliation">
+  <header class="page-head">
+    <h2>政治面貌（Center）</h2>
+    <a href="orbit-notes.html#p-affiliation">旁注 ›</a>
+  </header>
+  <div class="phones">
+    <div class="phone">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar"><span class="back">‹</span>政治面貌<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="card">
+          <div class="row"><span class="dim small">政治面貌</span><span class="tag gray">未填写</span></div>
+        </div>
+        <div class="field"><label>选择政治面貌</label><div class="box picker"><span class="ph">请选择</span><span class="faint">›</span></div></div>
+        <div class="faint small">选填，不影响工牌申请。保存后无法自行修改，请核对后再保存。</div>
+      </div>
+      <div class="phone-footer"><div class="btn primary">保存</div></div>
+    </div>
+    <div class="phone" id="affiliation-current" aria-label="政治面貌">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar"><a class="back" href="#p-me" aria-label="返回">‹</a>政治面貌<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="card">
+          <div class="row"><span class="dim small">当前政治面貌</span><span class="tag green">已填写</span></div>
+          <h2 class="mt">中共党员</h2>
+          <p class="dim small mt">生效日期：2026-10-01</p>
+        </div>
+        <p class="dim small">信息如需更正，请联系管理员。</p>
+        <div class="section-label">历史记录</div>
+        <div class="list">
+          <div class="item"><span>中共党员</span><span class="dim small">2026-10-01</span></div>
+          <div class="item"><span>中共预备党员</span><span class="dim small">2025-10-01</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</article>
+
+<!-- ============ 9. 工牌照片 ============ -->
+<article class="page" id="p-photo">
+  <header class="page-head">
+    <h2>工牌照片（Photo）</h2>
+    <a href="orbit-notes.html#p-photo">旁注 ›</a>
+  </header>
+  <div class="phones">
+    <div class="phone" aria-label="照片列表">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar"><span class="back">‹</span>工牌照片<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="page-lead"><p>请选择照片，或上传新照片。</p></div>
+        <div class="thumbrow mb">
+          <div class="thumb portrait sel"><span>照片 A · 已选</span></div>
+          <div class="thumb portrait"><span>照片 B</span></div>
+          <div class="thumb upload"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 5h6"></path><path d="M19 2v6"></path><path d="M21 11.5V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h7.5"></path><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"></path><circle cx="9" cy="9" r="2"></circle></svg><span>上传照片</span></div>
+        </div>
+        <div class="faint small">工牌照片与个人头像分别设置。</div>
+      </div>
+      <div class="phone-footer"><a class="btn primary" href="#p-apply">使用所选照片</a></div>
+    </div>
+    <div class="phone" aria-label="调整照片">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar">调整照片<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen crop-screen">
+        <div class="page-lead"><p>请将人像置于框内，保持面部清晰、完整。</p></div>
+        <div class="crop-stage"><div class="crop-frame portrait" role="img" aria-label="工牌照片裁切效果示意，框内为人像和辅助线"><span class="crop-grid"></span></div></div>
+        <p class="crop-caption">拖动照片调整位置，双指缩放大小</p>
+      </div>
+      <div class="phone-footer">
+        <div class="row mb"><span class="btn ghost" style="margin:0;flex:1">↺ 旋转</span><span class="btn ghost" style="margin:0;flex:1">重新选图</span></div>
+        <div class="btn primary" style="margin-bottom:0">确认使用</div>
+      </div>
+    </div>
+  </div>
+</article>
+
+<!-- ============ 10. 申请 · 目录选择 ============ -->
+<article class="page" id="p-apply">
+  <header class="page-head">
+    <h2>申请 · 目录选择</h2>
+    <a href="orbit-notes.html#p-apply">旁注 ›</a>
+  </header>
+  <div class="phones">
+    <div class="phone">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar"><span class="back">‹</span>工牌申请<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="page-lead"><p>请核对照片与个人信息，预览后再提交。</p></div>
+        <fieldset class="demand-options">
+          <legend>需要哪些物品</legend>
+          <div class="demand-grid">
+            <label class="demand-choice"><input type="radio" name="badge-demand" value="insert"><span>内页</span></label>
+            <label class="demand-choice"><input type="radio" name="badge-demand" value="holder"><span>外壳</span></label>
+            <label class="demand-choice"><input type="radio" name="badge-demand" value="set" checked><span>整套</span></label>
+          </div>
+          <p class="small dim">整套包含内页和外壳。</p>
+        </fieldset>
+        <div class="field"><label>工牌照片</label><div class="box picker"><span>照片 A · 已选</span><span class="faint">›</span></div></div>
+        <div class="field"><label>科室</label>
+          <div class="box picker"><span><span class="picker-path">总院 / 内科</span>呼吸内科</span><span class="faint">›</span></div>
+        </div>
+        <div class="field"><label>职务（可不填）</label><div class="box picker"><span>科主任 ✕</span><span class="faint">›</span></div></div>
+        <div class="field"><label>职称（可不填）</label><div class="box picker"><span>副主任医师 ✕</span><span class="faint">›</span></div><p class="small dim">不填时，工牌上显示“无”。</p></div>
+      </div>
+      <div class="phone-footer"><a class="btn primary" href="#p-preview">预览工牌</a></div>
+    </div>
+  </div>
+</article>
+
+<!-- ============ 11. 预览确认 ============ -->
+<article class="page" id="p-preview">
+  <header class="page-head">
+    <h2>预览确认</h2>
+    <a href="orbit-notes.html#p-preview">旁注 ›</a>
+  </header>
+  <div class="phones">
+    <div class="phone" aria-label="工牌预览">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar"><span class="back">‹</span>工牌预览<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="badge-face">
+          <img class="badge-background" src="assets/badge-production-2026.png" alt="东台市中医院正式工牌底图" width="1022" height="650">
+          <div class="photo portrait" role="img" aria-label="示例照片轮廓"></div>
+          <span class="badge-text badge-name" aria-label="姓名：陈思远">陈思远</span>
+          <span class="badge-text badge-title" aria-label="职称：副主任医师">副主任医师</span>
+          <span class="badge-text badge-number" aria-label="工号：12607">12607</span>
+          <span class="badge-text badge-section" aria-label="科室与职务：呼吸内科 科主任">呼吸内科 科主任</span>
+        </div>
+        <div class="card small detail-card"><div class="row"><span class="dim">申请物品</span><span>整套（内页和外壳）</span></div></div>
+        <div class="field"><label>领取地点</label>
+          <div class="box picker"><span>门诊一楼服务台</span><span class="faint">›</span></div>
+        </div>
+        <div class="check-row"><span aria-hidden="true">✓</span><span>我已核对工牌信息、申请物品和领取地点</span></div>
+        <div class="faint small">审核未通过时，可修改后再次提交。待审核或审核通过但尚未发放时，如需修改，请先取消再重新办理。</div>
+      </div>
+      <div class="phone-footer"><div class="btn primary">提交申请</div></div>
+    </div>
+    <div class="phone" aria-label="工牌预览加载异常">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar"><span class="back">‹</span>工牌预览<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="page-lead"><h2>工牌预览暂不可用</h2></div>
+        <div class="badge-face preview-unavailable">
+          <span>预览未完成</span>
+        </div>
+        <div class="alert">工牌字体未能加载，请重新打开本页。仍无法显示时，请联系管理员。</div>
+      </div>
+      <div class="phone-footer"><div class="btn disabled" aria-disabled="true">暂时无法提交</div></div>
+    </div>
+  </div>
+</article>
+
+<!-- ============ 12. 409 资料变化 ============ -->
+<article class="page" id="p-changed">
+  <header class="page-head">
+    <h2>409 资料变化</h2>
+    <a href="orbit-notes.html#p-changed">旁注 ›</a>
+  </header>
+  <div class="phones">
+    <div class="phone">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar"><span class="back">‹</span>资料已更新<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="alert warn"><p>资料已更新，请重新预览并确认。</p><p class="mt">本次申请尚未提交。</p></div>
+        <div class="card diff">
+          <div class="bold small mb">原信息 → 更新后</div>
+          <div class="chg"><span style="width:64px" class="dim">工牌样式</span><span class="old">旧版</span><span>→</span><span class="new">新版</span></div>
+          <div class="chg"><span style="width:64px" class="dim">科室名称</span><span class="old">呼吸内科</span><span>→</span><span class="new">呼吸与危重症医学科</span></div>
+          <div class="chg"><span style="width:64px" class="dim">职称</span><span class="old">副主任医师</span><span>→</span><span class="new">主任医师</span></div>
+        </div>
+      </div>
+      <div class="phone-footer"><a class="btn primary" href="#p-preview">重新预览</a><div class="btn ghost bold">暂不提交</div></div>
+    </div>
+  </div>
+</article>
+
+<!-- ============ 13. 申请详情 ============ -->
+<article class="page" id="p-detail">
+  <header class="page-head">
+    <h2>申请详情</h2>
+    <a href="orbit-notes.html#p-detail">旁注 ›</a>
+  </header>
+  <div class="phones">
+    <div class="phone">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar"><span class="back">‹</span>申请详情<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="page-lead"><div class="eyebrow">换证申请</div><h2>待审核</h2></div>
+        <div class="steps"><div class="dot done">✓</div><div class="bar"></div><div class="dot now">2</div><div class="bar"></div><div class="dot">3</div></div>
+        <div class="steps-labels"><span>提交申请</span><span>审核</span><span>发放工牌</span></div>
+        <div class="section-label">申请信息</div>
+        <div class="card small detail-card">
+          <div class="row"><span class="dim">姓名</span><span>陈思远</span></div>
+          <div class="row mt"><span class="dim">科室与职务</span><span>呼吸内科 科主任</span></div>
+          <div class="row mt"><span class="dim">职称</span><span>副主任医师</span></div>
+          <div class="row mt"><span class="dim">工号</span><span>12607</span></div>
+          <div class="row mt"><span class="dim">申请物品</span><span>整套（内页和外壳）</span></div>
+          <div class="row mt"><span class="dim">领取地点</span><span>门诊一楼服务台</span></div>
+          <div class="row mt"><span class="dim">提交时间</span><span>2026-10-08 14:32</span></div>
+        </div>
+        <div class="row mb"><span class="dim small">提交记录</span><span class="small bold" style="color:var(--accent)">查询提交结果 ›</span></div>
+      </div>
+      <div class="phone-footer"><div class="btn danger">取消申请</div><p class="dim small">取消后不可恢复。其他申请不受影响。</p></div>
+    </div>
+  </div>
+</article>
+
+<!-- ============ 14. 驳回重提 ============ -->
+<article class="page" id="p-resubmit">
+  <header class="page-head">
+    <h2>驳回重提</h2>
+    <a href="orbit-notes.html#p-resubmit">旁注 ›</a>
+  </header>
+  <div class="phones">
+    <div class="phone">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar"><span class="back">‹</span>重新提交<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="page-lead"><h2>审核未通过</h2></div>
+        <div class="card rejection-card">
+          <div class="bold small" style="color:var(--danger)">审核意见</div>
+          <div class="small mt" style="color:var(--danger)">照片背景不是纯色，请重新上传一张纯色背景的证件照。</div>
+        </div>
+        <div class="card diff">
+          <div class="bold small mb">修改内容</div>
+          <div class="chg"><span style="width:64px" class="dim">照片</span><span class="old">照片 A</span><span>→</span><span class="new">照片 C（新上传）</span></div>
+        </div>
+        <div class="field"><label>领取地点</label><div class="box picker"><span>门诊一楼服务台</span><span class="faint">›</span></div></div>
+        <div class="card small detail-card"><div class="row"><span class="dim">申请物品</span><span>整套（内页和外壳）</span></div></div>
+        <div class="check-row"><span aria-hidden="true">✓</span><span>我已按要求修改</span></div>
+      </div>
+      <div class="phone-footer"><a class="btn primary" href="#p-preview">重新预览</a></div>
+    </div>
+  </div>
+</article>
+
+<!-- ============ 15. 申请历史 ============ -->
+<article class="page" id="p-history">
+  <header class="page-head">
+    <h2>申请历史（tab 2）</h2>
+    <a href="orbit-notes.html#p-history">旁注 ›</a>
+  </header>
+  <div class="phones">
+    <div class="phone">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar">工牌<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="card history-card">
+          <div class="row"><span class="bold small">换证 · 呼吸内科</span><span class="tag amber">待审核</span></div>
+          <div class="dim small mt">10-08 提交 · 整套</div>
+          <div class="dim small mt">领取地点：门诊一楼服务台</div>
+        </div>
+        <div class="card history-card">
+          <div class="row"><span class="bold small">增办 · 心血管内科</span><span class="tag blue">审核通过</span></div>
+          <div class="dim small mt">10-06 提交</div>
+          <div class="dim small mt">领取地点：行政楼 203</div>
+        </div>
+        <div class="card history-card">
+          <div class="row"><span class="bold small">新办 · 心血管内科</span><span class="tag green">已发放</span></div>
+          <div class="dim small mt">08-12 发放</div>
+          <div class="dim small mt">领取地点：门诊一楼服务台</div>
+        </div>
+        <div class="card history-card">
+          <div class="row"><span class="bold small">新办 · 急诊医学科</span><span class="tag gray">已取消</span></div>
+          <div class="dim small mt">06-20 提交 · 本人取消</div>
+        </div>
+      </div>
+      <div class="phone-footer"><a class="btn primary" href="#p-apply">＋ 申请工牌</a></div>
+      <div class="tabbar"><div><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M3 9h18"></path><path d="M9 21V9"></path></svg>办理</div><div class="on"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 10h2"></path><path d="M16 14h2"></path><path d="M6.17 15a3 3 0 0 1 5.66 0"></path><circle cx="9" cy="11" r="2"></circle><rect x="2" y="5" width="20" height="14" rx="2"></rect></svg>工牌</div><div><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="5"></circle><path d="M20 21a8 8 0 0 0-16 0"></path></svg>我的</div></div>
+    </div>
+  </div>
+</article>
+
+<!-- ============ 16. 我的 ============ -->
+<article class="page" id="p-me">
+  <header class="page-head">
+    <h2>我的（tab 3）</h2>
+    <a href="orbit-notes.html#p-me">旁注 ›</a>
+  </header>
+  <div class="phones">
+    <div class="phone">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar">我的<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="card profile-card">
+          <div class="row">
+            <div class="row" style="gap:10px"><div class="avatar-circle">远</div><div class="bold">陈思远</div></div>
+            <span class="tag green">账户正常</span>
+          </div>
+        </div>
+        <div class="section-label">个人资料</div>
+        <div class="list">
+          <div class="item"><span>头像</span><span class="chev">›</span></div>
+          <a class="item" href="#p-sessions"><span>登录方式</span><span class="chev">›</span></a>
+          <a class="item" href="#affiliation-current"><span>政治面貌</span><span class="chev">›</span></a>
+        </div>
+        <div class="section-label">帮助与说明</div>
+        <div class="list">
+          <div class="item"><span>隐私政策</span><span class="chev">›</span></div>
+          <div class="item"><span>服务条款</span><span class="chev">›</span></div>
+          <div class="item"><span>帮助与支持</span><span class="chev">›</span></div>
+        </div>
+        <div class="section-label">账户</div>
+        <div class="list">
+          <div class="item"><span>退出登录</span><span class="chev">›</span></div>
+        </div>
+        <div class="faint small">更换手机号或注销账户，请在司籍处网站办理。</div>
+      </div>
+      <div class="tabbar"><div><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="18" x="3" y="3" rx="2"></rect><path d="M3 9h18"></path><path d="M9 21V9"></path></svg>办理</div><div><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 10h2"></path><path d="M16 14h2"></path><path d="M6.17 15a3 3 0 0 1 5.66 0"></path><circle cx="9" cy="11" r="2"></circle><rect x="2" y="5" width="20" height="14" rx="2"></rect></svg>工牌</div><div class="on"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="5"></circle><path d="M20 21a8 8 0 0 0-16 0"></path></svg>我的</div></div>
+    </div>
+  </div>
+</article>
+
+<!-- ============ 17. 登录方式 ============ -->
+<article class="page" id="p-sessions">
+  <header class="page-head">
+    <h2>登录方式</h2>
+    <a href="orbit-notes.html#p-sessions">旁注 ›</a>
+  </header>
+  <div class="phones">
+    <div class="phone">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar"><span class="back">‹</span>登录方式<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="list">
+          <div class="item"><span>手机号登录</span><span class="dim">通过微信验证手机号</span></div>
+          <div class="item"><span>微信</span><span class="tag green">已绑定</span></div>
+        </div>
+        <div class="btn danger">解除微信绑定</div>
+        <div class="faint small">解除绑定会退出通过微信登录的网站和小程序。手机号登录不受影响。</div>
+        <div class="divider"></div><div class="section-label">登录安全</div>
+        <div class="list">
+          <div class="item"><span>退出全部设备</span><span class="chev">›</span></div>
+        </div>
+        <div class="faint small">包括当前设备上的登录，以及其他设备上的网站和小程序登录。</div>
+      </div>
+    </div>
+    <div class="phone" id="sessions-unbound" aria-label="登录方式">
+      <div class="statusbar" aria-hidden="true"><span>9:41</span><span class="status-icons"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 20h.01"></path><path d="M7 20v-4"></path><path d="M12 20v-8"></path><path d="M17 20V8"></path><path d="M22 4v16"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h.01"></path><path d="M2 8.82a15 15 0 0 1 20 0"></path><path d="M5 12.859a10 10 0 0 1 14 0"></path><path d="M8.5 16.429a5 5 0 0 1 7 0"></path></svg><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 10v4"></path><path d="M14 10v4"></path><path d="M22 14v-4"></path><path d="M6 10v4"></path><rect x="2" y="6" width="16" height="12" rx="2"></rect></svg></span></div>
+      <div class="navbar"><a class="back" href="#p-me" aria-label="返回">‹</a>登录方式<span class="mini-capsule" aria-hidden="true"><span class="dots">•••</span><span class="separator"></span><span class="close"></span></span></div>
+      <div class="screen">
+        <div class="list">
+          <div class="item"><span>手机号登录</span><span class="dim">通过微信验证手机号</span></div>
+          <div class="item"><span>微信</span><span class="tag gray">未绑定</span></div>
+        </div>
+        <div class="page-lead binding-lead"><h2>绑定微信，方便下次登录</h2><p>绑定后，可使用微信登录司籍处网站和小程序。</p></div>
+        <div class="btn primary">绑定微信</div>
+        <p class="dim small">不绑定也可以继续使用手机号登录。</p>
+        <div class="divider"></div><div class="section-label">登录安全</div>
+        <div class="list"><div class="item"><span>退出全部设备</span><span class="chev">›</span></div></div>
+        <p class="faint small">包括当前设备，以及其他设备上的网站和小程序登录。</p>
+      </div>
+    </div>
+  </div>
+</article>
+
+</section>
+
+<script>
+  // 主备字体是生产业务数据，不随仓库分发（见 .gitignore 与 docs/client/pages.md#页面设计稿）。
+  // 缺失时明确提示：不能用设备字体冒充满字结果，否则评审会把近似排版当成正式效果。
+  document.fonts.ready.then(function () {
+    var notice = document.getElementById('font-notice');
+    if (!notice || document.fonts.check('400 16px "Badge Main"')) return;
+    notice.hidden = false;
+    notice.textContent = document.fonts.check('400 16px "Badge Fallback"')
+      ? '主字体未就绪：牌面以备用字体近似显示。把 badge-main.ttf 放进 assets/fonts.local/ 后重新加载。'
+      : '主备字体均未就绪：牌面以设备字体近似显示，不代表正式效果。字体目录与文件名见 assets/fonts.local/。';
+  });
+</script>
+
+
+<script>
+  // Preview navigation only; no allocation or other business request is sent.
+  const subtype = document.getElementById('number-subtype');
+  const next = document.getElementById('number-next');
+  subtype.addEventListener('change', () => {
+    next.disabled = !subtype.value;
+    document.getElementById('number-confirm-category').textContent =
+      subtype.value ? subtype.selectedOptions[0].textContent : '尚未选择';
+  });
+  next.addEventListener('click', () => {
+    if (subtype.value) location.hash = 'number-confirm';
+  });
+</script>
+
+</body>
+</html>

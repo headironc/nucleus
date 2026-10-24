@@ -3,4 +3,3 @@
 pub mod credentials;
 pub mod cryptography;
 pub mod database;
-pub mod process;

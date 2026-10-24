@@ -154,6 +154,7 @@ dependencies = [
  "axum-core",
  "axum-macros",
  "bytes",
+ "form_urlencoded",
  "futures-util",
  "http",
  "http-body",
@@ -169,6 +170,7 @@ dependencies = [
  "serde_core",
  "serde_json",
  "serde_path_to_error",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tower",
@@ -426,6 +428,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "cookie"
+version = "0.18.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1a373e3602691c3cdea496d2f0ee5935151e6168fe87739483c463db1b2f2f87"
+dependencies = [
+ "time",
+ "version_check",
+]
+
+[[package]]
 name = "core-foundation"
 version = "0.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -626,12 +638,15 @@ dependencies = [
 name = "deployment"
 version = "0.1.0"
 dependencies = [
+ "clap",
  "config",
  "domain",
  "fixture",
+ "libc",
  "platform",
  "rcgen",
  "refinery",
+ "rustix",
  "serde",
  "serde_json",
  "strum",
@@ -776,6 +791,7 @@ dependencies = [
  "tokio-rustls",
  "tracing",
  "tracing-test",
+ "unicode-normalization",
  "url",
  "utoipa",
  "uuid",
@@ -1645,6 +1661,8 @@ dependencies = [
  "chrono",
  "clap",
  "config",
+ "cookie",
+ "deployment",
  "domain",
  "fixture",
  "governor",
@@ -1848,7 +1866,6 @@ dependencies = [
  "fixture",
  "getrandom 0.4.3",
  "hex",
- "libc",
  "rcgen",
  "ring",
  "rustls",
@@ -1856,7 +1873,7 @@ dependencies = [
  "scopeguard",
  "serde",
  "serde_json",
- "tempfile",
+ "serde_with",
  "thiserror",
  "tokio",
  "tokio-postgres",

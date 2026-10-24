@@ -95,18 +95,18 @@ mod tests {
             u8::try_from(index).expect("32 bytes")
         })));
         let message_id = "00000000-0000-0000-0000-000000000001".parse().expect("id");
-        let code = "00001234".parse().expect("code");
+        let code = "001234".parse().expect("code");
         let proof = Proof::new(&key, message_id, &code).expect("proof");
         // Python struct.pack('>I') and hmac.digest, independent of the Rust encoder.
         assert_eq!(
             hex::encode(proof.0),
-            "9f6b90f4a1f3844d0dd25bbe0bd27f17c25133b1d2ca852eeb6d12db91172c75"
+            "18bfb679b1c368bfeee544ef1da8897be9d3a5e5b16fec94fa8086e7e9c9c6b7"
         );
         assert!(proof.verify(&key, message_id, &code).expect("verify"));
         assert!(!proof.verify(&key, Id::new(), &code).expect("wrong message"));
         assert!(
             !proof
-                .verify(&key, message_id, &"00001235".parse().expect("code"))
+                .verify(&key, message_id, &"001235".parse().expect("code"))
                 .expect("wrong code")
         );
         assert!(

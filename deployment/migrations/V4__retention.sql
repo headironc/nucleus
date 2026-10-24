@@ -1,6 +1,4 @@
 CREATE SEQUENCE identity.ordinals AS bigint MINVALUE 1 CACHE 1 NO CYCLE;
-SELECT pg_catalog.setval('identity.ordinals', greatest(coalesce(max(ordinal), 0), 1),
-    coalesce(max(ordinal), 0) > 0) FROM identity.messages;
 
 -- Cross-table guards require fresh statement snapshots after lock waits.
 CREATE FUNCTION identity.check_isolation() RETURNS trigger
@@ -18,6 +16,8 @@ CREATE TRIGGER messages_isolation_check BEFORE INSERT OR UPDATE OR DELETE ON ide
     FOR EACH STATEMENT EXECUTE FUNCTION identity.check_isolation();
 CREATE TRIGGER checks_isolation_check BEFORE INSERT OR UPDATE OR DELETE ON identity.checks
     FOR EACH STATEMENT EXECUTE FUNCTION identity.check_isolation();
+CREATE TRIGGER confirmations_isolation_check BEFORE INSERT OR UPDATE OR DELETE ON identity.confirmations
+    FOR EACH STATEMENT EXECUTE FUNCTION identity.check_isolation();
 CREATE TRIGGER claims_isolation_check BEFORE INSERT OR UPDATE OR DELETE ON identity.claims
     FOR EACH STATEMENT EXECUTE FUNCTION identity.check_isolation();
 
@@ -30,9 +30,8 @@ BEGIN
     -- Check and claim deletion acquire the same parent lock as Message deletion.
     PERFORM 1 FROM identity.messages WHERE id = OLD.id FOR UPDATE;
     SELECT status, expires_at, finished_at INTO STRICT message FROM identity.messages WHERE id = OLD.id;
-    SELECT clock.observed_at INTO STRICT observed_at FROM security.clocks clock WHERE id;
-    IF pg_catalog.clock_timestamp() < observed_at
-        OR message.status = 'sending'
+    observed_at := pg_catalog.clock_timestamp();
+    IF message.status = 'sending'
         OR observed_at < greatest(message.expires_at, message.finished_at) + interval '24 hours' THEN
         RAISE EXCEPTION 'message responsibilities have not ended' USING ERRCODE = '23514';
     END IF;
@@ -43,20 +42,26 @@ CREATE TRIGGER messages_deletion_check BEFORE DELETE ON identity.messages
     FOR EACH ROW EXECUTE FUNCTION identity.check_message_deletion();
 CREATE TRIGGER checks_deletion_check BEFORE DELETE ON identity.checks
     FOR EACH ROW EXECUTE FUNCTION identity.check_message_deletion();
+CREATE TRIGGER confirmations_deletion_check BEFORE DELETE ON identity.confirmations
+    FOR EACH ROW EXECUTE FUNCTION identity.check_message_deletion();
 CREATE TRIGGER claims_deletion_check BEFORE DELETE ON identity.claims
     FOR EACH ROW EXECUTE FUNCTION identity.check_message_deletion();
 
-CREATE FUNCTION identity.check_claim_deletion() RETURNS trigger
+CREATE FUNCTION identity.check_message_child_deletion() RETURNS trigger
 LANGUAGE plpgsql VOLATILE SET search_path = '' AS $$
 BEGIN
     IF EXISTS (SELECT 1 FROM identity.messages WHERE id = OLD.id) THEN
-        RAISE EXCEPTION 'claim deletion requires message deletion' USING ERRCODE = '23514';
+        RAISE EXCEPTION 'message companion deletion requires message deletion' USING ERRCODE = '23514';
     END IF;
     RETURN NULL;
 END
 $$;
 CREATE CONSTRAINT TRIGGER claims_deletion_pair_check AFTER DELETE ON identity.claims
-    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION identity.check_claim_deletion();
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION identity.check_message_child_deletion();
+CREATE CONSTRAINT TRIGGER checks_deletion_pair_check AFTER DELETE ON identity.checks
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION identity.check_message_child_deletion();
+CREATE CONSTRAINT TRIGGER confirmations_deletion_pair_check AFTER DELETE ON identity.confirmations
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION identity.check_message_child_deletion();
 
 CREATE FUNCTION identity.check_message_parent_deletion() RETURNS trigger
 LANGUAGE plpgsql VOLATILE SET search_path = '' AS $$
@@ -82,9 +87,8 @@ BEGIN
     IF NOT FOUND THEN
         RAISE EXCEPTION 'deletion requires the original challenge' USING ERRCODE = '23514';
     END IF;
-    SELECT clock.observed_at INTO STRICT observed_at FROM security.clocks clock WHERE id;
-    IF pg_catalog.clock_timestamp() < observed_at
-        OR challenge.status NOT IN ('passed', 'rejected', 'inconclusive')
+    observed_at := pg_catalog.clock_timestamp();
+    IF challenge.status NOT IN ('passed', 'rejected', 'inconclusive')
         OR observed_at < greatest(challenge.expires_at, challenge.finished_at) + interval '24 hours'
         OR (challenge.status = 'passed'
             AND observed_at < least(challenge.solved_at, challenge.finished_at) + interval '300 seconds')
@@ -99,14 +103,5 @@ CREATE TRIGGER challenges_deletion_check BEFORE DELETE ON identity.challenges
 
 REVOKE ALL ON identity.ordinals FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity.check_isolation(), identity.check_message_deletion(),
-    identity.check_claim_deletion(), identity.check_message_parent_deletion(),
+    identity.check_message_child_deletion(), identity.check_message_parent_deletion(),
     identity.check_challenge_deletion() FROM PUBLIC;
-DO $$
-DECLARE
-    runtime_user text := current_setting('nucleus.runtime_user');
-BEGIN
-    EXECUTE format('REVOKE ALL ON identity.ordinals FROM %I', runtime_user);
-    EXECUTE format('GRANT DELETE ON identity.challenges, identity.messages, identity.checks, identity.claims TO %I', runtime_user);
-    EXECUTE format('GRANT USAGE ON SEQUENCE identity.ordinals TO %I', runtime_user);
-END
-$$;

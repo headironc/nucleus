@@ -1,74 +1,220 @@
 name: Rust
 
 on:
-  push:
-    branches: [main]
   pull_request:
+  merge_group:
+    types: [checks_requested]
+
+# Keep unrelated PRs and queue refs in separate cancellation groups.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  rust:
+  changes:
     runs-on: ubuntu-24.04
-    env:
-      CARGO_TARGET_DIR: target/cargo
+    outputs:
+      tier: ${{ steps.changes.outputs.tier }}
+      packages: ${{ steps.changes.outputs.packages }}
+      matrix: ${{ steps.packages.outputs.matrix }}
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check workspace inputs
+          fetch-depth: 2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .tool-versions
+      - name: Classify Rust inputs
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          QUEUE_SHA: ${{ github.event.merge_group.head_sha }}
+          MERGE_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: bun tools/check-inputs.ts --ci
+      - name: Prepare pinned Rust toolchain for discovery
+        if: ${{ steps.changes.outputs.tier == 'full' }}
+        run: rustup show active-toolchain
+      - name: Discover affected workspace packages
+        id: packages
+        if: ${{ steps.changes.outputs.tier == 'full' }}
+        env:
+          AFFECTED_PACKAGES: ${{ steps.changes.outputs.packages }}
         shell: bash
         run: |
           set -euo pipefail
-          test -f Cargo.toml
-          test -f Cargo.lock
-          test -f rust-toolchain.toml
-          rustup show active-toolchain
-      - name: Install formatting toolchain
-        run: rustup toolchain install nightly-2026-09-06 --profile minimal --component rustfmt
-      - name: Check formatting
-        run: cargo +nightly-2026-09-06 fmt --all -- --check
+          matrix=$(bun tools/check-packages.ts --matrix --affected "$AFFECTED_PACKAGES")
+          # Reject unusable output before GitHub expands the dynamic matrix.
+          MATRIX="$matrix" bun -e '
+            const matrix = JSON.parse(process.env.MATRIX);
+            if (!matrix || !Array.isArray(matrix.include) || matrix.include.length === 0)
+              throw new Error("Package discovery must produce a nonempty package matrix");
+            const entries = new Set();
+            for (const entry of matrix.include) {
+              if (!entry || typeof entry.package !== "string" || !entry.package.length ||
+                  Object.keys(entry).some(key => !["package", "shard", "group"].includes(key)) ||
+                  (entry.package === "nucleus"
+                    ? entry.shard !== undefined || !["rest", "http"].includes(entry.group)
+                    : entry.package === "domain"
+                      ? entry.group !== undefined || !["1/4", "2/4", "3/4", "4/4"].includes(entry.shard)
+                      : entry.shard !== undefined || entry.group !== undefined))
+                throw new Error("Invalid package matrix entry");
+              const key = JSON.stringify([entry.package, entry.shard, entry.group]);
+              if (entries.has(key)) throw new Error("Duplicate package matrix entry");
+              entries.add(key);
+            }
+            for (const [name, count] of [["nucleus", 2], ["domain", 4]]) {
+              const selected = matrix.include.filter(entry => entry.package === name).length;
+              if (selected !== 0 && selected !== count)
+                throw new Error("Package matrix must include every group or shard");
+            }
+          '
+          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+
+  tools:
+    needs: changes
+    if: ${{ needs.changes.outputs.tier != 'skip' }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          bun-version: 1.4.2
+          bun-version-file: .tool-versions
+      - name: Prepare pinned Rust toolchain
+        run: |
+          rustup show active-toolchain
+          rustup component add clippy
       - name: Install tool dependencies
         run: bun install --frozen-lockfile --ignore-scripts
       - name: Check tool types
         run: bun run check:tools
-      - name: Install PostgreSQL build dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes --no-install-recommends build-essential bison flex curl pkg-config libssl-dev libicu-dev libreadline-dev zlib1g-dev libxml2-dev
-      - name: Identify build environment
-        id: environment
+      - name: Test dependency checks
+        run: bun test tools/check-dependencies.test.ts
+      - name: Check dependency boundaries
+        run: bun tools/check-dependencies.ts
+      - name: Test review gate
+        run: bun test tools/review-gate.test.ts tools/review-queue.test.ts tools/review-json.test.ts
+      - name: Test package checks
+        run: bun test tools/check-inputs.test.ts tools/check-packages.test.ts tools/rust-workflow.test.ts tools/cache.test.ts tools/check-bun.test.ts tools/halo-ci-image.test.ts tools/check-halo-test.test.ts tools/halo-local.test.ts tools/halo-browser-smoke.test.ts
+
+  checks:
+    needs: changes
+    if: ${{ needs.changes.outputs.tier != 'skip' && needs.changes.outputs.tier != 'tools' }}
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_TARGET_DIR: target/cargo
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        timeout-minutes: 10
+        with:
+          cache-key: checks
+      - name: Install formatting toolchain
+        run: rustup toolchain install nightly-2026-09-06 --profile minimal --component rustfmt
+      - name: Check formatting
+        run: cargo +nightly-2026-09-06 fmt --all -- --check
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  packages:
+    name: package (${{ matrix.package }}${{ matrix.group && format(' {0}', matrix.group) || '' }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
+    needs: changes
+    if: ${{ needs.changes.outputs.tier != 'skip' && needs.changes.outputs.tier != 'tools' && needs.changes.outputs.tier != 'checks' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/silence-force/nucleus-halo-ci@sha256:e11a7d3a1718cee6db57d73ab4a6746fd95f186e33cd77a840987101a235f8a3
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      options: --user 1001:1001 --ipc=host
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    env:
+      CARGO_TARGET_DIR: target/cargo
+      HALO_CI_IMAGE: ghcr.io/silence-force/nucleus-halo-ci@sha256:e11a7d3a1718cee6db57d73ab4a6746fd95f186e33cd77a840987101a235f8a3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/package-setup
+        id: setup
+        timeout-minutes: 10
+        with:
+          cache-key: package-${{ matrix.package }}
+      - name: Report available processors
+        run: nproc
+      - name: Build, test and document the package
+        env:
+          PACKAGE: ${{ matrix.package }}
+          SHARD: ${{ matrix.shard }}
+          GROUP: ${{ matrix.group }}
         shell: bash
         run: |
           set -euo pipefail
-          packages=$(dpkg-query --show --showformat='${binary:Package}=${Version}\n' |
-            LC_ALL=C sort | sha256sum | cut -d ' ' -f 1)
-          printf 'key=%s-%s-%s\n' "$ImageOS" "$ImageVersion" "$packages" >> "$GITHUB_OUTPUT"
-          printf 'postgresql=%s\n' "$(cat fixture/postgresql.version)" >> "$GITHUB_OUTPUT"
-      - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          key: ${{ steps.environment.outputs.key }}
-          workspaces: ". -> target/cargo"
-          cache-bin: false
-      - name: Test dependency checks
-        run: python3 -B tools/test_dependencies.py -v
-      - name: Check dependency boundaries
-        run: python3 -B tools/check_dependencies.py
-      - name: Test package checks
-        run: bun test tools/check-packages.test.ts
-      - name: Cache PostgreSQL installation
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: target/postgresql/${{ steps.environment.outputs.postgresql }}
-          key: postgresql-${{ runner.os }}-${{ runner.arch }}-${{ steps.environment.outputs.key }}-${{ hashFiles('fixture/postgresql.version', 'fixture/postgresql.ts') }}
-      - name: Prepare the pinned test PostgreSQL
-        run: bun fixture/postgresql.ts
-      - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: Build and test each package
-        run: bun tools/check-packages.ts
+          args=(--package "$PACKAGE" --test-threads 4)
+          if test -n "$SHARD"; then
+            args+=(--shard "$SHARD")
+          fi
+          if test -n "$GROUP"; then
+            args+=(--group "$GROUP")
+          fi
+          bun tools/check-packages.ts "${args[@]}"
+
+  rust:
+    if: ${{ always() }}
+    needs: [changes, tools, checks, packages]
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Require every Rust check
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          TIER: ${{ needs.changes.outputs.tier }}
+          TOOLS_RESULT: ${{ needs.tools.result }}
+          CHECKS_RESULT: ${{ needs.checks.result }}
+          PACKAGES_RESULT: ${{ needs.packages.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'changes=%s tier=%s tools=%s checks=%s packages=%s\n' "$CHANGES_RESULT" "$TIER" "$TOOLS_RESULT" "$CHECKS_RESULT" "$PACKAGES_RESULT"
+          test "$CHANGES_RESULT" = success
+          case "$TIER" in
+            full)
+              test "$TOOLS_RESULT" = success
+              test "$CHECKS_RESULT" = success
+              test "$PACKAGES_RESULT" = success
+              ;;
+            checks)
+              test "$TOOLS_RESULT" = success
+              test "$CHECKS_RESULT" = success
+              test "$PACKAGES_RESULT" = skipped
+              ;;
+            tools)
+              test "$TOOLS_RESULT" = success
+              test "$CHECKS_RESULT" = skipped
+              test "$PACKAGES_RESULT" = skipped
+              ;;
+            skip)
+              test "$TOOLS_RESULT" = skipped
+              test "$CHECKS_RESULT" = skipped
+              test "$PACKAGES_RESULT" = skipped
+              ;;
+            *) exit 1 ;;
+          esac

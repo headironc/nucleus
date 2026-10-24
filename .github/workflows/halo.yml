@@ -1,0 +1,80 @@
+name: Halo
+
+on:
+  pull_request:
+  merge_group:
+    types: [checks_requested]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  website:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/silence-force/nucleus-halo-ci@sha256:e11a7d3a1718cee6db57d73ab4a6746fd95f186e33cd77a840987101a235f8a3
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+      # Reap orphaned test descendants so process-group termination is observable.
+      options: --init --user 1001:1001 --ipc=host
+    defaults:
+      run:
+        shell: bash
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: target/cargo
+      HALO_CI_IMAGE: ghcr.io/silence-force/nucleus-halo-ci@sha256:e11a7d3a1718cee6db57d73ab4a6746fd95f186e33cd77a840987101a235f8a3
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - name: Verify Bun pin
+        run: bun tools/check-bun.ts
+      - name: Classify Halo inputs
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          QUEUE_SHA: ${{ github.event.merge_group.head_sha }}
+          MERGE_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: bun tools/check-inputs.ts --ci
+      - uses: ./.github/actions/halo-setup
+        if: ${{ steps.changes.outputs.halo != 'skip' }}
+      - name: Verify actual backend snapshot
+        if: ${{ steps.changes.outputs.halo != 'skip' }}
+        env:
+          NUCLEUS_OPENAPI_REFERENCE: ${{ github.workspace }}/halo/protocol/openapi.json
+        run: bun tools/check-halo-test.ts snapshot
+      - name: Build and check Halo
+        if: ${{ steps.changes.outputs.halo != 'skip' }}
+        working-directory: halo
+        run: |
+          bun run check:generated
+          bun run typecheck
+          bun run test
+          bun run build
+      - name: Browser and supplier-count acceptance
+        id: browser_acceptance
+        if: ${{ steps.changes.outputs.halo != 'skip' }}
+        env:
+          HALO_NGINX: /usr/sbin/nginx
+          HALO_TEST_EVIDENCE: ${{ github.workspace }}/target/halo-browser-evidence/${{ github.run_id }}-${{ github.run_attempt }}
+        run: bun tools/check-halo-test.ts browser
+      - name: Upload browser acceptance evidence
+        if: ${{ always() && steps.browser_acceptance.outcome != 'skipped' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: halo-browser-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ github.workspace }}/target/halo-browser-evidence/${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 7

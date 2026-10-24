@@ -2,24 +2,21 @@
 
 ## 1. 范围与使用
 
-本文保存外部资料来源、已有审查的材料身份和执行记录。业务规则与工程规格由所属[正式文档](../README.md)维护；审查记录只覆盖其固定输入，不定义当前设计或实施状态。
-
-本文既有审查没有覆盖当前 [Nucleus 架构](../architecture.md)。原报告的材料身份、结论和限制按当时范围解释；文档一致性自检不形成新的独立架构审查结论。
+本文保存设计所依据的外部资料来源、外部材料身份及其核验边界。业务规则与工程规格由所属[正式文档](../README.md)维护；运行耗时、测试观察与审查记录随所属 PR 保留，不在本文登记。
 
 证据只支持其实际内容和核验范围。公开文档不证明服务已开通或本项目已通过运行验收；审查报告不证明实现已经完成；文档检查只验证格式、链接和图形等机械条件。
 下列日期、版本、摘要和执行数据来自对应日期的核验记录，不代表当前外部状态或业务验收结果。材料未纳入仓库时，保留其定位和可取得性限制；摘要不能替代原文。
 
-| 证据范围                                                                | 所属位置                                                                                                            |
-| ----------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| 微信、PNVS、Turnstile、PostgreSQL、身份证编码、密码库、运行库与 systemd | 本文 [§2.5](#25-手机号注册单元的外部协议与运行库) 及各专题的对应协议章节                                            |
-| 网站微信协议、内嵌容器及浏览器限制                                      | 当前边界见[微信身份登录与共享绑定](../identity/wechat.md)；当时的来源定位由 [§3.4](#34-网站微信与共享绑定审查) 保存 |
-| 网站持久 cookie 与本地会话选择                                          | [网站持久会话](../identity/website.md)；当前会话同源条件见[当前身份设计](../identity/current.md)                    |
-| 本地文件同步、发布与清理                                                | [本地文件](../storage/files.md)                                                                                     |
-| 政治面貌代码表及后续协议核验                                            | 本文 [§2](#2-专题来源)                                                                                              |
-| 密码封装库与格式选择                                                    | 本文 [§2.6](#26-密码封装库与格式)；当前及目标边界见[密钥材料](../keys.md#5-密码原语与信封)                          |
-| 基础设施库与失败语义                                                    | 本文 [§2.7](#27-基础设施库与失败语义)；选择与交付边界见[基础设施设计](../architecture.md#设置凭据与部署)            |
-| 既有静态设计审查                                                        | 本文 [§3](#3-静态设计审查记录)；当前候选另按实际基线和修订核对覆盖                                                  |
-| 实施顺序与验证范围                                                      | [业务交付顺序](delivery.md)及各专题的验证章节                                                                       |
+| 证据范围                                                                | 所属位置                                                                                                 |
+| ----------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| 微信、PNVS、Turnstile、PostgreSQL、身份证编码、密码库、运行库与 systemd | 本文 [§2.5](#25-手机号注册单元的外部协议与运行库) 及各专题的对应协议章节                                 |
+| 网站微信协议、内嵌容器及浏览器限制                                      | 本文 [§2.3](#23-网站内嵌微信授权)；当前边界见[微信身份登录与共享绑定](../identity/wechat.md)             |
+| 网站持久 cookie 与本地会话选择                                          | [网站持久会话](../identity/website.md)；当前会话同源条件见[当前身份设计](../identity/current.md)         |
+| 本地文件同步、发布与清理                                                | [本地文件](../storage/files.md)                                                                          |
+| 政治面貌代码表及后续协议核验                                            | 本文 [§2](#2-专题来源)                                                                                   |
+| 密码封装库与格式选择                                                    | 本文 [§2.6](#26-密码封装库与格式)；当前及目标边界见[密钥材料](../keys.md#5-密码原语与信封)               |
+| 基础设施库与失败语义                                                    | 本文 [§2.7](#27-基础设施库与失败语义)；选择与交付边界见[基础设施设计](../architecture.md#设置凭据与部署) |
+| 实施顺序与验证范围                                                      | [业务交付顺序](delivery.md)及各专题的验证章节                                                            |
 
 ## 2. 专题来源
 
@@ -129,116 +126,14 @@ Turnstile 的 Siteverify、单次 token、有效期、幂等重试参数及 widg
 | [`rustix` 1.1.4 文件 API](https://docs.rs/rustix/1.1.4/rustix/fs/)、[`tempfile` 3.27.0 `NamedTempFile`](https://docs.rs/tempfile/3.27.0/tempfile/struct.NamedTempFile.html)及[发布记录](https://docs.rs/crate/tempfile/3.27.0/source/CHANGELOG.md)      | `rustix` 提供目录相对打开与不可覆盖重命名；`tempfile::persist_noclobber` 防覆盖，但未完成文件或目录同步，部分平台或文件系统可留下两个硬链接。                                      | 文件切片评估 `rustix` 的窄 API，并仍由所有者执行 SQL 发布意图与同步协议。`tempfile` 的持久化调用不能单独充当该协议。                                                                     |
 | [`image` 0.25.10](https://docs.rs/image/0.25.10/image/)、[`WebPEncoder`](https://docs.rs/image/0.25.10/image/codecs/webp/struct.WebPEncoder.html)及[`Limits`](https://docs.rs/image/0.25.10/image/struct.Limits.html)                                   | 库提供 JPEG、PNG、WebP 处理及无损 WebP 编码；部分解码限制是尽力而为，解码器不一定支持严格预算。                                                                                    | 图片切片只启用所需格式，另外在解码前限制输入字节、尺寸和像素，并以真实样本验证内存、耗时和输出。                                                                                         |
 
-## 3. 静态设计审查记录
+### 2.8 小程序页面设计稿材料
 
-以下记录发生于 2026-09-12。提案作者模型为宿主暴露的 Codex GPT-6；审查者为作者整个内部协作树之外的 Claude CLI 进程，模型由 init 及回执记录为 claude-opus-5，CLI 2.1.269。审查通过已安装 claude-review 的 scripts/run-review.sh 启动，static 配置的 tools、MCP 和 tool_calls 均为空，审查者未参与所审提案创作或修改。作者与审查模型不同。
-原执行记录包含输入、报告、回执和双方 provenance 的核对结果；原材料的当前可取得性未核验。下表摘要均为 SHA-256；标为 envelope 的摘要使用对应规范 JSON，不是整个 input 文件的字节摘要。
+2026-10-12 在工作区核对小程序页面设计稿的图片与字体身份，按下表逐字节计算 SHA-256。设计稿文本（`design/orbit-pages.html`、`design/assets/orbit.css`）持续编辑，其内容以所在提交为准，不在此登记摘要；下表只登记不随编辑变化的材料。
 
-### 3.1 手机号注册复审
+| 材料                                      | 身份与摘要                                                                                                | 支持的主张                                       | 限制                                                           |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------------ | -------------------------------------------------------------- |
+| `design/reference-5418.png`               | 1080×1920 PNG，1,551,046 字节，SHA-256 `7a2662c9c00a4ce63c76b4d2f3845a50694adfccf73c0ad1ecf3ee19f5f46f9c` | 公开首页的搜索、轮播、六个栏目入口与图文列表结构 | 提供方、来源修订与使用授权未记录；该图不证明生产小程序当前版本 |
+| `design/assets/badge-production-2026.png` | 1022×650 PNG，160,220 字节，SHA-256 `a853141509b90104711a51cedfe10a964ee738bb6f421971446bebc6795d2016`    | 工牌牌面底图、四个动态文字区域与画布比例         | 取自生产模板资产；其模板身份与配置未在此绑定                   |
+| `design/assets/logo.png`                  | 240×240 PNG，46,704 字节，SHA-256 `bfcbdf6b20408f653a8a8dddf1aa2667dc6019f5cabe6c2b4acef92564521190`      | 设计稿中的产品标识                               | 商标与使用范围未记录                                           |
 
-报告结论为 DESIGN_REVIEWED，AR-01 至 AR-03 关闭，无新增必改项，报告记录 EvidenceBundleV1 足够。范围为短信与微信手机号验证、正式注册、原会话及丢失响应恢复，以及所需配置、密钥维护、D021、监督清理、默认头像、当前读取、健康和 OpenAPI；不覆盖完整 S1 或其他切片。
-执行会话 72931，耗时 636.859 秒；runner、子进程和输出收集均退出 0，validator=valid、terminal_reason=completed、is_error=false。报告由唯一成功 result 原样提取，只补末尾换行；记录形成时工作区、分支及 HEAD 未变化。
-
-| 材料                                         | SHA-256                                                          |
-| -------------------------------------------- | ---------------------------------------------------------------- |
-| 规范提案，S1 主文与附录并保留原行号          | 53900983120175909dbb8ed58cc67f4936649f0d7f42f7815b63d4555d80d0c5 |
-| 六份文档 review-diff                         | 1869116c5945e3f9bbab62749d440e4b5d2f077c27ddae145777b6fe1c3f37bf |
-| EvidenceBundleV1                             | d65f9c4e76c5ff06bced32712e3a85c290b7da7d7c695d2cade3f2db6d7e73d1 |
-| ClaudeReviewMaterialEnvelopeV2，排除自身摘要 | 3ba630af187f26a2f61448ca7ccda361d5d460994407b58944149a8c28ec3df7 |
-| reviewer-report.md                           | ed2a87fea2a09d12c74d2521474a2505ffb990f3b7710a8b1dc453ff45d111db |
-| handoff.md                                   | b75c0df3d1f880f267068d0e8b838c692594c4bf2f1cbeffe6b8e6a35e0f4c8d |
-| ready/input.json 原字节                      | 93f24883b340f3f575a354fae893892114048ed6b189e7233a2d99f4e7777099 |
-| ready/receipt.json 原字节                    | fbcb122c67823d7423ef2e15065a0a03acd6f9e7b9b09228f7c817c25223de94 |
-
-材料记录位置为本地会话目录 `nucleus-s1-rereview-20260912.gteZfi`。原始事件、启动及 prompt 身份由 handoff.md 和执行回执定位；材料未纳入仓库，没有长期共享链接，当前可取得性未核验。
-
-该复审引用的前次 CHANGES_REQUESTED 材料位于 `nucleus-s1-review-retry-20260912.40xxnz`，相同 CLI、模型及 static 配置，回执记录成功退出和足够的 EvidenceBundleV1。其身份如下，不代表当前待解决问题：
-
-| 材料               | SHA-256                                                          |
-| ------------------ | ---------------------------------------------------------------- |
-| 规范提案           | 91e44a59db5a1559f02226a454b1f4b2b4da476ebf8bb7f8d84df4c71ac173de |
-| EvidenceBundleV1   | 3fe2b24242e8ac467931f57f119abb344e719f987bd519a5de7014f9d5bea9a7 |
-| 原报告             | f9d0e57890d87ed7179d19e15f70b3cd564c20c469cf2a28e1a5004e81d4238a |
-| ready/input.json   | 25ecf177338fc0f6cfd2d3f5e831f2424409a48430ab22b965d453365ba87384 |
-| ready/receipt.json | 5e0a478b9fe83d1111f8140cf97ee61123156d9af4729a0e02b2bfd6b839c75f |
-
-### 3.2 Mobile 首轮差异审查
-
-报告结论为 CHANGES_REQUESTED，范围为手机号接受集合、Mobile 契约及受影响保证；后续复审见 [§3.3](#33-mobile-修订复审)。原未变化的事务、并发、恢复及默认头像使用 [§3.1](#31-手机号注册复审) 基线。
-执行 563101 毫秒，runner、child、tee 均退出 0，唯一结果 success/completed、is_error=false，validator=valid；输入与 claim 未变，运行临时目录清理完成。报告记载相同材料身份、独立资格和足够的 EvidenceBundleV1。
-
-| 材料                                         | SHA-256                                                          |
-| -------------------------------------------- | ---------------------------------------------------------------- |
-| proposal.txt                                 | 4e68de96808519932ba48a9cf07c4a978f3e5de86661f387c141434d5209c23b |
-| review-diff.txt                              | a46d29e491ec96b8ae24e702eaeebec919cf9510844f319682062d5902f678a7 |
-| EvidenceBundleV1                             | 1e0a2a01d2e9adc3330527bc9fd065acbc04197df307775508391fc1a845926b |
-| ClaudeReviewMaterialEnvelopeV2，排除自身摘要 | 7db5b0bbea812e2020a67f8ed972a17f8d330e844011bd107f44fc2337ac77a3 |
-| ready/input.json                             | fb314479d44736952cc70521c240f92ea13e3b7dfdc8380b71cb979331e4eb68 |
-| ready/prompt.txt                             | 4d6b109095fff683ac9bf21f1cae38c51cb0206074ad11e6b2f4cda56fef828d |
-| ready/launch.json                            | e5129ebf3dd53c198e6b7ca1cc0304bf0daf9a99299f3b49b52ff907bb5b95e3 |
-| ready/receipt.json                           | 566ef61eb07f848cca8a9600670bd49b10e2a6f85457fc66caa31a3fecf2b0de |
-| reviewer-report.md                           | 890b9588edcdabfc0bcc0dd2d0b86c393d77ced711427e62c638b471ee794fab |
-| handoff.md                                   | aa4138e5eeaffb3f76be5f6cb1b241263b0c241c0b771761edb1154847cb47f6 |
-
-记录位置为 `nucleus-mobile-review-20260912.b3sUaA`，未纳入仓库，无长期共享链接，当前可取得性未核验。审查者未持有完整旧提案，无法独立重算 Before source SHA；准备者记录了恢复两份完整源正文、匹配摘要后生成差异的核验。周边材料含摘录，静态审查没有联网、供应商实测或重跑代码门禁。
-
-### 3.3 Mobile 修订复审
-
-报告结论为 DESIGN_REVIEWED，MR-01、MR-02 关闭，无新增必改项，EvidenceBundleV1 足够；只覆盖这两项修订及受影响保证，未变化部分使用 [§3.1](#31-手机号注册复审) 基线。
-执行会话 53545，Claude 会话 `216db45b-1f6c-4e39-bff3-781504760c15`。一次模型启动、421235 毫秒，runner、child、tee 均退出 0，唯一结果 success/completed、is_error=false，validator=valid，stderr 为空。记录形成时 input/claim、分支 `feat/identity-self-registration`、HEAD `5ff35a381c76523df68b2c17ee6c5413a3a46ea6`、95 个工作区路径和 11 个材料源摘要未变，暂存区为空。
-
-| 材料                                         | SHA-256                                                          |
-| -------------------------------------------- | ---------------------------------------------------------------- |
-| proposal.txt                                 | cb74c3fe2805cefd3e4b8975d69b8f402bee66585c0aa82e595e1cbad0911c7a |
-| review-diff.txt                              | e317a76f74dbd7888ec4ecbf84c7515535563b311270c58490e41d54c3871ab8 |
-| EvidenceBundleV1                             | dfd0ba612c907fdfcd9972742110cf9de4240b9be9a12c116313e0e733d9886a |
-| ClaudeReviewMaterialEnvelopeV2，排除自身摘要 | 7028fdef06f4e706ec12b97ce9463ce41a434663a1dfe3992ab59df141dd388d |
-| ready/input.json                             | bbd124e29cc6edbe34a8c04cf8b20c71043cc79ed0146eaeb4e47ba8c8de3f03 |
-| ready/prompt.txt                             | 655d396ae615d4ac6f6b4ee26db9a191cf868a2cc64e7d5c0e757c5a3f0bab66 |
-| ready/launch.json                            | e4aa924cd2ae19eb8270237993ba20dfe40239cb822311d8125647de4b3d384d |
-| ready/receipt.json                           | dae695886f82d15e7ee64c91b10b25678c48ee00d4e9da6993f133ed484c58cd |
-| reviewer-report.md                           | 3ec7fdfa2415e754c5156ae6379f88ac057c75e630e98e2b313e66830565904b |
-| handoff.md                                   | 6cbcaf92daae3cf8b7625880491c8bad6bd94ed02d0bf3f25adba5b12ab2fd06 |
-
-记录位置为 `nucleus-mobile-rereview-20260912.2lv0q6w2`，包含原提案、六份文档差异、七份嵌入材料、源清单、执行记录、报告及双方交接。未纳入仓库，无长期共享链接，当前可取得性未核验。
-审查者只读嵌入材料，未从文件系统重算摘要或对照完整旧提案字节；准备者记录了启动前核验。审查没有联网取证、供应商实测或执行代码门禁。
-
-### 3.4 网站微信与共享绑定审查
-
-完整设计报告结论为 DESIGN_REVIEWED，覆盖基线 `c08cb9d2995f43ac91f3d9d28781d98fdbe3294f` 当时的 `identity/wechat-login.md` 第 1 至第 8 节、S1-V48 至 V51 及九份差异文档中受影响的身份、配置、密码、HTTP、存储、权限、会话、清理与恢复保证。九份未提交源文件由 EvidenceBundleV1 逐文件固定；该历史报告不覆盖当前[微信目标设计](../identity/wechat.md)。
-执行记录位于本地任务目录 `nucleus-wechat-design.UZCG7opz` 的 `round-3/ready`，同级 report.md、handoff.json 保存报告和双方交接。一次启动，runner、child 和 validator 成功，材料未变；记录形成时已核对 input、launch、events、stderr 和 report。报告记载完整覆盖、EvidenceBundleV1 充分且无必改项。
-
-| 材料                           | SHA-256                                                          |
-| ------------------------------ | ---------------------------------------------------------------- |
-| proposal.md                    | fb47e19183585a0f883a2f767d91ccab5a2a1b1a7d66a5be7bc8a1da6fbb5711 |
-| review.diff                    | fc0e33e5424497f9cf30239adce89b2fa85732ec5f38ee70c635b2b7130072fc |
-| EvidenceBundleV1 evidence.json | 69fdc1cc62b7231f87fdeb6f70912abe0d3d2748915a5273cc3a20290abd9707 |
-| ready/input.json envelope      | 75ecce0f396caa220005527ee3e24e87326692f74f074303e519c9e128740136 |
-| report.md                      | 42fe4b7acacee6995174d698feee78f6ebf39e54384b0ee4054ab14a75ddbc96 |
-| ready/receipt.json             | 2af8acc57ce011f672578abdf5737b409e33ba73f22f93042d6320a73abcb7e0 |
-| handoff.json                   | 84e77552e788b5a435a9ddc7e5be115cf7fbb1f2c290223d2c267e4684b79c51 |
-
-前两次 CHANGES_REQUESTED 报告和回执的记录位置为同任务目录 round-1、round-2-final，材料身份由各自 handoff.json 固定；最终报告记录前次必改项已关闭。审查前源文件在 reviewed-source，紧随审查的状态同步差异为 editorial.diff；后续实质设计变化不属于该差异。
-静态审查者没有文件工具，摘要重算和执行核验来自准备者。材料未纳入仓库，无长期共享链接，当前可取得性未核验；cookie 容量、浏览器或网络切换、真实平台配置、数据库权限、并发重启和资源验收均未由该审查执行。
-
-### 3.5 合并后设计的独立审查
-
-发生于 2026-09-18，基线为 main 的 `0989285f`。审查者为 Claude Fable 5.1（`claude-fable-5-1`），由作者会话按 Human 指示选定并启动为子代理，未继承作者会话的上下文，全程只读。被审材料的提交作者记录为 `Co-authored-by: Claude Opus 5 (1M context)`。
-
-覆盖 26 份文档约 12,600 行，当时的范围入口为旧共同架构 §16 与账户会话验收 §4；原材料身份由下列摘要固定。明确未覆盖：DDL、触发器、PostgreSQL 权限、密码向量、供应商真实语义、并发与重启行为——仓库中没有可执行物，只能核对文本一致性与机制是否被写出。
-
-结论为 19 项确认缺陷与 25 项存疑，**不构成 DESIGN_REVIEWED**。19 项已在该基线之后的提交中修正，因此该结论不覆盖当前 head；25 项存疑仍未处置。
-
-审查者记录的披露：范围入口与"要找什么"由作者会话框定；审查者自行从当时的业务规则材料重新推导，不是只检查内部一致性；审查者与作者同属一个模型家族；同一基线一次运行。未打破的相关性为同厂商同家族可能共享盲区、审查者用于细读的四个分支是其自身上下文的分叉、以及范围入口由作者指定因而可能遗漏作者未列的受影响面。该审查确立的是"一个具名行动者在上述条件下发现了这些问题"，不确立材料正确。
-
-| 材料                       | SHA-256                                                          |
-| -------------------------- | ---------------------------------------------------------------- |
-| 审查报告全文（未纳入仓库） | 935af24fa7a4f4824cc89584075dd993a76d66f6d6063b42746ad9d71b5b86ef |
-
-## 4. 证据限制
-
-2026-09-29，从 GitHub Actions API 查询 [Claude PR Comment Review 工作流](https://github.com/silence-force/nucleus/actions/workflows/claude-pr-comment-review.yml)。结果为 `state=disabled_manually`，当时创建 PR 不会触发该工作流。当时仓库保留的 YAML 和本地契约检查不证明远端工作流已启用，也不说明当前仓库仍保留该路由。依赖审查结果前，核对实时状态及指定 PR、head 的实际运行。
-
-既有审查绑定各自固定材料，不覆盖后续的持久会话、认证职责拆分、复合字段、实际 AppId、当前关联删除、授权交接和错误契约。当前候选的覆盖须按实际基线、修订和材料重新核对；可选审查建议不自动形成规则或验收门槛。
-原报告、源材料及执行回执保持各自身份，本文是证据索引与摘要，不是原报告全文。已完成的审查调用不授权重复启动、实施或发布。
-已有模板压缩样本和隔离数据库图片试验只支持相应样本和有限负载；没有本地阵列、全系统容量、维护停顿或真实业务混合负载的达标证据。实际应用审核、同平台归属、回调、秘密配对、供应商送达、DDL/权限和故障恢复须按各专题分别验证。
+主备字体字节不纳入仓库，其许可边界见[工牌模板、照片与预览](../workforce/media.md)，本地提供方式见[页面设计稿](../client/pages.md#页面设计稿)。本地文件身份为 Microsoft YaHei Regular（Version 0.75，15,043,584 字节，SHA-256 `769738126184d688ddc078df2304ddaf7a25c840c0937170cab790482f40750f`）与 Smiley Sans Oblique（Version 2.0.1，2,629,764 字节，SHA-256 `b447d7e781f08bc95c4c9f23ba71ed2b8ebb639aa7184485c71c4ca5afcd25c4`）；复制后按摘要核对，摘要一致不证明使用范围或排版结果。以上材料不构成页面、真机或打印成品验收。

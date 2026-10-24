@@ -1,0 +1,239 @@
+.logout-layout {
+  width: min(880px, calc(100% - 96px));
+  margin: 36px auto 80px;
+  min-height: 62vh;
+}
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--sub);
+  font-size: 14px;
+}
+.logout-heading {
+  margin: 24px 0 32px;
+}
+.logout-heading h1 {
+  margin: 8px 0 12px;
+  font: 500 34px/1.4 var(--song);
+  letter-spacing: 2px;
+}
+.logout-heading > p:last-child {
+  color: var(--sub);
+}
+.logout-panel {
+  padding: 36px 40px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+}
+.logout-person {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+  margin-bottom: 28px;
+  padding-bottom: 28px;
+  border-bottom: 1px solid var(--line);
+}
+.logout-person img,
+.logout-avatar {
+  width: 56px;
+  height: 56px;
+  flex: 0 0 56px;
+  border-radius: 50%;
+  object-fit: cover;
+  background: var(--muted);
+}
+.logout-avatar {
+  display: grid;
+  place-items: center;
+  color: var(--sub);
+  font-size: 12px;
+}
+.logout-person strong {
+  display: block;
+  font-weight: 600;
+  font-size: 19px;
+  overflow-wrap: anywhere;
+}
+.logout-person p {
+  color: var(--sub);
+  font-size: 14px;
+}
+.logout-panel h2 {
+  font-size: 23px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+.logout-panel .lead {
+  margin-top: 12px;
+  color: var(--sub);
+}
+.logout-consequences {
+  margin: 24px 0;
+  padding: 20px 24px;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+}
+.logout-consequences strong {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+.logout-consequences p {
+  font-size: 15px;
+}
+.logout-preserved {
+  color: var(--sub);
+  font-size: 14px;
+}
+.logout-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 28px;
+}
+.logout-actions .button {
+  min-height: 48px;
+}
+.logout-result {
+  max-width: 650px;
+  margin-inline: auto;
+}
+.result-mark {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  margin-bottom: 24px;
+  border-radius: 50%;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 24px;
+}
+.result-mark.success {
+  color: var(--ok);
+  background: var(--ok-soft);
+}
+.result-meta {
+  margin: 24px 0 0;
+  padding-top: 20px;
+  border-top: 1px solid var(--line);
+  color: var(--sub);
+  font-size: 14px;
+}
+.result-meta div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 24px;
+  margin-top: 8px;
+}
+.result-meta dt {
+  min-width: 84px;
+}
+.result-meta dd {
+  margin: 0;
+  color: var(--ink);
+}
+.current-login {
+  margin-top: 24px;
+  padding: 16px 20px;
+  background: var(--ok-soft);
+  border-left: 3px solid var(--ok-rule);
+}
+.current-login strong {
+  display: block;
+}
+.current-login p {
+  font-size: 14px;
+  margin-top: 4px;
+}
+#dialog-detail {
+  margin-top: 20px;
+  padding: 16px;
+  background: var(--accent-soft);
+  font-size: 14px;
+}
+.logout-panel .minor {
+  color: var(--sub);
+  font-size: 14px;
+  margin-top: 18px;
+}
+.logout-layout a.button {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+}
+.logout-layout .secondary,
+.preview-dialog .secondary {
+  border-color: var(--control-line);
+  background: var(--surface);
+}
+.design-notes label {
+  display: block;
+  margin-top: 16px;
+}
+.design-notes select {
+  width: 100%;
+  min-height: 44px;
+  margin: 6px 0;
+  padding: 8px;
+  color: var(--ink);
+  background: var(--surface);
+  font: inherit;
+  border: 1px solid var(--control-line);
+}
+.design-notes .text-action {
+  margin-top: 16px;
+}
+@media (max-width: 800px) {
+  .logout-layout {
+    width: calc(100% - 48px);
+  }
+  .logout-panel {
+    padding: 28px;
+  }
+}
+@media (max-width: 520px) {
+  .dialog-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .dialog-actions .button {
+    width: 100%;
+  }
+  .logout-layout {
+    width: calc(100% - 32px);
+    margin-top: 20px;
+    margin-bottom: 48px;
+  }
+  .logout-heading {
+    margin: 20px 0 24px;
+  }
+  .logout-heading h1 {
+    font-size: 28px;
+    letter-spacing: 1px;
+  }
+  .logout-panel {
+    padding: 24px 20px;
+  }
+  .logout-panel h2 {
+    font-size: 21px;
+  }
+  .logout-consequences {
+    padding: 16px;
+  }
+  .logout-actions {
+    flex-direction: column;
+  }
+  .logout-actions .button {
+    width: 100%;
+  }
+  .logout-person {
+    align-items: flex-start;
+  }
+  .logout-person strong {
+    font-size: 18px;
+  }
+}

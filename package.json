@@ -3,16 +3,21 @@
   "private": true,
   "packageManager": "bun@1.4.2",
   "scripts": {
-    "check:tools": "tsc --noEmit",
-    "format:docs": "prettier --write AGENTS.md \"docs/**/*.md\"",
-    "check:docs": "prettier --check AGENTS.md \"docs/**/*.md\" && markdownlint-cli2 AGENTS.md \"docs/**/*.md\"",
-    "check:docs:links": "lychee --offline --no-progress --include-fragments=anchor-only AGENTS.md \"docs/**/*.md\""
+    "check:bun": "bun tools/check-bun.ts",
+    "check:tools": "bun tools/check-bun.ts && tsc --noEmit",
+    "preview:design": "bun tools/check-bun.ts && bun tools/preview-design.ts",
+    "format:docs": "prettier --write README.md AGENTS.md halo/README.md \"docs/**/*.md\" \"design/**/*.md\" --no-error-on-unmatched-pattern",
+    "check:docs": "bun tools/check-bun.ts && prettier --check README.md AGENTS.md halo/README.md \"docs/**/*.md\" \"design/**/*.md\" --no-error-on-unmatched-pattern && markdownlint-cli2 README.md AGENTS.md halo/README.md \"docs/**/*.md\" \"design/**/*.md\"",
+    "check:docs:links": "lychee --offline --no-progress --include-fragments=anchor-only README.md AGENTS.md halo/README.md \"docs/**/*.md\" \"design/**/*.md\" \"design/**/*.html\""
   },
   "devDependencies": {
+    "@actions/expressions": "0.3.61",
     "@types/bun": "1.4.2",
     "@types/node": "26.6.4",
+    "@types/serve-handler": "6.1.1",
     "markdownlint-cli2": "0.23.3",
     "prettier": "3.9.9",
+    "serve-handler": "6.1.7",
     "typescript": "7.0.2"
   }
 }

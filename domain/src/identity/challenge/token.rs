@@ -6,12 +6,14 @@ use std::{
 };
 
 use derive_more::AsRef;
+use serde::Deserialize;
 use thiserror::Error;
 use zeroize::Zeroizing;
 
 /// The client-supplied Turnstile proof for an original C1 request.
-#[derive(AsRef)]
+#[derive(AsRef, Deserialize)]
 #[as_ref(str)]
+#[serde(try_from = "Zeroizing<String>")]
 pub struct Token(Zeroizing<String>);
 
 impl Token {
@@ -20,10 +22,10 @@ impl Token {
     }
 }
 
-impl FromStr for Token {
-    type Err = ParseError;
+impl TryFrom<Zeroizing<String>> for Token {
+    type Error = ParseError;
 
-    fn from_str(input: &str) -> Result<Self, Self::Err> {
+    fn try_from(input: Zeroizing<String>) -> Result<Self, Self::Error> {
         if input.is_empty() {
             return Err(ParseError::Empty);
         }
@@ -31,7 +33,15 @@ impl FromStr for Token {
             return Err(ParseError::TooLong);
         }
 
-        Ok(Self(Zeroizing::new(input.to_owned())))
+        Ok(Self(input))
+    }
+}
+
+impl FromStr for Token {
+    type Err = ParseError;
+
+    fn from_str(input: &str) -> Result<Self, Self::Err> {
+        Zeroizing::new(input.to_owned()).try_into()
     }
 }
 
@@ -80,5 +90,35 @@ mod tests {
             "界".repeat(2049).parse::<Token>(),
             Err(ParseError::TooLong)
         ));
+    }
+
+    #[test]
+    fn deserialization_preserves_opaque_text_and_rejects_invalid_values() {
+        for original in [" AbÇ-09\n".to_owned(), "界".repeat(2048)] {
+            let json = serde_json::to_string(&original).expect("JSON text");
+            let token: Token = serde_json::from_str(&json).expect("valid token text");
+            assert_eq!(token.as_ref(), original);
+            let token: Token = serde_json::from_value(serde_json::json!(original))
+                .expect("valid owned token text");
+            assert_eq!(token.as_ref(), original);
+        }
+        let token: Token = serde_json::from_str(r#""\u0061""#).expect("escaped opaque text");
+        assert_eq!(token.as_ref(), "a");
+
+        let private = "界".repeat(2049);
+        for value in [serde_json::json!(""), serde_json::json!(private)] {
+            let json = value.to_string();
+            for error in [
+                serde_json::from_str::<Token>(&json).expect_err("invalid token text"),
+                serde_json::from_value::<Token>(value).expect_err("invalid owned token text"),
+            ] {
+                assert_eq!(error.classify(), serde_json::error::Category::Data);
+                assert!(!format!("{error:?}").contains(&private));
+                assert!(!error.to_string().contains(&private));
+            }
+        }
+        for json in ["null", "123", "true", "[]", "{}"] {
+            assert!(serde_json::from_str::<Token>(json).is_err());
+        }
     }
 }

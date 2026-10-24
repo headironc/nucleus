@@ -18,8 +18,8 @@ pub struct Settings {
     pub(crate) message: message::settings::Settings,
     pub(crate) listen: SocketAddr,
     pub(crate) source: crate::source::Settings,
-    pub(crate) requests: crate::identity::authentication::Settings,
-    pub(crate) authentication: authentication::Settings,
+    pub(crate) requests: crate::identity::Settings,
+    pub(crate) services: domain::startup::Settings,
     pub(crate) process: crate::process::Settings,
 }
 
@@ -33,11 +33,12 @@ impl Settings {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Input {
-    database: Database,
+    database: database::assembly::input::Input,
     challenge: Challenge,
     message: Message,
     http: Http,
     identity: Identity,
+    wechat: Wechat,
     #[serde(default)]
     process: Process,
 }
@@ -53,14 +54,90 @@ struct Http {
     trusted_proxies: Vec<IpNet>,
 }
 
+#[serde_as]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Identity {
     authentication: Authentication,
+    avatar: Avatar,
     #[serde(default)]
     message: Limits,
+    #[serde(default)]
+    session: Session,
+    #[serde(default)]
+    registration: Registration,
+    #[serde_as(as = "DisplayFromStr")]
+    #[serde(default = "default_recovery")]
+    authentication_recovery_seconds: u64,
 }
 
+#[serde_as]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Avatar {
+    origin: String,
+    #[serde_as(as = "DisplayFromStr")]
+    #[serde(default = "default_avatar_lifetime")]
+    lifetime_seconds: u64,
+    #[serde_as(as = "DisplayFromStr")]
+    #[serde(default = "default_avatar_retention")]
+    retention_seconds: u64,
+}
+
+fn default_avatar_lifetime() -> u64 {
+    domain::identity::avatar::link::Link::default_lifetime().as_secs()
+}
+
+fn default_avatar_retention() -> u64 {
+    domain::identity::avatar::retention::Settings::default().seconds()
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Wechat {
+    website: Website,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Website {
+    app_id: String,
+}
+
+#[serde_as]
+#[derive(Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct Session {
+    #[serde_as(as = "DisplayFromStr")]
+    message_seconds: u64,
+}
+impl Default for Session {
+    fn default() -> Self {
+        Self {
+            message_seconds: domain::identity::session::settings::DEFAULT_SESSION_SECONDS,
+        }
+    }
+}
+#[serde_as]
+#[derive(Deserialize)]
+#[serde(default, deny_unknown_fields)]
+struct Registration {
+    #[serde_as(as = "DisplayFromStr")]
+    lifetime_seconds: u64,
+    #[serde_as(as = "DisplayFromStr")]
+    hourly: usize,
+}
+impl Default for Registration {
+    fn default() -> Self {
+        Self {
+            lifetime_seconds:
+                domain::identity::authentication::session::settings::DEFAULT_REGISTRATION_SECONDS,
+            hourly: domain::registration::Limits::default().hourly(),
+        }
+    }
+}
+fn default_recovery() -> u64 {
+    domain::identity::session::settings::DEFAULT_RECOVERY_SECONDS
+}
 #[serde_as]
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -136,9 +213,12 @@ impl Default for Source {
     }
 }
 
-impl TryFrom<Identity> for authentication::Settings {
-    type Error = Error;
-    fn try_from(input: Identity) -> Result<Self, Error> {
+impl Identity {
+    fn parse(
+        self,
+        app_id: domain::identity::website::AppId,
+    ) -> Result<domain::startup::Settings, Error> {
+        let input = self;
         let mobile = message::limits::Mobile::new(
             input.message.mobile.interval_seconds,
             input.message.mobile.hourly,
@@ -152,7 +232,25 @@ impl TryFrom<Identity> for authentication::Settings {
             mobile,
             source,
         )?;
-        Ok(Self::new(input.authentication.capacity, limits)?)
+        let session = authentication::session::settings::Settings::new(
+            app_id,
+            input.session.message_seconds,
+            input.registration.lifetime_seconds,
+            input.authentication_recovery_seconds,
+        )?;
+        Ok(domain::startup::Settings::new(
+            input.authentication.capacity,
+            limits,
+            session,
+            domain::registration::Limits::new(input.registration.hourly)?,
+            domain::identity::avatar::link::Link::new(
+                input.avatar.origin,
+                Duration::from_secs(input.avatar.lifetime_seconds),
+            )?,
+        )?
+        .with_avatar_retention(domain::identity::avatar::retention::Settings::new(
+            input.avatar.retention_seconds,
+        )?))
     }
 }
 
@@ -169,65 +267,6 @@ impl Default for Process {
         Self {
             stop_seconds: crate::process::DEFAULT_STOP_SECONDS,
         }
-    }
-}
-
-#[serde_as]
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Database {
-    user: String,
-    authority: String,
-    host: String,
-    name: String,
-    #[serde_as(as = "DisplayFromStr")]
-    capacity: usize,
-    #[serde_as(as = "DisplayFromStr")]
-    port: u16,
-    #[serde(default)]
-    budgets: Budgets,
-}
-
-#[serde_as]
-#[derive(Deserialize)]
-#[serde(default, deny_unknown_fields)]
-struct Budgets {
-    #[serde_as(as = "DisplayFromStr")]
-    wait_seconds: u64,
-    #[serde_as(as = "DisplayFromStr")]
-    connect_seconds: u64,
-    #[serde_as(as = "DisplayFromStr")]
-    recycle_seconds: u64,
-}
-
-impl Default for Budgets {
-    fn default() -> Self {
-        Self {
-            wait_seconds: database::settings::DEFAULT_WAIT_SECONDS,
-            connect_seconds: database::settings::DEFAULT_CONNECT_SECONDS,
-            recycle_seconds: database::settings::DEFAULT_RECYCLE_SECONDS,
-        }
-    }
-}
-
-impl TryFrom<Database> for crate::database::Settings {
-    type Error = Error;
-
-    fn try_from(input: Database) -> Result<Self, Error> {
-        let budgets = database::settings::Budgets::new(
-            Duration::from_secs(input.budgets.wait_seconds),
-            Duration::from_secs(input.budgets.connect_seconds),
-            Duration::from_secs(input.budgets.recycle_seconds),
-        )?;
-        let connection = database::Settings::new(
-            input.host,
-            input.port,
-            input.name,
-            input.user,
-            input.capacity,
-            budgets,
-        )?;
-        Ok(Self::new(connection, input.authority)?)
     }
 }
 
@@ -248,6 +287,7 @@ impl Input {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Challenge {
+    site_key: String,
     #[serde_as(as = "JsonString")]
     hostnames: Vec<String>,
 }
@@ -281,26 +321,20 @@ impl TryFrom<Input> for Settings {
     fn try_from(input: Input) -> Result<Self, Error> {
         Ok(Self {
             database: input.database.try_into()?,
-            challenge: input.challenge.try_into()?,
+            challenge: challenge::settings::Settings::new(
+                challenge::settings::AllowedHostnames::new(
+                    NonEmpty::from_vec(input.challenge.hostnames).ok_or(Error::EmptyHostnames)?,
+                )?,
+            ),
             message: input.message.try_into()?,
             listen: input.http.listen,
             source: crate::source::Settings::new(input.http.trusted_proxies)?,
-            requests: crate::identity::authentication::Settings::new(input.http.origin)?,
-            authentication: input.identity.try_into()?,
+            requests: crate::identity::Settings::new(input.http.origin, input.challenge.site_key)?,
+            services: input.identity.parse(input.wechat.website.app_id.parse()?)?,
             process: crate::process::Settings::new(Duration::from_secs(
                 input.process.stop_seconds,
             ))?,
         })
-    }
-}
-
-impl TryFrom<Challenge> for challenge::settings::Settings {
-    type Error = Error;
-
-    fn try_from(input: Challenge) -> Result<Self, Error> {
-        let names = NonEmpty::from_vec(input.hostnames).ok_or(Error::EmptyHostnames)?;
-        let names = challenge::settings::AllowedHostnames::new(names)?;
-        Ok(Self::new(names))
     }
 }
 
@@ -330,13 +364,23 @@ impl TryFrom<Templates> for message::settings::Templates {
 #[derive(Error)]
 pub enum Error {
     #[error("{0}")]
+    Avatar(#[from] domain::identity::avatar::link::SettingsError),
+    #[error("{0}")]
+    AvatarRetention(#[from] domain::identity::avatar::retention::SettingsError),
+    #[error("{0}")]
+    Website(#[from] domain::identity::website::Error),
+    #[error("{0}")]
+    Session(#[from] authentication::session::settings::Error),
+    #[error("{0}")]
     Source(#[from] crate::source::SettingsError),
     #[error("{0}")]
-    Requests(#[from] crate::identity::authentication::settings::Error),
+    Requests(#[from] crate::identity::settings::Error),
     #[error("{0}")]
-    Authentication(#[from] authentication::settings::Error),
+    Capacity(#[from] domain::startup::CapacityError),
     #[error("{0}")]
     Limits(#[from] message::limits::Error),
+    #[error("{0}")]
+    Registration(#[from] domain::registration::LimitsError),
     #[error("{0}")]
     Process(#[from] crate::process::SettingsError),
     #[error("database.{0}")]
@@ -369,6 +413,15 @@ impl From<config::ConfigError> for Error {
     }
 }
 
+impl From<database::assembly::input::Error> for Error {
+    fn from(source: database::assembly::input::Error) -> Self {
+        match source {
+            database::assembly::input::Error::Authority(error) => Self::Authority(error),
+            database::assembly::input::Error::Database(error) => Self::Database(error),
+        }
+    }
+}
+
 impl From<serde_path_to_error::Error<config::ConfigError>> for Error {
     fn from(source: serde_path_to_error::Error<config::ConfigError>) -> Self {
         Self::Input {
@@ -397,6 +450,7 @@ mod tests {
 
     fn input() -> Vec<(String, String)> {
         [
+            ("NUCLEUS_CHALLENGE__SITE_KEY", "fixture-site-key"),
             (
                 "NUCLEUS_CHALLENGE__HOSTNAMES",
                 r#"["Example.com","127.0.0.1"]"#,
@@ -415,6 +469,11 @@ mod tests {
             ("NUCLEUS_HTTP__ORIGIN", "https://example.com"),
             ("NUCLEUS_HTTP__TRUSTED_PROXIES", r#"["127.0.0.1/32"]"#),
             ("NUCLEUS_IDENTITY__AUTHENTICATION__CAPACITY", "16"),
+            (
+                "NUCLEUS_IDENTITY__AVATAR__ORIGIN",
+                "https://avatars.example.com",
+            ),
+            ("NUCLEUS_WECHAT__WEBSITE__APP_ID", "website-fixture"),
         ]
         .into_iter()
         .map(|(key, value)| (key.into(), value.into()))
@@ -439,9 +498,20 @@ mod tests {
         assert_eq!(raw.process.stop_seconds, 30);
         assert_eq!(raw.identity.message.lifetime_seconds, 300);
         assert_eq!(raw.identity.message.mobile.interval_seconds, 60);
+        assert_eq!(raw.identity.registration.hourly, 5);
+        assert_eq!(raw.identity.avatar.lifetime_seconds, 86400);
+        assert_eq!(raw.identity.avatar.retention_seconds, 86400);
+        assert!(Settings::try_from(raw).is_ok());
+        let mut lower = input();
+        lower.push(("NUCLEUS_IDENTITY__REGISTRATION__HOURLY".into(), "2".into()));
+        let raw = Input::load(Environment::default().source(Some(lower.into_iter().collect())))
+            .expect("lower registration quota input");
+        assert_eq!(raw.identity.registration.hourly, 2);
         assert!(Settings::try_from(raw).is_ok());
         for (key, value) in [
             ("PROCESS__STOP_SECONDS", "0"),
+            ("CHALLENGE__SITE_KEY", ""),
+            ("CHALLENGE__SITE_KEY", "has space"),
             ("PROCESS__STOP_SECONDS", ""),
             ("IDENTITY__AUTHENTICATION__CAPACITY", "0"),
             ("IDENTITY__MESSAGE__MOBILE__INTERVAL_SECONDS", "0"),
@@ -449,6 +519,24 @@ mod tests {
             ("IDENTITY__MESSAGE__SOURCE__MINUTE", "0"),
             ("IDENTITY__MESSAGE__LIFETIME_SECONDS", "0"),
             ("IDENTITY__MESSAGE__DAILY", ""),
+            ("IDENTITY__REGISTRATION__HOURLY", "0"),
+            ("IDENTITY__REGISTRATION__HOURLY", "6"),
+            ("IDENTITY__REGISTRATION__HOURLY", ""),
+            ("IDENTITY__AVATAR__LIFETIME_SECONDS", "59"),
+            ("IDENTITY__AVATAR__LIFETIME_SECONDS", "86401"),
+            ("IDENTITY__AVATAR__LIFETIME_SECONDS", ""),
+            ("IDENTITY__AVATAR__RETENTION_SECONDS", "0"),
+            ("IDENTITY__AVATAR__RETENTION_SECONDS", ""),
+            (
+                "IDENTITY__AVATAR__RETENTION_SECONDS",
+                "18446744073709551615",
+            ),
+            ("IDENTITY__AVATAR__ORIGIN", "http://avatars.example.com"),
+            (
+                "IDENTITY__AVATAR__ORIGIN",
+                "https://avatars.example.com/a/..",
+            ),
+            ("IDENTITY__AVATAR__ORIGIN", "https://@avatars.example.com"),
             ("IDENTITY__MESSAGE__UNKNOWN", "sensitive-marker"),
             ("HTTP__LISTEN", "sensitive-marker"),
             ("HTTP__ORIGIN", "http://example.com"),
@@ -476,10 +564,7 @@ mod tests {
         assert!(load(values).is_ok());
         let raw = Input::load(Environment::default().source(Some(input().into_iter().collect())))
             .expect("valid input");
-        assert_eq!(raw.database.port, 15432);
-        assert_eq!(raw.database.budgets.wait_seconds, 3);
-        assert_eq!(raw.database.budgets.connect_seconds, 5);
-        assert_eq!(raw.database.budgets.recycle_seconds, 3);
+        assert!(Settings::try_from(raw).is_ok());
         let mut values = input();
         values.push((
             "NUCLEUS_DATABASE__BUDGETS__CONNECT_SECONDS".into(),
@@ -487,9 +572,6 @@ mod tests {
         ));
         let raw = Input::load(Environment::default().source(Some(values.into_iter().collect())))
             .expect("partial budgets");
-        assert_eq!(raw.database.budgets.wait_seconds, 3);
-        assert_eq!(raw.database.budgets.connect_seconds, 7);
-        assert_eq!(raw.database.budgets.recycle_seconds, 3);
         assert!(Settings::try_from(raw).is_ok());
     }
 
@@ -544,7 +626,6 @@ mod tests {
             let raw =
                 Input::load(Environment::default().source(Some(values.into_iter().collect())))
                     .expect("the complete u64 range parses before deadline validation");
-            assert_eq!(raw.database.budgets.connect_seconds, seconds);
             assert!(matches!(Settings::try_from(raw), Err(Error::Database(_))));
         }
     }
@@ -668,7 +749,8 @@ mod tests {
             r#"["example.com","sensitive marker"]"#,
         ] {
             let mut values = input();
-            values[0].1 = value.into();
+            values.retain(|(key, _)| key != "NUCLEUS_CHALLENGE__HOSTNAMES");
+            values.push(("NUCLEUS_CHALLENGE__HOSTNAMES".into(), value.into()));
             let error = rejected(values);
             assert!(!format!("{error:?} {error}").contains("sensitive"));
         }
@@ -747,7 +829,8 @@ mod tests {
             (r#"["-example.com"]"#, "host"),
         ] {
             let mut values = input();
-            values[0].1 = json.into();
+            values.retain(|(key, _)| key != "NUCLEUS_CHALLENGE__HOSTNAMES");
+            values.push(("NUCLEUS_CHALLENGE__HOSTNAMES".into(), json.into()));
             let error = rejected(values);
             match expected {
                 "json" => assert!(matches!(error, Error::Input { .. })),

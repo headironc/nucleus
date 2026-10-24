@@ -44,10 +44,7 @@ async fn run(arguments: &[&str]) -> Output {
 
 #[tokio::test]
 async fn help_and_version_succeed_without_deployment_configuration() {
-    let cases: &[(&[&str], &str)] = &[
-        (&["--help"], "Usage: nucleus"),
-        (&["check", "--help"], "Usage: nucleus check"),
-    ];
+    let cases: &[(&[&str], &str)] = &[(&["--help"], "Usage: nucleus")];
     for (arguments, usage) in cases {
         let output = run(arguments).await;
         assert_eq!(output.status.code(), Some(0), "{arguments:?}: {output:?}");
@@ -72,6 +69,7 @@ async fn invalid_arguments_exit_with_usage_status_without_echoing_input() {
     let cases: &[&[&str]] = &[
         &["--fictional-private-cli-value"],
         &[PRIVATE],
+        // The startup isolation checker was removed; the instance lock replaced it.
         &["check", PRIVATE],
     ];
     for arguments in cases {

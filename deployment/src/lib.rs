@@ -1,7 +1,10 @@
 //! Offline deployment entrypoints.
 
+pub mod access;
+pub mod admin;
 pub mod credentials;
 pub mod database;
+pub mod instance;
 pub mod keys;
 pub mod migration;
 pub mod permissions;
@@ -16,7 +19,7 @@ pub const OPERATION_BUDGET: Duration = Duration::from_secs(300);
 mod tests {
     use std::sync::{Arc, Mutex, Weak};
 
-    use domain::identity::keys::{self, challenge, encryption, metadata::Metadata, mobile};
+    use domain::keys::{Entry, Id, Material, metadata::Metadata};
     use platform::database::{
         Connections, assembly,
         credentials::Password,
@@ -39,7 +42,11 @@ mod tests {
             self.connections_at(name, user, self.fixture.port())
         }
 
-        fn connections_at(&self, name: &str, user: &str, port: u16) -> Connections {
+        pub(crate) fn fixture(&self) -> &fixture::Server {
+            &self.fixture
+        }
+
+        pub(crate) fn connections_at(&self, name: &str, user: &str, port: u16) -> Connections {
             let roots = assembly::roots(
                 &std::fs::read(self.fixture.authority()).expect("fixture certificate"),
             )
@@ -114,6 +121,66 @@ mod tests {
         server
     }
 
+    /// The fence a deployment command would hold, taken and released on its own connections.
+    pub(crate) async fn fence(server: &Server, name: &str) -> domain::database::instance::Fence {
+        fence_as(server, name, "steward").await
+    }
+
+    pub(crate) async fn fence_as(
+        server: &Server,
+        name: &str,
+        user: &str,
+    ) -> domain::database::instance::Fence {
+        let lock = server.connections(name, user);
+        // An earlier holder's backend may still be ending; wait for it like a rerun would.
+        let held = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            loop {
+                match crate::instance::take(&lock).await {
+                    Ok(held) => break held,
+                    Err(domain::runtime::Error::InstanceHeld) => {
+                        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                    }
+                    Err(error) => panic!("deployment instance lock failed: {error:?}"),
+                }
+            }
+        })
+        .await
+        .expect("deployment instance lock");
+        let fence = held.fence();
+        held.release().await.expect("release the instance lock");
+        lock.close().await;
+        assert!(released(server, name).await, "the helper released its lock");
+        fence
+    }
+
+    /// The server ends a closed session's backend asynchronously; wait up to ten seconds
+    /// for the instance lock to be released.
+    pub(crate) async fn released(server: &Server, name: &str) -> bool {
+        let observer = server
+            .connections(name, "postgres")
+            .recover()
+            .await
+            .expect("instance lock observer");
+        let released = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            while observer
+                .client()
+                .query_one(
+                    "SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_locks WHERE locktype = 'advisory' AND classid = 1314210636 AND objid = 3 AND objsubid = 2 AND granted AND database = (SELECT oid FROM pg_catalog.pg_database WHERE datname = current_database()))",
+                    &[],
+                )
+                .await
+                .expect("instance lock observation")
+                .get::<_, bool>(0)
+            {
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .is_ok();
+        observer.terminate().await.expect("observer ended");
+        released
+    }
+
     pub(crate) async fn database(server: &Server) -> String {
         database_for(server, "steward", "clerk").await
     }
@@ -164,43 +231,59 @@ mod tests {
         name
     }
 
+    /// Two fictional root versions; `changed` replaces version 0's material with another.
     pub(crate) fn metadata(active_id: i64, changed: bool) -> Metadata {
-        fn entries(changed: bool) -> Vec<keys::Entry> {
-            [
-                (
-                    0,
-                    if changed {
-                        "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio"
-                    } else {
-                        "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
-                    },
-                ),
-                (1, "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE"),
-            ]
+        let materials = [
+            if changed {
+                "KioqKioqKioqKioqKioqKioqKioqKioqKioqKioqKio"
+            } else {
+                "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"
+            },
+            "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE",
+        ];
+        let entries = [0, 1]
             .into_iter()
+            .zip(materials)
             .map(|(id, material)| {
-                keys::Entry::new(
-                    keys::Id::new(id).expect("id"),
-                    keys::Material::new(Zeroizing::new(material.into())).expect("material"),
+                Entry::new(
+                    Id::new(id).expect("id"),
+                    Material::new(Zeroizing::new(material.into())).expect("material"),
                 )
             })
-            .collect()
-        }
-        let active_id = keys::Id::new(active_id).expect("id");
-        Metadata::new(
-            &challenge::Keys::new(active_id, entries(changed)).expect("challenge"),
-            &mobile::Keys::new(active_id, entries(false)).expect("mobile"),
-            &encryption::Keys::new(active_id, entries(false)).expect("encryption"),
-            &keys::message::Keys::new(active_id, entries(false)).expect("message"),
-        )
+            .collect();
+        domain::keys::Keys::new(Id::new(active_id).expect("id"), entries)
+            .expect("root versions")
+            .metadata()
+            .clone()
     }
 
     #[test]
     fn deployment_failures_retain_the_query_and_terminated_driver() {
-        use std::time::Duration;
+        use std::{error::Error, time::Duration};
 
-        use platform::database::User;
+        use fixture::database_proxy::{Fault, Proxy};
+        use platform::database::{Session, User};
         use tokio::time::timeout;
+
+        async fn snapshot(observer: &Session) -> Vec<String> {
+            let history: String = observer.client().query_one(
+                "SELECT jsonb_agg(jsonb_build_array(version, name, applied_on, checksum, xmin::text) ORDER BY version)::text FROM deployment.migrations",
+                &[],
+            ).await.expect("independent migration history").get(0);
+            let mut facts = vec![history];
+            facts.push(
+                observer
+                    .client()
+                    .query_one(
+                        "SELECT jsonb_agg(jsonb_build_array(id, encode(fingerprint, 'hex'), active, xmin::text) ORDER BY id)::text FROM security.keys",
+                        &[],
+                    )
+                    .await
+                    .expect("independent key registration")
+                    .get(0),
+            );
+            facts
+        }
 
         let server = server();
         Runtime::new().expect("runtime").block_on(async {
@@ -208,50 +291,79 @@ mod tests {
             let connections = server.connections(&name, "steward");
             let user = User::new("clerk".into()).expect("runtime identity");
             crate::migration::run(&connections, &user).await.expect("migrations");
-            crate::keys::initialize(&connections, &metadata(0, false)).await.expect("keys");
+            crate::keys::initialize(&connections, &metadata(0, false), crate::tests::fence(&server, &name).await).await.expect("keys");
+            let observer = server.connections(&name, "postgres").recover().await.expect("independent observer");
+            let before = snapshot(&observer).await;
 
-            for operation in 0..3 {
-                let proxy = fixture::database_proxy::Proxy::start(&server.fixture).await;
-                let blocker = server.connections(&name, "postgres").recover().await.expect("fixture blocker");
-                // Only this disposable database's catalogs are locked. Each entrypoint is
-                // stopped during prerequisite queries, before any business write can start.
-                blocker.client().batch_execute("BEGIN; LOCK TABLE pg_catalog.pg_namespace IN ACCESS EXCLUSIVE MODE").await.expect("hold prerequisite queries");
+            for operation in ["migration", "keys", "permissions"] {
+                let proxy = Proxy::start(&server.fixture).await;
+                proxy.arm(Fault::StalledQuery);
                 let connections = server.connections_at(&name, "steward", proxy.port());
                 let user = user.clone();
-                let task = tokio::spawn(async move {
+                let fence = crate::tests::fence(&server, &name).await;
+                let mut task = tokio::spawn(async move {
                     match operation {
-                        0 => crate::migration::run(&connections, &user).await?,
-                        1 => crate::keys::initialize(&connections, &metadata(0, false)).await?,
+                        "migration" => crate::migration::run(&connections, &user).await?,
+                        "keys" => crate::keys::initialize(&connections, &metadata(0, false), fence).await?,
                         _ => crate::permissions::verify(&connections, &user).await?,
                     }
                     Ok::<(), Box<dyn std::error::Error + Send + Sync>>(())
                 });
-                timeout(Duration::from_secs(5), async {
-                    loop {
-                        blocker.client().batch_execute("SELECT pg_catalog.pg_stat_clear_snapshot()").await.expect("refresh fixture activity snapshot");
-                        let option = blocker.client().query_opt(
-                            "SELECT 1 FROM pg_catalog.pg_stat_activity WHERE datname = $1 AND usename = 'steward' AND state = 'active' AND wait_event_type = 'Lock'",
-                            &[&name],
-                        ).await.expect("observe the blocked deployment query");
-                        if option.is_some() {
-                            break;
-                        }
-                        tokio::task::yield_now().await;
+                if timeout(Duration::from_secs(5), async {
+                    tokio::select! {
+                        _ = proxy.intercepted() => {},
+                        result = &mut task => panic!("{operation}: completed before its prerequisite query: {result:?}"),
                     }
-                }).await.expect("deployment reaches the protected catalog");
+                }).await.is_err() {
+                    panic!("{operation}: prerequisite query was not intercepted");
+                }
+                assert!(!task.is_finished(), "{operation}: query awaits the held Parse frame");
                 timeout(Duration::from_secs(5), proxy.stop()).await.expect("disconnect the fixture transport");
                 let error = timeout(Duration::from_secs(5), task).await.expect("failure budget").expect("deployment task").expect_err("query and driver both fail");
                 let diagnostic = format!("{error:?}");
-                assert!(diagnostic.starts_with("Combined {"), "{diagnostic}");
-                assert!(diagnostic.contains("termination: database driver connection failed"), "{diagnostic}");
+                let (query, termination) = match operation {
+                    "migration" => {
+                        let Some(crate::migration::Error::Combined { cause, termination }) = error.downcast_ref() else {
+                            panic!("{operation}: missing combined failure: {diagnostic}");
+                        };
+                        let crate::migration::Error::Database(query) = cause.as_ref() else {
+                            panic!("{operation}: missing original query failure: {diagnostic}");
+                        };
+                        (query, termination)
+                    }
+                    "keys" => {
+                        let Some(crate::keys::Error::Combined { cause, termination }) = error.downcast_ref() else {
+                            panic!("{operation}: missing combined failure: {diagnostic}");
+                        };
+                        let crate::keys::Error::Database(query) = cause.as_ref() else {
+                            panic!("{operation}: missing original query failure: {diagnostic}");
+                        };
+                        (query, termination)
+                    }
+                    _ => {
+                        let Some(crate::permissions::Error::Combined { cause, termination }) = error.downcast_ref() else {
+                            panic!("{operation}: missing combined failure: {diagnostic}");
+                        };
+                        let crate::permissions::Error::Database(domain::database::Error::Query(query)) = cause.as_ref() else {
+                            panic!("{operation}: missing original query failure: {diagnostic}");
+                        };
+                        let query = query.source().and_then(|source| source.downcast_ref::<tokio_postgres::Error>()).expect("retained original driver query error");
+                        (query, termination)
+                    }
+                };
+                assert!(query.is_closed(), "{operation}: interrupted query retains the closed-connection cause");
+                let platform::database::Error::Postgres(driver) = termination else {
+                    panic!("{operation}: missing actual driver error: {diagnostic}");
+                };
+                assert!(driver.source().and_then(|source| source.downcast_ref::<std::io::Error>()).is_some(), "{operation}: driver retains its actual transport error");
                 assert!(!diagnostic.contains(&name));
                 assert!(!diagnostic.contains(fixture::PASSWORD));
-                blocker.client().batch_execute("ROLLBACK").await.expect("release fixture locks");
-                blocker.terminate().await.expect("end blocker");
+                assert!(snapshot(&observer).await == before, "{operation}: original persistent facts remain unchanged before any rerun");
             }
             crate::migration::run(&connections, &user).await.expect("migration history unchanged");
-            crate::keys::initialize(&connections, &metadata(0, false)).await.expect("metadata unchanged");
+            crate::keys::initialize(&connections, &metadata(0, false), crate::tests::fence(&server, &name).await).await.expect("metadata unchanged");
             crate::permissions::verify(&connections, &user).await.expect("ownership and runtime permissions unchanged");
+            observer.terminate().await.expect("end observer");
         });
     }
 }

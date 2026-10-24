@@ -12,10 +12,10 @@ pub async fn verify(connections: &Connections, runtime_user: &User) -> Result<()
         let client = session.client();
         let owner: bool = client
             .query_one(
-                r#"SELECT count(*) = 4 AND bool_and(relowner = current_user::regrole)
+                r#"SELECT count(*) = 3 AND bool_and(relowner = current_user::regrole)
                 FROM pg_catalog.pg_class
-                WHERE oid IN ('security.challenges'::regclass, 'security.mobiles'::regclass,
-                    'security.encryptions'::regclass, 'security.messages'::regclass)"#,
+                WHERE oid IN ('security.keys'::regclass, 'identity.completions'::regclass,
+                    'identity.corrections'::regclass)"#,
                 &[],
             )
             .await?
@@ -47,7 +47,7 @@ pub async fn verify(connections: &Connections, runtime_user: &User) -> Result<()
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("deployment identity does not own all key tables")]
+    #[error("deployment identity does not own all key and permanent identity tables")]
     Ownership,
     #[error("{0}")]
     Database(#[from] database::Error),
@@ -84,6 +84,64 @@ mod tests {
         keys, migration,
         permissions::{Error, verify},
     };
+
+    #[test]
+    fn permanent_identity_tables_are_owned_and_runtime_read_only() {
+        let server = crate::tests::server();
+        Runtime::new().expect("runtime").block_on(async {
+            timeout(Duration::from_secs(20), async {
+                let name = crate::tests::database(&server).await;
+                let connections = server.connections(&name, "steward");
+                let user = User::new("clerk".into()).expect("runtime identity");
+                migration::run(&connections, &user)
+                    .await
+                    .expect("migration");
+                let admin = server
+                    .connections(&name, "postgres")
+                    .recover()
+                    .await
+                    .expect("isolated grant injector");
+                verify(&connections, &user)
+                    .await
+                    .expect("read-only permanent identity access");
+                admin
+                    .client()
+                    .batch_execute("GRANT DELETE ON identity.corrections TO clerk")
+                    .await
+                    .expect("excess fixture privilege");
+                assert!(matches!(
+                    verify(&connections, &user).await,
+                    Err(Error::Database(database::Error::Permissions))
+                ));
+                admin
+                    .client()
+                    .batch_execute("REVOKE DELETE ON identity.corrections FROM clerk")
+                    .await
+                    .expect("restore exact privileges");
+                admin
+                    .client()
+                    .batch_execute("ALTER TABLE identity.completions OWNER TO postgres")
+                    .await
+                    .expect("changed owner");
+                assert!(matches!(
+                    verify(&connections, &user).await,
+                    Err(Error::Ownership)
+                ));
+                admin
+                    .client()
+                    .batch_execute("ALTER TABLE identity.completions OWNER TO steward")
+                    .await
+                    .expect("restore owner");
+                verify(&connections, &user)
+                    .await
+                    .expect("restored boundary");
+                admin.terminate().await.expect("admin ended");
+                connections.close().await;
+            })
+            .await
+            .expect("binding permission budget");
+        });
+    }
 
     #[test]
     fn accepts_custom_users_and_rejects_privilege_overlap() {
@@ -125,20 +183,24 @@ mod tests {
                 .await
                 .expect("custom permissions");
             let metadata = crate::tests::metadata(0, false);
-            keys::initialize(&connections, &metadata)
-                .await
-                .expect("custom initialization");
+            keys::initialize(
+                &connections,
+                &metadata,
+                crate::tests::fence_as(&server, &name, deployment_user.as_ref()).await,
+            )
+            .await
+            .expect("custom initialization");
             let runtime = server
                 .connections(&name, runtime_user.as_ref())
                 .recover()
                 .await
                 .expect("runtime");
-            domain::identity::keys::database::verify(&metadata, runtime.client())
+            domain::keys::database::verify(&metadata, runtime.client())
                 .await
                 .expect("read access");
             let error = runtime
                 .client()
-                .batch_execute("DELETE FROM security.challenges")
+                .batch_execute("DELETE FROM security.keys")
                 .await
                 .expect_err("write denied");
             assert_eq!(error.code(), Some(&SqlState::INSUFFICIENT_PRIVILEGE));
@@ -195,7 +257,7 @@ mod tests {
     fn shares_runtime_key_permissions_and_requires_the_exact_deployment_owner() {
         let server = crate::tests::server();
         Runtime::new().expect("runtime").block_on(async {
-            timeout(Duration::from_secs(30), async {
+            let (connections, user, runtime, admin, group) = timeout(Duration::from_secs(30), async {
                 let name = crate::tests::database(&server).await;
                 let connections = server.connections(&name, "steward");
                 let user = User::new("clerk".into()).expect("runtime identity");
@@ -206,7 +268,11 @@ mod tests {
                 // Interpolated names and privileges are fixed fixtures or generated identifiers.
                 admin.client().batch_execute(&format!("CREATE ROLE {group}"))
                     .await.expect("fictional group");
-                for table in ["challenges", "mobiles", "encryptions", "messages"] {
+                (connections, user, runtime, admin, group)
+            }).await.expect("permission parity setup budget");
+            // The root metadata table has the complete matrix within its own budget.
+            for table in ["keys"] {
+                let result = timeout(Duration::from_secs(30), async {
                     verify(&connections, &user).await.expect("ordinary permissions");
                     admin.client().batch_execute(&format!("REVOKE SELECT ON security.{table} FROM clerk"))
                         .await.expect("remove required read access");
@@ -248,11 +314,248 @@ mod tests {
                     admin.client().batch_execute(&format!("ALTER TABLE security.{table} OWNER TO steward"))
                         .await.expect("restore the exact owner");
                     verify(&connections, &user).await.expect("deployment owner restored");
-                }
+                }).await;
+                assert!(result.is_ok(), "security.{table}: permission parity matrix exceeded 30 seconds");
+            }
+            timeout(Duration::from_secs(30), async {
                 runtime.terminate().await.expect("runtime ended");
                 admin.terminate().await.expect("admin ended");
                 connections.close().await;
-            }).await.expect("permission parity test budget");
+            }).await.expect("permission parity teardown budget");
+        });
+    }
+
+    #[test]
+    fn identity_writes_preserve_exact_columns_and_all_effective_role_paths() {
+        let server = crate::tests::server();
+        Runtime::new().expect("runtime").block_on(async {
+            let name = crate::tests::database(&server).await;
+            let connections = server.connections(&name, "steward");
+            let user = User::new("clerk".into()).expect("runtime identity");
+            migration::run(&connections, &user).await.expect("migrations");
+            let runtime = server.connections(&name, "clerk").recover().await.expect("runtime");
+            let admin = server.connections(&name, "postgres").recover().await.expect("admin");
+            let group = format!("group_{}", Uuid::new_v4().simple());
+            admin.client().batch_execute(&format!("CREATE ROLE {group}")).await.expect("isolated group");
+            // Migrated tables use table ACLs; unmigrated consumers retain column ACLs.
+            for (table, required, excess) in [
+                ("identity.attempts", "INSERT (id)", ["INSERT (transaction_id)", "UPDATE (id)", "TRUNCATE"]),
+                ("identity.receipts", "INSERT (id)", ["INSERT (transaction_id)", "UPDATE (id)", "TRUNCATE"]),
+                ("identity.persons", "INSERT", ["TRUNCATE", "REFERENCES (id)", "DELETE"]),
+                ("identity.persons", "UPDATE", ["TRUNCATE", "REFERENCES (id)", "DELETE"]),
+                ("identity.origins", "INSERT", ["TRUNCATE", "UPDATE (person_id)", "DELETE"]),
+                ("identity.changes", "SELECT", ["INSERT (person_id)", "UPDATE (person_id)", "DELETE"]),
+                ("identity.revisions", "INSERT (id)", ["INSERT (transaction_id)", "UPDATE (id)", "DELETE"]),
+                ("identity.accounts", "INSERT", ["TRUNCATE", "REFERENCES (id)", "DELETE"]),
+                ("identity.avatars", "INSERT (id)", ["INSERT (transaction_id)", "UPDATE (id)", "TRUNCATE"]),
+                ("identity.avatars", "DELETE", ["INSERT (transaction_id)", "UPDATE (id)", "TRUNCATE"]),
+                ("identity.revocations", "INSERT", ["TRUNCATE", "UPDATE (id)", "REFERENCES (id)"]),
+                ("identity.suspensions", "INSERT", ["TRUNCATE", "UPDATE (id)", "DELETE"]),
+                ("identity.resumptions", "INSERT", ["TRUNCATE", "UPDATE (id)", "DELETE"]),
+                ("identity.corrections", "INSERT", ["TRUNCATE", "UPDATE (id)", "DELETE"]),
+                ("identity.cancellations", "INSERT", ["TRUNCATE", "UPDATE (id)", "DELETE"]),
+                ("identity.replacements", "INSERT", ["TRUNCATE", "UPDATE (id)", "DELETE"]),
+                ("center.affiliations", "INSERT", ["TRUNCATE", "UPDATE (id)", "DELETE"]),
+            ] {
+                let result = timeout(Duration::from_secs(30), async {
+                    verify(&connections, &user).await.expect("normal deployment permissions");
+                    admin.client().batch_execute(&format!("REVOKE {required} ON {table} FROM clerk")).await.expect("remove required creation privilege");
+                    assert!(matches!(database::permissions::verify(runtime.client(), &user).await, Err(database::Error::Permissions)), "{table}");
+                    assert!(matches!(verify(&connections, &user).await, Err(Error::Database(database::Error::Permissions))), "{table}");
+                    admin.client().batch_execute(&format!("GRANT {required} ON {table} TO clerk")).await.expect("restore creation privilege");
+                    verify(&connections, &user).await.expect("required creation privilege restored");
+                    for recipient in ["clerk", "PUBLIC", &group] {
+                        for privilege in excess {
+                            admin.client().batch_execute(&format!("GRANT {privilege} ON {table} TO {recipient}")).await.expect("excess grant");
+                            for inherited in [false, true] {
+                                if recipient == group {
+                                    let inherit = if inherited { "TRUE" } else { "FALSE" };
+                                    admin.client().batch_execute(&format!("GRANT {group} TO clerk WITH INHERIT {inherit}, SET TRUE")).await.expect("effective role path");
+                                } else if inherited { continue; }
+                                assert!(matches!(database::permissions::verify(runtime.client(), &user).await, Err(database::Error::Permissions)), "{table}: {privilege}, {recipient}, inherited={inherited}");
+                                assert!(matches!(verify(&connections, &user).await, Err(Error::Database(database::Error::Permissions))), "{table}: {privilege}, {recipient}, inherited={inherited}");
+                                if recipient == group { admin.client().batch_execute(&format!("REVOKE {group} FROM clerk")).await.expect("remove membership"); }
+                            }
+                            admin.client().batch_execute(&format!("REVOKE {privilege} ON {table} FROM {recipient}")).await.expect("remove excess grant");
+                            verify(&connections, &user).await.expect("excess privilege removed");
+                        }
+                    }
+                    verify(&connections, &user).await.expect("restored permissions");
+                }).await;
+                assert!(result.is_ok(), "{table}: identity write permission matrix exceeded 30 seconds");
+            }
+            runtime.terminate().await.expect("runtime ended"); admin.terminate().await.expect("admin ended"); connections.close().await;
+        });
+    }
+
+    #[test]
+    fn role_operations_require_table_permissions_and_immutable_history() {
+        let server = crate::tests::server();
+        Runtime::new().expect("runtime").block_on(async {
+            timeout(Duration::from_secs(30), async {
+                let name = crate::tests::database(&server).await;
+                let connections = server.connections(&name, "steward");
+                let user = User::new("clerk".into()).expect("runtime user");
+                migration::run(&connections, &user)
+                    .await
+                    .expect("migration and required grants");
+                let admin = server
+                    .connections(&name, "postgres")
+                    .recover()
+                    .await
+                    .expect("isolated permission owner");
+                for (table, required, forbidden) in [
+                    ("access.changes", "INSERT", ["UPDATE", "DELETE", "TRUNCATE"]),
+                    (
+                        "access.appointments",
+                        "INSERT",
+                        ["UPDATE", "DELETE", "TRUNCATE"],
+                    ),
+                    (
+                        "access.projections",
+                        "INSERT",
+                        ["UPDATE", "DELETE", "TRUNCATE"],
+                    ),
+                    (
+                        "access.holders",
+                        "INSERT",
+                        ["DELETE", "TRUNCATE", "REFERENCES"],
+                    ),
+                    (
+                        "access.holders",
+                        "UPDATE",
+                        ["DELETE", "TRUNCATE", "REFERENCES"],
+                    ),
+                    (
+                        "access.roles",
+                        "UPDATE",
+                        ["DELETE", "TRUNCATE", "REFERENCES"],
+                    ),
+                    (
+                        "access.completions",
+                        "INSERT",
+                        ["UPDATE", "DELETE", "TRUNCATE"],
+                    ),
+                    (
+                        "access.grants",
+                        "INSERT",
+                        ["DELETE", "TRUNCATE", "REFERENCES"],
+                    ),
+                    (
+                        "access.grants",
+                        "UPDATE",
+                        ["DELETE", "TRUNCATE", "REFERENCES"],
+                    ),
+                    (
+                        "access.assignments",
+                        "INSERT",
+                        ["UPDATE", "DELETE", "TRUNCATE"],
+                    ),
+                    (
+                        "access.suspensions",
+                        "INSERT",
+                        ["UPDATE", "DELETE", "TRUNCATE"],
+                    ),
+                    (
+                        "access.resumptions",
+                        "INSERT",
+                        ["UPDATE", "DELETE", "TRUNCATE"],
+                    ),
+                    (
+                        "access.terminations",
+                        "INSERT",
+                        ["UPDATE", "DELETE", "TRUNCATE"],
+                    ),
+                    ("access.losses", "INSERT", ["UPDATE", "DELETE", "TRUNCATE"]),
+                    (
+                        "access.entries",
+                        "SELECT",
+                        ["INSERT (scope)", "UPDATE (scope)", "DELETE"],
+                    ),
+                    (
+                        "access.permissions",
+                        "SELECT",
+                        ["INSERT (scope)", "UPDATE (scope)", "DELETE"],
+                    ),
+                ] {
+                    admin
+                        .client()
+                        .batch_execute(&format!("REVOKE {required} ON {table} FROM clerk"))
+                        .await
+                        .expect("remove required table permission");
+                    assert!(matches!(
+                        verify(&connections, &user).await,
+                        Err(Error::Database(database::Error::Permissions))
+                    ));
+                    admin
+                        .client()
+                        .batch_execute(&format!("GRANT {required} ON {table} TO clerk"))
+                        .await
+                        .expect("restore required table permission");
+                    for privilege in forbidden {
+                        admin
+                            .client()
+                            .batch_execute(&format!("GRANT {privilege} ON {table} TO PUBLIC"))
+                            .await
+                            .expect("excess effective grant");
+                        assert!(
+                            matches!(
+                                verify(&connections, &user).await,
+                                Err(Error::Database(database::Error::Permissions))
+                            ),
+                            "{table}: {privilege}"
+                        );
+                        admin
+                            .client()
+                            .batch_execute(&format!("REVOKE {privilege} ON {table} FROM PUBLIC"))
+                            .await
+                            .expect("remove excess grant");
+                    }
+                    verify(&connections, &user)
+                        .await
+                        .expect("restored exact permissions");
+                }
+                for privilege in [
+                    "UPDATE ON identity.persons",
+                    "UPDATE ON access.holders",
+                    "INSERT ON access.appointments",
+                    "INSERT ON access.projections",
+                    "EXECUTE ON FUNCTION identity.lock_accounts(uuid,uuid)",
+                    "INSERT ON access.roles",
+                    "UPDATE ON access.roles",
+                    "INSERT ON access.changes",
+                    "INSERT ON access.completions",
+                    "EXECUTE ON FUNCTION access.check_current_role(uuid)",
+                    "EXECUTE ON FUNCTION access.lock_role_holders(uuid,uuid)",
+                    "EXECUTE ON FUNCTION access.lock_grant(uuid)",
+                    "EXECUTE ON FUNCTION access.loss_valid(uuid)",
+                ] {
+                    admin
+                        .client()
+                        .batch_execute(&format!("REVOKE {privilege} FROM clerk"))
+                        .await
+                        .expect("remove update consumer privilege");
+                    assert!(
+                        matches!(
+                            verify(&connections, &user).await,
+                            Err(Error::Database(database::Error::Permissions))
+                        ),
+                        "{privilege}"
+                    );
+                    admin
+                        .client()
+                        .batch_execute(&format!("GRANT {privilege} TO clerk"))
+                        .await
+                        .expect("restore update consumer privilege");
+                    verify(&connections, &user)
+                        .await
+                        .expect("complete exact role privileges");
+                }
+                admin.terminate().await.expect("owner ended");
+                connections.close().await;
+            })
+            .await
+            .expect("bounded permission verification");
         });
     }
 
@@ -397,28 +700,26 @@ mod tests {
     }
 
     #[test]
-    fn challenge_references_only_its_own_key_table_and_protects_retained_versions() {
+    fn key_ids_reference_registered_root_versions_and_one_active_version() {
         let server = crate::tests::server();
         Runtime::new().expect("runtime").block_on(async {
             let name = crate::tests::database(&server).await;
             let connections = server.connections(&name, "steward");
             let user = User::new("clerk".into()).expect("runtime identity");
             migration::run(&connections, &user).await.expect("migrations");
-            keys::initialize(&connections, &crate::tests::metadata(0, false)).await.expect("keys");
+            keys::initialize(&connections, &crate::tests::metadata(0, false), crate::tests::fence(&server, &name).await).await.expect("keys");
             let owner = connections.recover().await.expect("owner");
-            owner.client().batch_execute(
-                "INSERT INTO security.mobiles VALUES (9, decode(repeat('00',32),'hex'), false); INSERT INTO security.encryptions VALUES (9, decode(repeat('00',32),'hex'), false)"
-            ).await.expect("same key ID exists in other purposes");
             let runtime = server.connections(&name, "clerk").recover().await.expect("runtime");
             let sql = "INSERT INTO identity.challenges (id, operation_id, purpose, hash, key_id, mobile, source, calls, created_at, expires_at) VALUES ('550e8400-e29b-41d4-a716-446655440000', '00000000-0000-0000-0000-000000000000', 'authentication', decode(repeat('01',32),'hex'), 9, ROW(decode(repeat('02',37),'hex'), decode(repeat('03',32),'hex'))::identity.mobile, '192.0.2.1', 1, '2026-10-03 00:00:00+00', '2026-10-03 00:00:10+00')";
-            let error = runtime.client().batch_execute(sql).await.expect_err("other purposes cannot satisfy the reference");
+            let error = runtime.client().batch_execute(sql).await.expect_err("an unregistered root cannot satisfy the reference");
             assert_eq!(error.code(), Some(&SqlState::FOREIGN_KEY_VIOLATION));
             assert_eq!(error.as_db_error().expect("foreign key error").constraint(), Some("challenges_key_id_fkey"));
-            owner.client().batch_execute("INSERT INTO security.challenges VALUES (9, decode(repeat('00',32),'hex'), false)").await.expect("retained challenge key");
-            runtime.client().batch_execute(sql).await.expect("correct purpose permits the reference");
-            let error = owner.client().batch_execute("DELETE FROM security.challenges WHERE id = 9").await.expect_err("referenced version cannot be removed");
+            let error = owner.client().batch_execute("INSERT INTO security.keys VALUES (9, decode(repeat('00',32),'hex'), true)").await.expect_err("a second active root");
+            assert_eq!(error.code(), Some(&SqlState::UNIQUE_VIOLATION));
+            owner.client().batch_execute("INSERT INTO security.keys VALUES (9, decode(repeat('00',32),'hex'), false)").await.expect("retained root");
+            runtime.client().batch_execute(sql).await.expect("a registered root permits the reference");
+            let error = owner.client().batch_execute("DELETE FROM security.keys WHERE id = 9").await.expect_err("referenced version cannot be removed");
             assert_eq!(error.code(), Some(&SqlState::FOREIGN_KEY_VIOLATION));
-            owner.client().batch_execute("DELETE FROM security.mobiles WHERE id = 9; DELETE FROM security.encryptions WHERE id = 9").await.expect("unrelated purposes do not own this reference");
             runtime.terminate().await.expect("end runtime");
             owner.terminate().await.expect("end owner");
         });
@@ -432,7 +733,7 @@ mod tests {
             let owner = server.connections(&name, "steward");
             let user = User::new("clerk".into()).expect("runtime identity");
             migration::run(&owner, &user).await.expect("migrations");
-            keys::initialize(&owner, &crate::tests::metadata(0, false)).await.expect("keys");
+            keys::initialize(&owner, &crate::tests::metadata(0, false), crate::tests::fence(&server, &name).await).await.expect("keys");
             verify(&owner, &user).await.expect("delivered privileges");
             let runtime = server.connections(&name, "clerk").recover().await.expect("runtime");
             for (value, hash, state) in [

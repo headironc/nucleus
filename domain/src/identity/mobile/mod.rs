@@ -1,3 +1,4 @@
+pub(crate) mod envelope;
 pub mod hash;
 
 use std::{
@@ -6,11 +7,12 @@ use std::{
 };
 
 use derive_more::AsRef;
+use serde::{Deserialize, Deserializer};
 use thiserror::Error;
 use zeroize::Zeroizing;
 
 /// A domestic mobile number accepted by the Identity entrypoints.
-#[derive(AsRef)]
+#[derive(Clone, AsRef)]
 #[as_ref(str)]
 pub struct Mobile(Zeroizing<String>);
 
@@ -56,14 +58,43 @@ impl FromStr for Mobile {
     }
 }
 
+impl<'de> Deserialize<'de> for Mobile {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let input = Zeroizing::<String>::deserialize(deserializer)?;
+        input.parse().map_err(serde::de::Error::custom)
+    }
+}
+
 /// The supplied value is outside the accepted mobile format or prefix set.
 #[derive(Debug, Error)]
 #[error("invalid mobile")]
 pub struct ParseError;
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use crate::identity::mobile::{Mobile, ParseError};
+
+    #[test]
+    fn deserializes_validated_mobile_text_without_exposing_invalid_values() {
+        for json in [r#""13800000000""#, r#""\u00313800000000""#] {
+            let mobile: Mobile = serde_json::from_str(json).expect("valid mobile");
+            assert_eq!(mobile.as_ref(), "13800000000");
+            let mobile: Mobile =
+                serde_json::from_value(serde_json::from_str(json).expect("owned text"))
+                    .expect("owned valid mobile");
+            assert_eq!(mobile.as_ref(), "13800000000");
+        }
+        for invalid in ["+8613800000000", "13800000000 ", "１４８００００００００"] {
+            let error = serde_json::from_value::<Mobile>(serde_json::json!(invalid))
+                .expect_err("invalid mobile");
+            assert!(!format!("{error:?}").contains(invalid));
+            assert!(!error.to_string().contains(invalid));
+        }
+        for invalid in ["null", "123", "true", "[]", "{}"] {
+            assert!(serde_json::from_str::<Mobile>(invalid).is_err());
+        }
+    }
 
     #[test]
     fn accepts_documented_prefix_boundaries() {

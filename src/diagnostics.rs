@@ -16,7 +16,23 @@ pub fn init() -> Result<(), tracing::subscriber::SetGlobalDefaultError> {
         .with(
             Targets::new()
                 .with_target("nucleus", Level::INFO)
-                .with_target("domain::identity::authentication", Level::INFO),
+                .with_target("domain::startup", Level::INFO)
+                .with_target("domain::identity::authentication", Level::INFO)
+                .with_target("domain::identity::revocation", Level::INFO)
+                .with_target("domain::identity::transfer", Level::INFO)
+                .with_target("domain::account::transfer", Level::INFO)
+                .with_target("domain::registration", Level::INFO)
+                .with_target("domain::suspension", Level::INFO)
+                .with_target("domain::correction", Level::INFO)
+                .with_target("domain::cancellation", Level::INFO)
+                .with_target("domain::kernel", Level::INFO)
+                .with_target("domain::access::role", Level::INFO)
+                .with_target("domain::access::appointment", Level::INFO)
+                .with_target("domain::access::assignment", Level::INFO)
+                .with_target("domain::access::grant", Level::INFO)
+                .with_target("domain::workforce::number", Level::INFO)
+                .with_target("domain::runtime::work", Level::INFO)
+                .with_target("domain::runtime::instance", Level::INFO),
         )
         .with(
             tracing_subscriber::fmt::layer()
@@ -84,7 +100,7 @@ pub(crate) fn received(_: &Request, span: &Span) {
 
 #[cfg(test)]
 #[allow(clippy::expect_used)]
-mod tests {
+pub(crate) mod tests {
     use std::{collections::HashSet, process::Stdio, time::Duration};
 
     use axum::{http::StatusCode, routing::post};
@@ -97,6 +113,52 @@ mod tests {
     use crate::{diagnostics, extension::Extension, json::Json, router};
 
     const OPERATION: &str = "550e8400-e29b-41d4-a716-446655440000";
+
+    pub(crate) fn contains_text(value: &Value, secret: &str) -> bool {
+        match value {
+            Value::String(text) => text.contains(secret),
+            Value::Array(values) => values.iter().any(|value| contains_text(value, secret)),
+            Value::Object(fields) => fields
+                .iter()
+                .any(|(key, value)| key.contains(secret) || contains_text(value, secret)),
+            Value::Number(number) => number.is_u64() && number.to_string() == secret,
+            _ => false,
+        }
+    }
+
+    #[test]
+    fn diagnostic_search_distinguishes_private_text_from_numeric_coincidences() {
+        const MOBILE: &str = "13900000000";
+        let diagnostic = r#"{"fields":{"elapsed_ms":0.10139000000000001,"status":401}}"#;
+        assert!(
+            diagnostic.contains(MOBILE),
+            "reproduce the raw JSON false positive"
+        );
+        let event: Value = serde_json::from_str(diagnostic).expect("recorded safe event");
+        assert!(!contains_text(&event, MOBILE));
+
+        let elapsed = serde_json::json!({
+            "elapsed_ms": Duration::from_nanos(2_138_000).as_secs_f64() * 1000.0,
+        });
+        assert!(elapsed.to_string().contains("13800000000"));
+        assert!(!contains_text(&elapsed, "13800000000"));
+        assert!(!contains_text(&serde_json::json!(139000000001_u64), MOBILE));
+
+        for diagnostic in [
+            r#"{"fields":{"mobile":"13900000000"}}"#,
+            r#"{"fields":{"mobile":13900000000}}"#,
+            r#"{"fields":{"error":"request for 13900000000 failed"}}"#,
+            r#"{"spans":[{"private":{"13900000000":null}}]}"#,
+            r#"{"fields":{"error":[null,false,{"input":"\u00313900000000"}]}}"#,
+            r#"{"fields":{"error":[null,false,{"input":13900000000}]}}"#,
+        ] {
+            let event: Value = serde_json::from_str(diagnostic).expect("private event");
+            assert!(
+                contains_text(&event, MOBILE),
+                "private text remains detectable"
+            );
+        }
+    }
 
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
@@ -125,6 +187,10 @@ mod tests {
                 .expect("child output");
             let text = String::from_utf8(output.stderr).expect("UTF-8 diagnostics");
             assert!(output.status.success(), "{text}");
+            let events: Vec<Value> = text
+                .lines()
+                .map(|line| serde_json::from_str(line).expect("JSON event"))
+                .collect();
             for secret in [
                 "fictional-private",
                 "RUST_LOG",
@@ -132,12 +198,11 @@ mod tests {
                 "cookie",
                 "13800000000",
             ] {
-                assert!(!text.contains(secret), "private input leaked");
+                assert!(
+                    !events.iter().any(|event| contains_text(event, secret)),
+                    "private input leaked"
+                );
             }
-            let events: Vec<Value> = text
-                .lines()
-                .map(|line| serde_json::from_str(line).expect("JSON event"))
-                .collect();
             let responses: Vec<&Value> = events
                 .iter()
                 .filter(|event| event["fields"]["stage"] == "http_response")
@@ -181,7 +246,7 @@ mod tests {
             assert_eq!(statuses, [200, 400, 400, 404, 405, 204, 204, 422, 500]);
             assert_eq!(responses[3]["spans"][0]["route"], "unmatched");
             assert_eq!(responses[4]["spans"][0]["method"], "other");
-            assert_eq!(responses[5]["spans"][0]["route"], "/probe/{value}");
+            assert_eq!(responses[5]["spans"][0]["route"], "/api/v1/probe/{value}");
             let errors: Vec<&Value> = events
                 .iter()
                 .filter(|event| event["level"] == "ERROR")
@@ -204,7 +269,7 @@ mod tests {
                 "/missing",
                 post(|Extension(_): Extension<u8>| async { StatusCode::NO_CONTENT }),
             );
-        let router = router::new(routes).expect("router");
+        let router = router::new(routes, OpenApiRouter::new()).expect("router");
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .expect("loopback listener");
@@ -224,20 +289,20 @@ mod tests {
             .build()
             .expect("local client");
         let response = client
-            .get(format!("{base}/openapi.json"))
+            .get(format!("{base}/openapi/v1.json"))
             .header("operation-id", "fictional-private-id")
             .send()
             .await
             .expect("exempt request");
         assert_eq!(response.status(), 200);
         let response = client
-            .post(format!("{base}/probe/value"))
+            .post(format!("{base}/api/v1/probe/value"))
             .send()
             .await
             .expect("missing operation");
         assert_eq!(response.status(), 400);
         let response = client
-            .post(format!("{base}/probe/value"))
+            .post(format!("{base}/api/v1/probe/value"))
             .header("operation-id", "fictional-private-id")
             .send()
             .await
@@ -252,29 +317,29 @@ mod tests {
             ),
             (
                 reqwest::Method::from_bytes(b"fictional-private-method").expect("extension method"),
-                "/probe/value",
+                "/api/v1/probe/value",
                 r#"{}"#,
                 405,
             ),
             (
                 reqwest::Method::POST,
-                "/probe/fictional-private-path",
+                "/api/v1/probe/fictional-private-path",
                 r#"{"value":"fictional-private-body"}"#,
                 204,
             ),
             (
                 reqwest::Method::POST,
-                "/probe/fictional-private-path",
+                "/api/v1/probe/fictional-private-path",
                 r#"{"value":"fictional-private-body"}"#,
                 204,
             ),
             (
                 reqwest::Method::POST,
-                "/probe/value",
+                "/api/v1/probe/value",
                 r#"{"value":123,"13800000000":"fictional-private-body"}"#,
                 422,
             ),
-            (reqwest::Method::POST, "/missing", r#"{}"#, 500),
+            (reqwest::Method::POST, "/api/v1/missing", r#"{}"#, 500),
         ] {
             let response = client
                 .request(method, format!("{base}{path}"))
@@ -331,11 +396,15 @@ mod tests {
             .expect("child output");
         let text = String::from_utf8(output.stderr).expect("UTF-8 diagnostics");
         assert!(output.status.success(), "{text}");
-        assert!(!text.contains("fictional-private"));
         let events: Vec<Value> = text
             .lines()
             .map(|line| serde_json::from_str(line).expect("JSON event"))
             .collect();
+        assert!(
+            !events
+                .iter()
+                .any(|event| contains_text(event, "fictional-private"))
+        );
         assert_eq!(events.len(), 1);
         assert_eq!(events[0]["fields"]["stage"], "panic");
     }

@@ -125,8 +125,12 @@ Apply the [project error and redaction contract](../architecture.md#类型构造
 
 ## Migrations
 
+Current project state: all migrations have only run in disposable isolated test databases. None has been applied to a database whose data must be retained. Reuse this state across slices, PRs and sessions; a new migration, commit or merge does not require asking again. Recheck and update this state before the first use of a database whose data must be retained, or when new deployment evidence contradicts it.
+
 - Before changing a migration file, verify whether it has run against a database whose data persists. Commit history or merge state alone does not establish deployment state.
 - Edit a migration that has not run against such a database in place. Disposable isolated test databases do not freeze a migration.
+- Keep each undeployed table's columns and directly expressible constraints in its `CREATE TABLE`. Order definitions by their real dependencies and remove later additions or replacements. A target appearing later in a file is not a reason to retain an avoidable foreign-key addition. For a circular reference, define both tables before adding the remaining direction and explain the dependency.
+- Maintain one final definition of each undeployed function. Remove superseded definitions and place its triggers after the complete function and required tables. These rules do not prohibit upgrade SQL once a migration has been applied to a database whose data must be retained.
 - Keep a migration file unchanged after it has run against such a database, and deliver later corrections through new migrations.
 - Inspect existing data and impact before deleting data, tightening constraints, or changing column types.
 - Specify code and migration execution order when rollout requires stages.

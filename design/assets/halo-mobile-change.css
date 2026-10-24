@@ -1,0 +1,322 @@
+.mobile-layout {
+  width: min(1040px, calc(100% - 96px));
+  margin: 32px auto 64px;
+}
+.mobile-change-navigation {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+  font-size: 14px;
+}
+.mobile-change-navigation a,
+.mobile-back {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  color: var(--sub);
+}
+.mobile-back {
+  font-size: 14px;
+}
+.mobile-heading {
+  margin: 24px 0 28px;
+}
+.mobile-heading h1 {
+  font: 600 32px/1.5 var(--sans);
+  margin: 8px 0;
+}
+.mobile-heading > p:last-child {
+  color: var(--sub);
+  font-size: 15px;
+  line-height: 1.9;
+}
+.mobile-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 272px;
+  gap: 32px;
+  align-items: start;
+}
+.mobile-panel,
+.mobile-guide {
+  min-width: 0;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+}
+.mobile-panel h2 {
+  font-size: 22px;
+  line-height: 1.6;
+  margin: 0 0 12px;
+}
+.mobile-panel h3,
+.mobile-guide h2 {
+  font-size: 17px;
+  line-height: 1.7;
+  margin: 0 0 12px;
+}
+.mobile-panel p,
+.mobile-guide p,
+.mobile-panel li {
+  color: var(--sub);
+  font-size: 14px;
+  line-height: 1.9;
+  overflow-wrap: anywhere;
+}
+.mobile-guide {
+  padding: 24px;
+}
+.mobile-guide p + p {
+  margin-top: 12px;
+}
+.mobile-guide hr {
+  border: 0;
+  border-top: 1px solid var(--line);
+  margin: 24px 0;
+}
+.mobile-steps {
+  list-style: none;
+  display: flex;
+  padding: 0;
+  margin: 0 0 28px;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+}
+.mobile-steps li {
+  flex: 1;
+  padding: 0 0 12px;
+  font-size: 13px;
+}
+.mobile-steps [aria-current] {
+  color: var(--accent);
+  border-bottom: 2px solid var(--accent);
+}
+.mobile-field {
+  margin: 24px 0;
+}
+.mobile-field label {
+  display: block;
+  font-size: 15px;
+  margin-bottom: 10px;
+}
+.mobile-field input {
+  width: 100%;
+  height: 52px;
+  padding: 12px 14px;
+  border: 1px solid var(--control-line);
+  border-radius: var(--radius-s);
+  background: var(--field);
+  color: var(--ink);
+  font: 18px/1.5 var(--sans);
+}
+.mobile-field input.code {
+  letter-spacing: 8px;
+  font-size: 22px;
+}
+.mobile-field .field-error {
+  color: var(--danger);
+  margin: 8px 0 0;
+}
+.mobile-field .field-hint {
+  font-size: 13px;
+  margin: 8px 0 0;
+}
+.mobile-panel > .field-hint {
+  margin-top: 20px;
+}
+.mobile-challenge {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding: 14px;
+  border: 1px solid var(--line);
+  background: var(--muted);
+  margin: 20px 0;
+  font-size: 14px;
+  cursor: pointer;
+  min-height: 52px;
+}
+.mobile-challenge input {
+  width: 20px;
+  height: 20px;
+  accent-color: var(--sage);
+}
+.mobile-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 28px;
+}
+.mobile-actions button,
+.mobile-actions a {
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 48px;
+  padding: 12px 20px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-s);
+  background: var(--accent-fill);
+  color: var(--on-accent);
+  font: 15px/1.5 var(--sans);
+  text-decoration: none;
+  cursor: pointer;
+}
+.mobile-actions .secondary {
+  background: var(--surface);
+  border-color: var(--control-line);
+  color: var(--ink);
+}
+.mobile-actions .text-action {
+  background: transparent;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+.mobile-actions :disabled {
+  background: var(--muted-strong);
+  color: var(--sub);
+  cursor: default;
+}
+.mobile-panel .mobile-status {
+  display: inline-block;
+  color: var(--sage);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+.mobile-notice {
+  padding: 16px 18px;
+  background: var(--muted);
+  border-left: 3px solid var(--neutral-rule);
+  margin: 20px 0;
+}
+.mobile-notice.warning {
+  background: var(--warn-soft);
+  border-color: var(--warn-rule);
+}
+.mobile-notice.success {
+  background: var(--ok-soft);
+  border-color: var(--ok-rule);
+}
+.mobile-notice p {
+  margin: 0;
+}
+.mobile-number {
+  font: 500 26px/1.6 var(--sans);
+  letter-spacing: 1px;
+  margin: 14px 0;
+  overflow-wrap: anywhere;
+}
+.mobile-consequences {
+  padding-left: 20px;
+  margin: 20px 0;
+}
+.mobile-consequences li + li {
+  margin-top: 8px;
+}
+.mobile-footer {
+  border-top: 1px solid var(--line);
+  margin-top: 44px;
+  padding-top: 24px;
+  color: var(--sub);
+  font-size: 12px;
+}
+#leave-dialog {
+  width: min(480px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 28px;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+}
+#leave-dialog::backdrop {
+  background: var(--backdrop);
+}
+#leave-dialog h2 {
+  font-size: 22px;
+  line-height: 1.5;
+  margin-bottom: 16px;
+}
+#leave-dialog p {
+  color: var(--sub);
+  line-height: 1.9;
+}
+.mobile-layout :focus-visible,
+#leave-dialog :focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+#page-title:focus {
+  outline: none;
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 8px;
+}
+.design-notes label {
+  display: block;
+  margin-top: 16px;
+}
+.design-notes select {
+  width: 100%;
+  min-height: 40px;
+  margin-top: 6px;
+  background: var(--surface);
+  color: var(--ink);
+}
+@media (max-width: 900px) {
+  .mobile-layout {
+    width: calc(100% - 64px);
+  }
+  .mobile-columns {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+  .mobile-guide {
+    max-width: none;
+  }
+}
+@media (max-width: 540px) {
+  .mobile-layout {
+    width: calc(100% - 32px);
+    margin-top: 16px;
+  }
+  .mobile-heading {
+    margin: 20px 0 24px;
+  }
+  .mobile-heading h1 {
+    font-size: 28px;
+  }
+  .mobile-panel,
+  .mobile-guide {
+    padding: 20px;
+  }
+  .mobile-panel h2 {
+    font-size: 21px;
+  }
+  .mobile-steps {
+    gap: 6px;
+  }
+  .mobile-steps li {
+    font-size: 12px;
+  }
+  .mobile-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .mobile-actions > * {
+    width: 100%;
+  }
+  .mobile-change-navigation {
+    gap: 16px;
+    font-size: 13px;
+  }
+  .mobile-number {
+    font-size: 24px;
+  }
+  .mobile-field input {
+    scroll-margin: 24px;
+  }
+}

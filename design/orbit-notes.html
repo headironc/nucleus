@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>司籍处小程序页面设计 · 设计旁注（orbit）</title>
+<link rel="stylesheet" href="assets/tokens.css">
+<link rel="stylesheet" href="assets/orbit.css">
+</head>
+<body>
+
+<header class="doc">
+  <h1><img src="assets/logo.png" alt="司籍处" style="width:46px;height:46px;border-radius:8px;vertical-align:middle;margin-right:12px">司籍处小程序页面设计 · 设计旁注 <span style="font-size:14px;color:var(--sub);font-weight:400">目标设计版 · 客户端代号 orbit</span></h1>
+  <p class="doc-links"><a href="orbit-pages.html">‹ 返回页面画框</a></p>
+  <p>小程序分为公开首页与员工服务：文化、科普等公开内容无需登录。医院员工登录后办理工号、工牌及个人资料。邀请码用于加入员工服务，不表示人事入职。共 18 个页面组、29 张稿。本稿是设计材料，不是权威设计：页面范围、路由命名、名称与状态、分流及验收由 <a href="../docs/client/pages.md">页面目标设计</a> 及所属专题拥有，冲突时以那些文档为准。各页旁注与文末工程说明只把规则映射到客户端形态，正文与判定标准见对应所有者。</p>
+  <p>首页保留参考图的搜索、轮播、六个栏目入口与图文列表。公开页使用纸色背景与宋体专题标题；员工办理页使用浅色背景、系统字体和统一的表单组件。朱红用于主要操作，红色描边用于危险操作，普通说明不使用警示色块。工牌采用生产系统的正式底图与主备字体，姓名、工号及人物轮廓均为示例。字体字节属生产业务数据，不随仓库分发：把 <code>badge-main.ttf</code> 与 <code>badge-fallback.ttf</code> 放进 <code>assets/fonts.local/</code> 后本页自动加载，缺失时页首提示并只用设备字体近似渲染。本稿未接入业务接口；浏览器排版用于设计核对，不作为打印成品。</p>
+  <div class="legend">
+    <span>朱红实底 · 主要操作</span><span>草绿 · 完成 / 正常</span><span>赭色 · 警示 / 待处理</span><span>红色描边 · 危险操作</span><span>灰色 · 只读 / 不可用</span>
+  </div>
+  <p>员工页面采用固定顶部导航、独立滚动内容和底部操作区。可在手机框内滚动查看完整内容。结构参考 <code>origin/production-application</code> 的 <code>868fe9d1</code>，业务核对至 <code>origin/dev 89439ced</code>。「内页 / 外壳 / 整套」按生产选项保留为设计草案，业务规则待补，详见申请页旁注。</p>
+</header>
+
+<nav class="toc">
+  <div class="group"><b>介绍与进入</b>
+    <a href="#p-intro">公开介绍</a><a href="#p-login">登录</a><a href="#p-register">注册账户</a><a href="#p-authfail">登录异常</a>
+  </div>
+  <div class="group"><b>员工服务与工号</b>
+    <a href="#p-home">公开首页与员工服务暂停</a><a href="#p-services">员工服务主页</a><a href="#p-services">员工服务结束</a><a href="#p-invite">使用邀请码</a><a href="#p-number">申请工号</a><a href="#p-number">工号类别与确认</a><a href="#p-affiliation">政治面貌</a><a href="#p-affiliation">政治面貌已填写</a>
+  </div>
+  <div class="group"><b>工牌</b>
+    <a href="#p-photo">工牌照片</a><a href="#p-apply">填写工牌信息</a><a href="#p-preview">工牌预览（含加载异常）</a><a href="#p-changed">资料更新</a><a href="#p-detail">申请详情</a><a href="#p-resubmit">修改后再提交</a><a href="#p-history">申请记录</a>
+  </div>
+  <div class="group"><b>账户</b>
+    <a href="#p-me">我的</a><a href="#p-sessions">登录方式</a><a href="#p-sessions">微信未绑定</a>
+  </div>
+  <div class="group"><b>工程规范</b>
+    <a href="#eng">rust.md → 客户端约定</a>
+  </div>
+</nav>
+
+<section class="flow">
+  <h2>公开浏览与员工办理</h2>
+  <div class="flowmap">
+    <span class="node">欢迎页</span><span class="arrow">→</span>
+    <span class="node">浏览首页（无需登录）</span><span class="arrow">→</span>
+    <span class="node">展馆 · 科普 · 公开内容</span>
+  </div>
+  <div class="flowmap" style="margin-top:8px">
+    <span class="node">欢迎页的员工登录 / 首页的员工服务</span><span class="arrow">→</span>
+    <span class="node auth">登录 / 首次注册</span><span class="arrow">→</span>
+    <span class="node warn">尚未加入：使用邀请码 / 联系管理员</span><span class="arrow">→</span>
+    <span class="node">员工服务：办理 ⇄ 工牌 ⇄ 我的</span>
+  </div>
+</section>
+
+<section class="pages">
+
+<article class="page note-page" id="p-intro">
+  <aside class="notes">
+    <h3>公开介绍</h3>
+    <div class="route">pages/intro/intro · 匿名可达</div>
+    <h4>内容</h4>
+    <ul>
+      <li>只展示随应用发布包自带的公开简介，<b>不请求</b>人员、授权、工牌等任何接口</li>
+      <li>「浏览首页」进入公开首页，无需登录；「员工登录」进入员工服务的登录页</li>
+    </ul>
+    <h4>约束</h4>
+    <ul>
+      <li>简介为静态资源，发布时随版本更新；不做远程配置化内容</li>
+      <li>公开浏览不触发员工登录；从欢迎页或首页进入员工服务时，才复查会话及当前资格。普通注册不自动取得员工服务资格</li>
+    </ul>
+    <p class="note-link"><a href="orbit-pages.html#p-intro">查看画框 ›</a></p>
+  </aside>
+</article>
+
+<article class="page note-page" id="p-login">
+  <aside class="notes">
+    <h3>登录</h3>
+    <div class="route">pages/authentication/login · 匿名 · 对应 POST /api/v1/sessions</div>
+    <h4>动作</h4>
+    <ul>
+      <li>主按钮：微信手机号授权；首次发送前固定 Operation-Id、secret 与 code。原操作重试沿用这些材料，不因重连再取 code</li>
+      <li>次按钮：微信身份登录（login code，与手机号 code 是两套协议，不可互换）</li>
+    </ul>
+    <h4>认证结果与后续页面</h4>
+    <ul>
+      <li><code>session</code> → 保存 token + expiresAt，读取本人资料与当前 Grant：可用时进入员工办理；无 Grant 时显示邀请码入口，暂停时显示暂停页。读取失败不解释为尚未加入</li>
+      <li><code>registration</code> → 注册页，保留 id、token 与 expiresAt；<code>progress</code> → 保留原操作等待结果，不提前分流</li>
+      <li><code>mobile_unsupported</code> → 拒绝说明页（403）</li>
+      <li>已暂停账户 → 明确拒绝，<b>不</b>解释为「未注册」</li>
+    </ul>
+    <h4>失败处理</h4>
+    <ul>
+      <li>code 失效须重新授权并用新 Operation-Id，不重放旧 code</li>
+      <li>响应丢失：按原 Operation-Id 读回原结论，同 code 至多一次外呼</li>
+    </ul>
+    <p class="note-link"><a href="orbit-pages.html#p-login">查看画框 ›</a></p>
+  </aside>
+</article>
+
+<article class="page note-page" id="p-register">
+  <aside class="notes">
+    <h3>正式注册（R2）</h3>
+    <div class="route">pages/registration/registration · 持待注册凭据 · 对应 POST /api/v1/registrations</div>
+    <h4>规则</h4>
+    <ul>
+      <li>新注册使用本次认证的 registration.id 与 token；尚未提交且凭据失效时重新认证。提交后隐藏填表倒计时，按原操作核对；原成功恢复优先于新办理凭据检查，不因倒计时结束丢弃原证明</li>
+      <li>提交携带独立 Operation-Id；手机号或身份证号占用为保存的确定拒绝。格式错误只提示修改字段，不形成 Attempt；未知结局保留原材料核对，不重新开户</li>
+      <li>成功：共同建立人员、默认头像、普通账户与 Session；注册不建立 Grant，按当前员工资格引导使用邀请码或联系管理员</li>
+    </ul>
+    <h4>约束</h4>
+    <ul>
+      <li>注册前不创建账户、人员或实名资料</li>
+      <li>同号重新注册不继承旧账户的资格与历史</li>
+      <li>认证结果未提供脱敏手机号，本稿不显示号码；不从 token 推导，也不把客户端缓存当作可信号码</li>
+    </ul>
+    <p class="note-link"><a href="orbit-pages.html#p-register">查看画框 ›</a></p>
+  </aside>
+</article>
+
+<article class="page note-page" id="p-authfail">
+  <aside class="notes">
+    <h3>认证分流异常页</h3>
+    <div class="route">pages/authentication/outcome · 匿名</div>
+    <h4>语义边界（不可互相伪装）</h4>
+    <ul>
+      <li>按接口、应用码和办理阶段分流，不仅按 HTTP 状态判断原因。当前会话无效时重新登录；恢复请求的 authentication_invalid 仅表示原证明不成立，不清除另一有效会话</li>
+      <li>号码不支持等可信业务拒绝按所属应用码展示；账户暂停页只用于已明确确认的暂停原因，不从本人读取的 401 推断账户暂停</li>
+      <li>verification_required 结束该次自动恢复并提供重新认证入口，不把原业务改写为失败，也不清除后来选定的有效会话</li>
+      <li>依赖故障与结局未知分别处理；写入结局未知时按原 Operation-Id 核对，读取故障保留刷新入口，不伪装成业务拒绝或空数据</li>
+    </ul>
+    <h4>文案原则</h4>
+    <ul>
+      <li>暂停不伪装成「未注册」；依赖故障不伪装成用户输入错误</li>
+    </ul>
+    <p class="note-link"><a href="orbit-pages.html#p-authfail">查看画框 ›</a></p>
+  </aside>
+</article>
+
+<article class="page note-page" id="p-home">
+  <aside class="notes">
+    <h3>首页（结构稿）</h3>
+    <div class="route">公开首页 · 员工服务暂停示例 · 视觉结构与占位内容</div>
+    <h4>页面骨架</h4>
+    <ul>
+      <li>沿用 <a href="reference-5418.png">参考图</a> 的搜索、专题轮播、六个圆形栏目入口和图文列表</li>
+      <li>保留米白、墨色与少量朱红；中式字体用于品牌、专题与栏目，正文使用系统字体</li>
+      <li>轮播圆点可切换三组示意文案；主视觉和图文内容均为静态占位</li>
+    </ul>
+    <h4>功能边界</h4>
+    <ul>
+      <li>搜索与六个栏目入口暂未接入功能；第六入口命名为「员工服务」，其余栏目保持公开展示。投稿及活动的实际操作范围另行设计，不在本稿虚构提交能力</li>
+      <li>本稿不请求人员、授权、工牌或内容接口；公开首页可匿名浏览，进入员工服务才要求登录。公开内容发布能力尚未实现；受限业务仍遵守 <a href="../docs/client/pages.md">页面目标设计</a> 及所属专题规则</li>
+      <li>正式本人服务按当前会话和权限复查；入口展示不替代服务端判断，普通注册不代表已加入 Workforce</li>
+    </ul>
+    <h4>暂停态</h4>
+    <ul>
+      <li>旁边展示领域暂停态，用户可见状态称「员工服务已暂停」；保留原申请阶段并说明暂停办理，不限制公开首页浏览</li>
+      <li>账户暂停遮蔽本人服务；仅领域暂停时，保留取消未发放申请与退出 Workforce 的合法入口</li>
+    </ul>
+    <p class="note-link"><a href="orbit-pages.html#p-home">查看画框 ›</a></p>
+  </aside>
+</article>
+
+<article class="page note-page" id="p-services">
+  <aside class="notes">
+    <h3>员工服务主页与结束态</h3>
+    <div class="route">本人服务入口 · 当前账户、Workforce 授权、工号与申请摘要</div>
+    <h4>入口与状态</h4>
+    <ul>
+      <li>从公开首页或欢迎页进入员工服务；登录与首次注册后按当前资格进入此页或邀请码页。</li>
+      <li>本稿展示已有工号的正常态。无工号时显示「暂无工号」及「申请工号」；申请工牌入口引导先申请工号，不静默分配。</li>
+      <li>最近申请来自可信列表。空集合显示「暂无申请」，读取失败显示「申请记录暂时无法加载」及刷新入口；加载期间不先显示空态。</li>
+      <li>领域暂停转入前页暂停稿；本人读取的 401 仅引导重新登录，不推断账户暂停。政治面貌入口在「我的」，不作为工牌申请前提。</li>
+      <li>可信 grant_absent 引导首次加入；terminated 显示「员工服务已结束」并提供重新加入入口。新授权不恢复原申请或旧工牌的增办来源资格。</li>
+      <li>结束稿只在确认最近授权为 terminated 时展示，不推断本人退出或管理员结束的原因。隐藏办理入口，保留使用邀请码、我的账户、联系管理员和公开浏览；不是重新激活旧授权。账户入口不依赖员工服务资格，返回办理时仍按可信的当前状态分流。</li>
+      <li>小程序只含本人服务，不复制生产版的管理控制台、邀请管理或管理审批入口。</li>
+    </ul>
+    <h4>统一内页结构</h4>
+    <ul>
+      <li>手机框高度固定，顶部导航、底部操作与底部导航不随正文滚动。正文独立滚动，长表单不会把主要按钮推到屏幕外。</li>
+      <li>办理、工牌、我的为一级页面；表单、照片、预览与详情使用返回导航，不叠加底部页签。</li>
+      <li>底部保留手势安全区示意；正式原生页面按设备安全区尺寸布局。此稿的高度与安全区留白是设计参数，不代表真机验收。</li>
+      <li>新主页链接仅跳转至同一设计板上的对应稿，不模拟登录、分配工号或提交申请。</li>
+    </ul>
+    <p class="note-link"><a href="orbit-pages.html#p-services">查看画框 ›</a></p>
+  </aside>
+</article>
+
+<article class="page note-page" id="p-invite">
+  <aside class="notes">
+    <h3>邀请码接纳</h3>
+    <div class="route">pages/invitations/accept · 已注册、无未结束授权 · 接纳归 invitations 所有</div>
+    <h4>规则</h4>
+    <ul>
+      <li>「使用邀请码」明确提交接纳，建立唯一未结束的 Workforce 授权。用户界面将受限办理区称为「员工服务」，不把使用邀请码称为员工身份认证，也不表示入职或完整人事关系</li>
+      <li>接纳者收到 invitation_unavailable 时统一提示「邀请码不可用，请联系管理员」，不披露过期、容量或邀请人状态；网络及依赖故障不能显示为邀请码不可用</li>
+      <li>接纳是明确提交动作（Operation-Id），切页或重连不自动重放</li>
+    </ul>
+    <h4>边界</h4>
+    <ul>
+      <li>准入管理者的「直接接纳」在网站办理，小程序只提供本人使用邀请码</li>
+      <li>扫码为入口草案：二维码载荷格式和校验待补。建议只填入邀请码，由用户点击「使用邀请码」提交；本稿不执行扫码或接纳</li>
+    </ul>
+    <p class="note-link"><a href="orbit-pages.html#p-invite">查看画框 ›</a></p>
+  </aside>
+</article>
+
+<article class="page note-page" id="p-number">
+  <aside class="notes">
+    <h3>工号</h3>
+    <div class="route">pages/numbers/numbers · 需有效授权 · 归 workforce/numbers</div>
+    <h4>规则</h4>
+    <ul>
+      <li>「申请工号」入口先选择人员类别，再明确确认自动分配工号，不新增审批环节；类别不预选，切页、重连、后台刷新<b>不自动发号</b></li>
+      <li>响应丢失：按原 Operation-Id 核对结果，不用新标识重复申请</li>
+      <li>已有工号时本页只读；当前读取只提供固定版本与工号组成，不展示未提供的办理日期。撤销 / 恢复 / 更正不在本人侧办理</li>
+      <li>选择稿包含 16 个固定细分类，第 8、9 类通过分组选具体项；初始为空，未选择时「下一步」不可用。确认稿默认展示临床示例，操作选择稿后同步所选名称；只演示导航，不提交分配请求</li>
+      <li>年份由服务端按办理时中国标准时间确定；本人不填写年份或预选工号。确认前重新检查当前资格；发送后锁定提交入口，未知结果保留原操作核对，不跳到已有工号示例冒充成功</li>
+    </ul>
+    <p class="note-link"><a href="orbit-pages.html#p-number">查看画框 ›</a></p>
+  </aside>
+</article>
+
+<article class="page note-page" id="p-affiliation">
+  <aside class="notes">
+    <h3>政治面貌（Center）</h3>
+    <div class="route">pages/affiliation/affiliation · 本人 · 归 center/affiliation</div>
+    <h4>规则</h4>
+    <ul>
+      <li>未填写时展示「未填写」，<b>不预选</b>任何值</li>
+      <li>取值按 docs/center/values.md 的固定代码；选项交付方式尚待明确，不假定已有选项下发接口</li>
+      <li>本人仅可首次填写；已有值时只读并可查看取值历史，不显示保存或更正按钮。管理者为他人更正属于独立管理流程，小程序本人页不装配</li>
+      <li>已填写稿的取值与日期均为虚构示例；当前值与历史读取分别处理，历史仅显示取值和生效日期，不披露办理人。加载失败显示刷新入口，不伪装为未填写；首次保存遇 state_conflict 时读取当前值，不覆盖</li>
+    </ul>
+    <p class="note-link"><a href="orbit-pages.html#p-affiliation">查看画框 ›</a></p>
+  </aside>
+</article>
+
+<article class="page note-page" id="p-photo">
+  <aside class="notes">
+    <h3>工牌照片（Photo）</h3>
+    <div class="route">pages/photos/photos · 本人 · 归 workforce/media（照片）</div>
+    <h4>规则</h4>
+    <ul>
+      <li>旋转 / 裁切<b>先展示效果再确认</b>，不静默改变输入（右稿）</li>
+      <li>照片框尺寸来自当前模板，裁切比例随模板而非自由比例</li>
+      <li>图片只用接口签发的短期 href 加载；离页、切账户即清除链接与临时文件</li>
+      <li>上传失败保留原临时文件供重试；不长期保存签名 URL</li>
+      <li>照片 A / B 为列表样式草案；现有目标契约只定义单张照片办理与读取。可选照片列表的来源、筛选及失效处理待补，不假定已有列表接口</li>
+    </ul>
+    <p class="note-link"><a href="orbit-pages.html#p-photo">查看画框 ›</a></p>
+  </aside>
+</article>
+
+<article class="page note-page" id="p-apply">
+  <aside class="notes">
+    <h3>申请 · 目录选择</h3>
+    <div class="route">pages/applications/edit · 需授权 + 编号 + 照片 · 对应 POST /api/v1/workforce/applications</div>
+    <h4>物品选项：业务规则待补</h4>
+    <ul>
+      <li>保留生产版「内页 / 外壳 / 整套」，用户字段名为「需要哪些物品」。示例展示已选整套，不定义正式默认值。</li>
+      <li>最新 dev 未定义此项提交字段、保存与发放规则；本轮仅保留设计选项。它与系统判定的新办 / 增办 / 换证分别展示，不能互相替代。</li>
+      <li>本稿展示整套申请。只要外壳是否需要照片、牌面预览、审批及渲染，均待业务规则补齐；不复用旧系统数值编码作为新接口约定。</li>
+      <li>单选仅演示选择样式。预览与详情展示同一份「整套」示例，不模拟跨页保存和实际提交。</li>
+    </ul>
+    <h4>规则</h4>
+    <ul>
+      <li>类别<b>不由用户选择</b>：服务端提交时比对当前请求与最近认可发放，判定新办 / 增办 / 换证。填写页不提前展示确定结论；本组示例从心血管内科改为呼吸内科，提交后为换证</li>
+      <li>分类默认科室只用于初次预选；<b>切换科室即清除不再适用的职务</b>并要求重新确认</li>
+      <li>职务、职称可不填；无职称固定打印「无」</li>
+      <li>分类配置缺失 → 显示「暂不可办理」，不虚构默认值；目录选择不等于人事任职</li>
+      <li>增办：牌面、照片、模板、编号版本、布局沿原合法来源复用，不静默替换为当前版本</li>
+    </ul>
+    <h4>数据</h4>
+    <ul>
+      <li>目录按 GET /api/v1/workforce/directories 读取可选择树与规则；GET /api/v1/workforce/templates/current 读取当前模板，不把单项接口画成分页列表</li>
+      <li>增办的提交前来源读取与确认展示待补，须取得仍被认可的来源及原照片、模板、布局；不以当前模板代替原来源。本稿不假定已有增办预判接口</li>
+    </ul>
+    <p class="note-link"><a href="orbit-pages.html#p-apply">查看画框 ›</a></p>
+  </aside>
+</article>
+
+<article class="page note-page" id="p-preview">
+  <aside class="notes">
+    <h3>预览确认</h3>
+    <div class="route">pages/submissions/preview · 提交前最后一步 · 固定 Submission</div>
+    <h4>绘制规则</h4>
+    <ul>
+      <li>客户端用<b>固定模板 + 背景 + 主备字体 + 可信业务资料</b>绘制完整单面；缺字回退备用字体</li>
+      <li>主备字体均不能表示某个字 → <b>阻止确认</b>，明示具体字段；右稿单独示意字体加载失败，不展示不完整牌面供用户确认</li>
+      <li>预览溢出时提示具体字段名，不笼统报错</li>
+      <li>领取地点在画布外，随 Submission 保存原文；增办可重选地点</li>
+    </ul>
+    <h4>正式素材</h4>
+    <ul>
+      <li>2026-10-12 只读取得生产激活模板「新模板2026」，画布为 1022 × 650；保留原有蓝色院名、院徽与底纹</li>
+      <li>按模板坐标放置照片及姓名、职称、工号、科室四项文字；照片比例为 360 : 447。选择职务时合入打印科室文字，不增加第五个区域；组合文字仍须通过宽度与字体检查</li>
+      <li>原始主字体为 Microsoft YaHei，备用字体为 Smiley Sans Oblique，仅用于工牌。两者均含“㛃”，因此不再用该字示意缺字</li>
+      <li>本稿用 HTML 按比例排版，文字大小参照生产模板；最终输出仍由业务约定的预览与打印流程校验</li>
+    </ul>
+    <h4>提交</h4>
+    <ul>
+      <li>受控输入含：授权、实名版本、编号版本、目录 ID 与打印文字、Photo ID、模板摘要、地点、<code>confirmed=true</code>、Operation-Id</li>
+      <li>提交保存本人确认的内容与资源身份；短期预览 / 签名链接不是永久提交事实</li>
+    </ul>
+    <p class="note-link"><a href="orbit-pages.html#p-preview">查看画框 ›</a></p>
+  </aside>
+</article>
+
+<article class="page note-page" id="p-changed">
+  <aside class="notes">
+    <h3>409 资料变化</h3>
+    <div class="route">pages/submissions/changed · data_changed 分支</div>
+    <h4>规则</h4>
+    <ul>
+      <li>确认值、来源或实际模板在提交前变化 → 服务端回 <code>409 data_changed</code></li>
+      <li>「原信息 → 更新后」分别展示上次确认的资料与当前资料，由人明确重新确认</li>
+      <li>不自动换目标、不静默采用重算内容、不用旧键重放新输入</li>
+      <li>编号改走又改回同值，仍须按新版本重新确认</li>
+    </ul>
+    <p class="note-link"><a href="orbit-pages.html#p-changed">查看画框 ›</a></p>
+  </aside>
+</article>
+
+<article class="page note-page" id="p-detail">
+  <aside class="notes">
+    <h3>申请详情</h3>
+    <div class="route">pages/applications/detail · 本人当前详情入口 · 对应 GET /api/v1/workforce/current/applications/{id}</div>
+    <h4>规则</h4>
+    <ul>
+      <li>阶段与允许动作由服务端返回：pending 显示「待审核」，可取消；rejected 显示「审核未通过」，可重提或取消；approved 显示「审核通过」，可查看进度或取消未发放申请；终态只读</li>
+      <li>展示<b>固定提交内容</b>与<b>当前资料差异</b>分开，不用今天资料改写历史</li>
+      <li>取消不要求理由；与 Delivery 互斥——发放结局未知先核对，不按超时判断「未发放」</li>
+      <li>「查询提交结果」按原 Operation-Id 读回保存的结论，用于响应丢失场景</li>
+      <li>步骤条只示意提交、审核、发放的正常路径；驳回、取消和人工结束按真实阶段单独呈现。Render 的 active / successful / failed / aborted 分别说明工牌图片的生成结果，不推断实体制作进度；本人不显示重新生成入口</li>
+    </ul>
+    <p class="note-link"><a href="orbit-pages.html#p-detail">查看画框 ›</a></p>
+  </aside>
+</article>
+
+<article class="page note-page" id="p-resubmit">
+  <aside class="notes">
+    <h3>驳回重提</h3>
+    <div class="route">pages/submissions/resubmit · rejected 阶段 · 对应 POST /api/v1/workforce/applications/{id}/submissions</div>
+    <h4>规则</h4>
+    <ul>
+      <li>重提必须重新走预览确认，不能一键原样重发</li>
+      <li>原增办来源仍合格 → 沿用来源；来源失格 → 按当前事实重新准备并明示</li>
+      <li>历史版本不倒退：Submission 序号 1 → 2，当前指针推进，旧决定保留</li>
+    </ul>
+    <p class="note-link"><a href="orbit-pages.html#p-resubmit">查看画框 ›</a></p>
+  </aside>
+</article>
+
+<article class="page note-page" id="p-history">
+  <aside class="notes">
+    <h3>申请历史（tab 2）</h3>
+    <div class="route">pages/applications/list · 本人 · 对应 GET /api/v1/workforce/current/applications</div>
+    <h4>规则</h4>
+    <ul>
+      <li>类别徽标（新办 / 增办 / 换证）由服务端判定结果展示，不接受客户端分类输入</li>
+      <li>并行申请各自独立展示阶段与动作；注销后历史仍可被有权者读取，本人侧不展示旧账户资料</li>
+      <li>列表只在进入时加载，本地不持久缓存；下拉刷新重新拉取</li>
+      <li>读取失败显示错误并保留重试，<b>不伪装成「暂无申请」</b></li>
+    </ul>
+    <p class="note-link"><a href="orbit-pages.html#p-history">查看画框 ›</a></p>
+  </aside>
+</article>
+
+<article class="page note-page" id="p-me">
+  <aside class="notes">
+    <h3>我的（tab 3）</h3>
+    <div class="route">pages/accounts/current · 本人 · 对应 GET /api/v1/accounts/current</div>
+    <h4>范围（按页面目标设计，小程序不含）</h4>
+    <ul>
+      <li>含：本人账户、头像、登录方式、政治面貌、退出登录；员工服务暂停、结束或尚未加入时仍可进入。结束员工服务在正常或暂停的服务页办理，账户页不展示依赖有效 Grant 的动作</li>
+      <li>不含：<b>换号</b>（仅网站）；<b>注销与更正历史</b>（仅网站）；任何管理入口</li>
+    </ul>
+    <h4>退出与结束语义</h4>
+    <ul>
+      <li>退出登录：撤销当前会话，清除本地 token、代次推进、受限资料与签名链接全部清理</li>
+      <li>「结束员工服务」对应本人退出 Workforce、结束当前授权，须确认后果：未发放申请停止办理，重新加入也不恢复旧申请或旧工牌的增办来源资格；与退出登录分开放置，不表示离职或注销账户，公开首页仍可浏览</li>
+      <li>退出或结束 ≠ 回滚：仍可合法读取的原完成证明按恢复期保留并与其他账户隔离</li>
+    </ul>
+    <p class="note-link"><a href="orbit-pages.html#p-me">查看画框 ›</a></p>
+  </aside>
+</article>
+
+<article class="page note-page" id="p-sessions">
+  <aside class="notes">
+    <h3>登录方式</h3>
+    <div class="route">pages/sessions/methods · 本人 · 绑定归 identity/wechat，撤销归 identity/revocation</div>
+    <h4>规则</h4>
+    <ul>
+      <li>微信身份绑定 / 解绑为独立办理，绑定用一次交换，code 不复用</li>
+      <li>未绑定稿仅用于可信的 binding=null。本人主动点击「绑定微信」才开始交换；仅手机号登录、切页或重连不自动绑定。完成后重新读取当前状态，不能用旧完成覆盖后来解绑</li>
+      <li>绑定中保留手机号登录；wechat_in_use 提示「此微信已绑定其他账户」，不披露账户资料；binding_changed 提示刷新后查看当前绑定，不直接覆盖。结局未知时核对原操作，不再次换取 code</li>
+      <li>本人资料未提供手机号，本页和「我的」不显示号码。换号走网站的「原号或协助 + 新号验证」流程</li>
+      <li>「退出全部设备」对应 DELETE /api/v1/sessions，包含当前会话及网站、小程序的全部保留会话；本地代次推进，晚到响应不复活旧状态</li>
+    </ul>
+    <p class="note-link"><a href="orbit-pages.html#p-sessions">查看画框 ›</a></p>
+  </aside>
+</article>
+
+</section>
+
+<section class="eng" id="eng">
+  <h2>工程规范对齐 · rust.md 在客户端（TypeScript）的对应约定</h2>
+
+  <div class="block">
+    <h3>规则映射</h3>
+    <p>本表只把所有者文档的规则映射到客户端形态，不重复定义规则：Rust 规则的正文与判定标准归 <a href="../docs/engineering/rust.md">Rust 规范</a>，类型生成与响应校验归 <a href="../docs/client/protocol.md">客户端协议</a>，页面路径命名归 <a href="../docs/client/pages.md#路由命名">页面目标设计</a>。三者变化时以所有者文档为准并重新核对本稿。</p>
+    <table class="rules">
+      <tr><th>rust.md 规则</th><th>orbit 客户端约定</th><th>设计稿体现</th></tr>
+      <tr><td>命名 · 保留事件时间点的语义</td><td>自有 JSON 字段（含嵌套对象）统一使用 <code>camelCase</code>，如 <code>requestedAt</code> / <code>expiresAt</code>；Rust 内部的 <code>_at</code> 不直接作为接口字段名。字段以所属接口契约及 OpenAPI 为准</td><td>详情页「提交时间」、注册页凭据倒计时</td></tr>
+      <tr><td>命名 · 生命周期动作动词</td><td>请求函数按资源生命周期命名：<code>createSession</code> / <code>submitApplication</code> / <code>cancelApplication</code>，不用 <code>login()</code> 这类宽泛交互词</td><td>登录、详情、重提页的动作说明</td></tr>
+      <tr><td>命名 · 引用字段按被引用实体命名</td><td>JSON 引用字段使用 <code>photoId</code> / <code>applicationId</code> 等驼峰名称，<code>id</code> 仅指实体自身；错误码值如 <code>data_changed</code> 保留协议规定的格式</td><td>申请详情的编号版本、Photo ID 行</td></tr>
+      <tr><td>值类型 · 不可互换的值不共享类型</td><td> branded 标识类型：<code>AccountId</code> / <code>SessionToken</code> / <code>OperationId</code> 互不赋值；编号版本与模板身份同样区分</td><td>会话代次、原操作核对不混传标识</td></tr>
+      <tr><td>封闭词汇用 enum，开放文本保持文本</td><td>申请阶段、类别、政治面貌代码用字符串字面量联合；驳回理由等自由文本保持 <code>string</code></td><td>历史页类别徽标、重提页驳回原因</td></tr>
+      <tr><td>结果模型 · 保留互斥结果</td><td>接口保留具名结果；客户端视图模型按业务分支构建，不把视图字段当作响应字段</td><td>认证具名结果、申请阶段视图（下方示意）</td></tr>
+      <tr><td>空集合是正常结果，失败不伪装缺失</td><td>列表读取失败显示协议错误 + 明确重试，<b>不</b>渲染「暂无数据」</td><td>申请历史页规则</td></tr>
+      <tr><td>错误 · 保留输入 / 技术 / 业务 / 结局未知的区分</td><td>401 / 403 / 409 / 410 / 503 分支各自呈现，不合并为一句「失败」；依赖故障不伪装成业务拒绝</td><td>认证分流异常页、409 差异页</td></tr>
+      <tr><td>禁 <code>unwrap()</code> · 受控构造</td><td>禁止 <code>res.data as IFoo</code> 无校验强转；响应必须经生成的校验函数构造后才能进业务层</td><td>协议层边界（下方案例）</td></tr>
+      <tr><td>恢复表示 ≠ 验证成功</td><td>本地 token 只作候选；启动与 onShow 先经服务端复查再展示受限内容</td><td>工作台数据加载顺序</td></tr>
+      <tr><td>模块命名 · 一个完整词、按业务责任</td><td>页面与工具文件用完整业务名词（<code>session.ts</code> / <code>recovery.ts</code>），不发明缩写</td><td>各页路由命名</td></tr>
+      <tr><td>路由命名 · 按资源和用例（<a href="../docs/client/pages.md#路由命名">页面目标设计</a> 拥有；HTTP 侧见 <a href="../docs/http/api.md#路由与请求边界">HTTP 入口</a>）</td><td>页面路径与后端资源同词汇：<code>pages/authentication/login</code>、<code>pages/applications/detail</code>、<code>pages/submissions/preview</code>；不带 <code>auth</code> / <code>badge</code> / <code>me</code> 这类客户端自创分组名</td><td>业务页面的路由标签</td></tr>
+      <tr><td>服务端未装配的入口不宣称可用</td><td>类型生成自实际导出的 OpenAPI；页面只装配已交付能力入口，菜单显示不替代权限检查</td><td>工作台「关键规则」首条</td></tr>
+    </table>
+  </div>
+
+  <div class="block">
+    <h3>类型与协议层示意（非生成产物）</h3>
+    <p>以下为手写的结构示意，不是已交付接口或生成代码。正式请求、响应类型及校验函数从 nucleus 实际导出的 OpenAPI 3.1 构建；不手工维护第二份字段清单。下例只展示手机号认证的成功响应形状，错误按 HTTP 状态和应用码另行处理；网站会话形状不同。</p>
+<pre class="code"><span class="c">// Illustrative types; generate the production contract from OpenAPI.</span>
+<span class="k">declare</span> <span class="k">const</span> brand: <span class="k">unique</span> <span class="k">symbol</span>;
+<span class="k">type</span> AccountId   = <span class="k">string</span> &amp; { readonly [brand]: <span class="s">'account'</span> };
+<span class="k">type</span> SessionToken = <span class="k">string</span> &amp; { readonly [brand]: <span class="s">'session'</span> };
+<span class="k">type</span> OperationId = <span class="k">string</span> &amp; { readonly [brand]: <span class="s">'operation'</span> }; <span class="c">// Generate UUIDv4 with a secure platform random source.</span>
+
+<span class="c">// Exactly one named result is present. Account data is read separately.</span>
+<span class="k">type</span> MiniMobileSuccess =
+  | { code: <span class="s">'ok'</span>; session: { token: SessionToken; expiresAt: <span class="k">string</span> } }
+  | { code: <span class="s">'ok'</span>; registration: { id: <span class="k">string</span>; token: <span class="k">string</span>; expiresAt: <span class="k">string</span> } }
+  | { code: <span class="s">'ok'</span>; progress: { status: <span class="s">'pending'</span>; retryAfterSeconds: <span class="k">number</span> } };
+
+<span class="c">// Client view model only; these fields do not define the HTTP response.</span>
+<span class="k">type</span> ApplicationView =
+  | { stage: <span class="s">'pending'</span> }
+  | { stage: <span class="s">'rejected'</span>;  reviewReason: <span class="k">string</span> }
+  | { stage: <span class="s">'approved'</span>;  render: RenderSummary }
+  | { stage: <span class="s">'completed'</span>; delivery: DeliverySummary }
+  | { stage: <span class="s">'terminated'</span>; endedBy: <span class="s">'cancellation'</span> | <span class="s">'termination'</span> };</pre>
+  </div>
+
+  <div class="block">
+    <h3>响应可信性边界（受控构造的客户端形态）</h3>
+    <p>解析成功 ≠ 响应可信。每个页面消费数据前必须经过同一条边界，等价于 rust.md 的受控构造规则：</p>
+<pre class="code"><span class="c">// Illustrative API: select the generated schema by the full response context.</span>
+<span class="k">const</span> result = validateResponse(method, path, res.status, res.contentType, res.data);
+<span class="c">// Handle validated errors, progress and completed results by the owning use case.</span>
+
+<span class="c">// Do not bypass response validation with a type assertion.</span>
+<span class="c">// const outcome = res.data as IAuthenticationResponse;</span>
+
+<span class="c">// Untrusted write response: preserve the original operation for recovery.</span>
+<span class="c">// Untrusted read response: show a retry action, never an empty-data state.</span></pre>
+    <p>补充传输规则：响应不回显请求标识，客户端用本地代次 + 账户匹配关联响应，迟到响应不覆盖较新会话；图片字节接口成功按媒体类型交付、失败解析 JSON 错误，原生 <code>&lt;image&gt;</code> 加载失败不推断原因（受控占位，按资源契约重取链接至多一次）；HEAD 无正文，不得要求 JSON 错误。</p>
+  </div>
+</section>
+
+<footer style="max-width:1180px;margin:0 auto 50px;padding:0 24px;color:var(--faint);font-size:12px">
+  司籍处小程序页面设计 · 目标设计版 · 设计材料，规则归 <a href="../docs/client/pages.md">页面目标设计</a>、<a href="../docs/client/session.md">小程序会话</a>、<a href="../docs/client/protocol.md">客户端协议</a>、<a href="../docs/identity/mini-mobile.md">小程序手机号</a>、<a href="../docs/workforce/applications.md">申请</a>、<a href="../docs/engineering/rust.md">Rust 规范</a> 等所有者文档 · 产品名：司籍处 · 客户端代号 orbit
+</footer>
+
+</body>
+</html>

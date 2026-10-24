@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="司籍处本人结束员工服务设计预览。" />
+    <title>结束员工服务 · 司籍处</title>
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/tokens.css" />
+    <link rel="stylesheet" href="assets/halo-home.css" />
+    <link rel="stylesheet" href="assets/halo-account.css" />
+    <link rel="stylesheet" href="assets/halo-service-termination.css" />
+    <script src="assets/halo-service-termination.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    <div class="preview-tools" aria-label="设计预览工具">
+      <div class="preview-caption">
+        <strong>HALO · 设计预览</strong><span>虚构资料，不办理真实业务</span>
+      </div>
+      <button
+        class="preview-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="preview-tools-content"
+      >
+        展开预览工具
+      </button>
+      <div class="preview-tools-content" id="preview-tools-content">
+        <div class="preview-controls">
+          <label for="scenario-picker">页面状态</label
+          ><select id="scenario-picker"></select>
+        </div>
+        <details class="design-notes">
+          <summary>设计说明与分支</summary>
+          <div>
+            <p>
+              本稿仅演示可见状态与导航，不保存账户或办理材料，不发送业务请求。继续核对使用原人员、原服务与原请求；实际恢复由网站实现验收。
+            </p>
+            <p>
+              结束记录永久保留。本稿不设虚构的服务端过期时间；查询材料不可用时只引导查看当前状态，不推断本次办理失败。
+            </p>
+            <label for="submit-outcome">确认后的示例结果</label
+            ><select id="submit-outcome">
+              <option value="success-loading">已收到成功结果</option>
+              <option value="unknown">结果未确定</option>
+              <option value="save-failed">发送前保存失败</option>
+              <option value="submit-limited">暂时受限</option>
+              <option value="rejected">明确拒绝</option>
+            </select>
+            <label for="query-outcome">继续核对后的示例结果</label
+            ><select id="query-outcome">
+              <option value="success-loading">已收到原成功结果</option>
+              <option value="query-failed">仍无法确认</option>
+              <option value="query-limited">暂时受限</option>
+              <option value="login-required">需要重新登录</option>
+              <option value="mismatch">请求信息不一致</option>
+            </select>
+            <label for="current-outcome">读取当前服务的示例结果</label
+            ><select id="current-outcome">
+              <option value="success-ended">当前已结束</option>
+              <option value="success-rejoined">已经重新开通</option>
+              <option value="success-read-failed">当前服务读取失败</option>
+            </select>
+            <label for="theme-picker">外观</label
+            ><select id="theme-picker">
+              <option value="system">跟随系统</option>
+              <option value="light">浅色</option>
+              <option value="dark">深色</option>
+            </select>
+          </div>
+        </details>
+      </div>
+    </div>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a
+          class="brand"
+          href="halo-home.html"
+          data-leave
+          aria-label="司籍处首页"
+          ><img src="assets/logo.png" width="56" height="56" alt="" /><span
+            class="brand-copy"
+            ><strong>司籍处</strong><span>中医药文化宣传与推广中心</span></span
+          ></a
+        >
+        <nav class="termination-nav" aria-label="网站导航">
+          <a id="service-navigation" href="halo-services.html" data-leave
+            >员工服务</a
+          ><a id="account-navigation" href="halo-account.html" data-leave
+            >个人账户</a
+          >
+        </nav>
+      </div>
+    </header>
+    <main class="termination-layout" id="main">
+      <a
+        id="service-back"
+        class="termination-back"
+        href="halo-services.html"
+        data-leave
+        >← 返回员工服务</a
+      >
+      <div class="termination-heading">
+        <p class="eyebrow">员工服务 · 本人办理</p>
+        <h1 id="page-title" tabindex="-1">结束员工服务</h1>
+        <p id="page-introduction">结束前，请了解对工号和工牌办理的影响。</p>
+      </div>
+      <div id="termination-content" aria-live="polite"></div>
+    </main>
+    <footer class="termination-footer">司籍处 · 员工服务</footer>
+    <dialog
+      id="termination-dialog"
+      aria-labelledby="dialog-title"
+      aria-describedby="dialog-description"
+    >
+      <div class="termination-dialog-top">
+        <span>操作确认</span
+        ><button
+          class="termination-close"
+          type="button"
+          data-action="close-dialog"
+          aria-label="关闭"
+        >
+          ×
+        </button>
+      </div>
+      <h2 id="dialog-title"></h2>
+      <p id="dialog-description"></p>
+      <div class="termination-actions">
+        <button
+          class="button secondary"
+          id="dialog-cancel"
+          type="button"
+          data-action="close-dialog"
+        >
+          暂不结束</button
+        ><button class="button primary" id="dialog-confirm" type="button">
+          确认结束
+        </button>
+      </div>
+    </dialog>
+  </body>
+</html>

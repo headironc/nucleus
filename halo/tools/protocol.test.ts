@@ -1,0 +1,112 @@
+import { readFile } from "node:fs/promises";
+import { describe, it, expect } from "vitest";
+import { selectDocument, compile } from "./protocol.ts";
+import type { OperationObject, ResponseObject } from "openapi-typescript";
+import { createRequire } from "node:module";
+import { runInNewContext } from "node:vm";
+
+const actual = JSON.parse(
+  await readFile(new URL("../protocol/openapi.json", import.meta.url), "utf8"),
+);
+describe("the actual OpenAPI / Ajv generator combination", () => {
+  it("selects only the implemented protocol consumers and resolves their local schemas", () => {
+    const selected = selectDocument(actual);
+    expect(Object.keys(selected.paths).sort()).toEqual([
+      "/api/v1/accounts/current",
+      "/api/v1/accounts/current/affiliation",
+      "/api/v1/accounts/current/cancellations",
+      "/api/v1/accounts/current/corrections",
+      "/api/v1/affiliations",
+      "/api/v1/codes",
+      "/api/v1/registrations",
+      "/api/v1/revocations",
+      "/api/v1/sessions",
+      "/api/v1/sessions/current",
+      "/api/v1/settings",
+      "/api/v1/workforce/current/grant",
+      "/api/v1/workforce/current/numbers",
+      "/api/v1/workforce/grants/{id}/terminations",
+    ]);
+    expect(Object.keys(selected.components.schemas).length).toBeLessThan(
+      Object.keys(actual.components.schemas).length,
+    );
+    const compiled = compile(selected);
+    expect(selected.paths["/api/v1/sessions"].post).toBeDefined();
+    expect(selected.paths["/api/v1/sessions"].delete).toBeDefined();
+    expect(selected.paths["/api/v1/accounts/current/affiliation"].get).toBeDefined();
+    expect(selected.paths["/api/v1/accounts/current/affiliation"].put).toBeDefined();
+    for (const validator of [
+      "sendCode_200",
+      "createSession_200",
+      "currentAccount_200",
+      "currentAffiliation_200",
+      "createCurrentAffiliation_200",
+      "affiliationValues_200",
+      "cancelCurrentAccount_200",
+      "currentWorkforceGrant_200",
+      "currentWorkforceNumber_200",
+      "terminateWorkforceGrant_201",
+      "register_200",
+      "register_201",
+      "revokeCurrentSession_200",
+      "revokeAllSessions_200",
+      "readRevocations_200",
+      "accountId",
+      "grantId",
+      "personId",
+      "sessionId",
+    ])
+      expect(compiled.validators).toContain(validator);
+  });
+  it.each([
+    { imaginaryConstraint: true },
+    { type: "string", format: "unrecognized-format" },
+    { $ref: "#/missing" },
+  ])("fails closed for unsupported schema material %j", (constraint) => {
+    const selected = selectDocument(actual);
+    const operation = selected.paths["/api/v1/codes"].post as OperationObject;
+    const response = operation.responses!["200"] as ResponseObject;
+    Object.assign(response.content!["application/json"], {
+      schema: constraint,
+    });
+    expect(() => compile(selected)).toThrow();
+  });
+  it("handles local refs, annotations, combinations and null using JSON Schema semantics", () => {
+    const selected = selectDocument(actual);
+    const operation = selected.paths["/api/v1/codes"].post as OperationObject;
+    const response = operation.responses!["200"] as ResponseObject;
+    Object.assign(response.content!["application/json"], {
+      schema: {
+        oneOf: [
+          { type: "null" },
+          {
+            allOf: [
+              { $ref: "#/components/schemas/PublicTurnstileSettings" },
+              {
+                type: "object",
+                properties: {
+                  siteKey: { type: "string", minLength: 2, example: "xx" },
+                },
+              },
+            ],
+          },
+        ],
+      },
+    });
+    const output = compile(selected);
+    const module = {
+      exports: {} as Record<string, (value: unknown) => boolean>,
+    };
+    runInNewContext(output.validators, {
+      module,
+      exports: module.exports,
+      require: createRequire(import.meta.url),
+    });
+    const validate = module.exports.sendCode_200;
+    expect(validate(null)).toBe(true);
+    expect(validate({ siteKey: "xx" })).toBe(true);
+    expect(validate({ siteKey: "x" })).toBe(false);
+    expect(validate({})).toBe(false);
+    expect(validate({ siteKey: null })).toBe(false);
+  });
+});

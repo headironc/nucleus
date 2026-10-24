@@ -8,7 +8,7 @@ use std::{
 use reqwest::{ClientBuilder, redirect::Policy};
 
 use crate::identity::message::{
-    access_key::AccessKey,
+    credentials::AccessKey,
     request::{BuildError, Context, Input, Request},
     settings::Settings,
 };
@@ -104,8 +104,8 @@ mod tests {
     use crate::identity::{
         challenge::Purpose,
         message::{
-            access_key::{AccessKey, Id, Secret},
             client::Client,
+            credentials::{AccessKey, Id, Secret},
             request::{Attempt, Context, Error, Input, Request},
             response::{FailureCode, Outcome, Unknown},
             settings::Settings,
@@ -149,7 +149,7 @@ mod tests {
             .request(
                 Input {
                     mobile: &"13800138000".parse().expect("synthetic mobile is valid"),
-                    code: &"00001234".parse().expect("synthetic code is valid"),
+                    code: &"001234".parse().expect("synthetic code is valid"),
                     message_id: MESSAGE_ID.parse().expect("fixed ID is valid"),
                     valid_seconds: 300,
                     purpose: Purpose::Authentication,
@@ -269,8 +269,8 @@ mod tests {
                 let (socket, _) = listener.accept().await.expect("connection arrives");
                 let mut socket = acceptor.accept(socket).await.expect("TLS succeeds");
                 for (id, template, code) in [
-                    (MESSAGE_ID, "auth", "00001234"),
-                    (second_id, "change", "98765432"),
+                    (MESSAGE_ID, "auth", "001234"),
+                    (second_id, "change", "987654"),
                 ] {
                     let mut bytes = Vec::new();
                     let mut buffer = [0; 4096];
@@ -281,6 +281,7 @@ mod tests {
                     }
                     let wire = String::from_utf8(bytes).expect("request is ASCII");
                     assert!(wire.starts_with("POST /?"));
+                    assert!(wire.contains("CodeLength=6&"));
                     assert!(wire.contains(&format!("OutId={id}&")));
                     assert!(wire.contains(&format!("TemplateCode={template}&")));
                     assert!(wire.contains(&format!("TemplateParam=%7B%22code%22%3A%22{code}%22")));
@@ -317,7 +318,7 @@ mod tests {
             .request(
                 Input {
                     mobile: &"13800138000".parse().expect("valid mobile"),
-                    code: &"98765432".parse().expect("valid code"),
+                    code: &"987654".parse().expect("valid code"),
                     message_id: second_id.parse().expect("valid ID"),
                     valid_seconds: 300,
                     purpose: Purpose::MobileChange,
@@ -359,7 +360,7 @@ mod tests {
             serve(Reply::Complete(200, SUCCESS.into()), Duration::from_secs(1)).await;
         let request = request(&client);
         // Fixed wire expectations independently derived with Python urllib/hashlib/hmac.
-        let expected_line = "POST /?AutoRetry=0&CodeLength=8&CodeType=1&CountryCode=86&DuplicatePolicy=1&Interval=60&OutId=01890f6e-7b80-7000-8000-000000000000&PhoneNumber=13800138000&ReturnVerifyCode=false&SignName=%E6%B5%8B%E8%AF%95%E7%AD%BE%E5%90%8D&TemplateCode=auth&TemplateParam=%7B%22code%22%3A%2200001234%22%2C%22min%22%3A%225%22%7D&ValidTime=300 HTTP/1.1";
+        let expected_line = "POST /?AutoRetry=0&CodeLength=6&CodeType=1&CountryCode=86&DuplicatePolicy=1&Interval=60&OutId=01890f6e-7b80-7000-8000-000000000000&PhoneNumber=13800138000&ReturnVerifyCode=false&SignName=%E6%B5%8B%E8%AF%95%E7%AD%BE%E5%90%8D&TemplateCode=auth&TemplateParam=%7B%22code%22%3A%22001234%22%2C%22min%22%3A%225%22%7D&ValidTime=300 HTTP/1.1";
         let headers = [
             ("host", "dypnsapi.aliyuncs.com"),
             ("accept", "application/json"),
@@ -376,7 +377,7 @@ mod tests {
             ),
             (
                 "authorization",
-                "ACS3-HMAC-SHA256 Credential=LocalTestAccessKey,SignedHeaders=host;x-acs-action;x-acs-content-sha256;x-acs-date;x-acs-signature-nonce;x-acs-version,Signature=195f5f2dd7f87baaa3d66de31e42396248c835e441b5ce13427261125ef56924",
+                "ACS3-HMAC-SHA256 Credential=LocalTestAccessKey,SignedHeaders=host;x-acs-action;x-acs-content-sha256;x-acs-date;x-acs-signature-nonce;x-acs-version,Signature=c3152089aaa90c94dc3527ea7edbcf97de5d7fa462034f67d0bd49641e73a07f",
             ),
         ];
         let result = request.execute().await.expect("response headers arrive");
@@ -446,7 +447,7 @@ mod tests {
 
     #[tokio::test]
     async fn retains_unknown_client_error_codes_without_disclosing_them() {
-        let marker = "13800138000-00001234-local-test-secret";
+        let marker = "13800138000-001234-local-test-secret";
         for status in [200, 201, 400, 401, 403, 429, 499] {
             let body = format!(r#"{{"Success":false,"Code":"{marker}","Message":"{marker}"}}"#);
             let result = attempt(Reply::Complete(status, body)).await;
@@ -528,7 +529,7 @@ mod tests {
         ));
         for (status, body) in [
             (204, ""),
-            (200, "invalid JSON 00001234"),
+            (200, "invalid JSON 001234"),
             (200, r#"{"Code":"OK","Success":true}"#),
             (200, r#"{"Code":"OK","Success":false}"#),
             (400, r#"{"Code":"biz.FREQUENCY","Success":true}"#),
@@ -541,7 +542,7 @@ mod tests {
                 .expect_err("invalid JSON response");
             assert!(matches!(&result, Error::Decode { .. }));
             assert!(!format!("{result:?}").contains("13800138000"));
-            assert!(!format!("{result:?}").contains("00001234"));
+            assert!(!format!("{result:?}").contains("001234"));
         }
     }
 
@@ -560,7 +561,7 @@ mod tests {
         for diagnostic in [format!("{lost:?}"), lost.to_string()] {
             for forbidden in [
                 "13800138000",
-                "00001234",
+                "001234",
                 "local-test-secret",
                 "https://dypnsapi.aliyuncs.com",
                 "TemplateParam",
@@ -585,7 +586,7 @@ mod tests {
         assert!(std::error::Error::source(&truncated).is_some());
         for forbidden in [
             "13800138000",
-            "00001234",
+            "001234",
             "local-test-secret",
             "TemplateParam",
             "Authorization",
@@ -661,7 +662,7 @@ mod tests {
 
     #[tokio::test]
     async fn diagnostics_hide_arbitrary_supplier_text_and_request_material() {
-        let marker = "13800138000-00001234-local-test-secret";
+        let marker = "13800138000-001234-local-test-secret";
         for (status, body) in [
             (400, format!(r#"{{"Success":false,"Code":"{marker}"}}"#)),
             (200, SUCCESS.replace("supplier-business-id", marker)),
@@ -671,7 +672,7 @@ mod tests {
             for forbidden in [
                 marker,
                 "13800138000",
-                "00001234",
+                "001234",
                 "local-test-secret",
                 "Authorization",
                 "TemplateParam",

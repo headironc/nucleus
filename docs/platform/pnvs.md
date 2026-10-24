@@ -1,31 +1,31 @@
 # PNVS 短信发送协议
 
-状态：纯请求构造、ACS3-HMAC-SHA256 签名、单次 HTTP 客户端与直接响应判定已交付。本地 HTTPS 替身测试已覆盖传输与故障边界。凭据文件装载已由 nucleus 交付，见[供应商凭据](credentials.md)。已完成有限真实供应商请求验证；C1 的持久占用与数据库回写另有隔离测试。本文拥有阿里云 PNVS `SendSmsVerifyCode` 的请求字节、签名、供应商响应及直接发送边界。[短信认证](../identity/authentication.md)拥有 C1 的发送许可、调用占用、本地验证码效力和未知结局恢复。[供应商凭据](credentials.md)拥有 RAM 凭据接受条件与文件；[部署设置](../settings.md)规定非秘密配置装载。
+交付状态见[能力状态](../README.md#能力状态)。本文拥有阿里云 PNVS `SendSmsVerifyCode` 的请求字节、签名、供应商响应及直接发送边界。[短信认证](../identity/authentication.md)拥有 C1 的发送许可、调用占用、本地验证码效力和未知结局恢复。[供应商凭据](credentials.md)拥有 RAM 凭据接受条件与文件；[部署设置](../settings.md)规定非秘密配置装载。
 
 ## 请求与验证码归属
 
 请求省略可选的 `SchemeName`，由供应商使用默认方案；部署设置不提供方案名。该参数的可选性与缺省行为见下方官方接口文档。
 
-使用 `Dypnsapi` 的 `2017-05-25` 版 `SendSmsVerifyCode`，目标为 `POST https://dypnsapi.aliyuncs.com/`。业务参数全部置于 query，请求体为空，以 `Accept: application/json` 请求 JSON 结果。不添加该操作未声明的 `RegionId`。只采用本地生成的八位数字验证码，将其作为模板变量传入；不使用 `##code##` 让供应商生成验证码。本地 Check 负责有效期、错误次数和单次消费。自带验证码不能通过 PNVS 的 `CheckSmsVerifyCode` 校验。接口及参数依据见[阿里云 SendSmsVerifyCode 文档](https://help.aliyun.com/zh/pnvs/developer-reference/api-dypnsapi-2017-05-25-sendsmsverifycode)。
+使用 `Dypnsapi` 的 `2017-05-25` 版 `SendSmsVerifyCode`，目标为 `POST https://dypnsapi.aliyuncs.com/`。业务参数全部置于 query，请求体为空，以 `Accept: application/json` 请求 JSON 结果。不添加该操作未声明的 `RegionId`。只采用本地生成的六位数字验证码，将其作为模板变量传入；不使用 `##code##` 让供应商生成验证码。本地 Check 负责有效期、错误次数和单次消费。自带验证码不能通过 PNVS 的 `CheckSmsVerifyCode` 校验。接口及参数依据见[阿里云 SendSmsVerifyCode 文档](https://help.aliyun.com/zh/pnvs/developer-reference/api-dypnsapi-2017-05-25-sendsmsverifycode)。
 
 | 参数                                        | 固定输入或来源                                                                                              |
 | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `CountryCode`、`PhoneNumber`                | 固定 `86`；从规范的 11 位大陆手机号取得号码。                                                               |
 | `SignName`、`TemplateCode`                  | 部署提供配套的 PNVS 赠送签名和模板；按认证、换当前号、绑定新号选择三个模板。每个模板含 `code`、`min` 变量。 |
-| `TemplateParam`                             | 含本地八位 `code` 和发送时剩余分钟向上取整后的字符串 `min` 的 JSON 文本；作为单个 query 值编码。            |
+| `TemplateParam`                             | 含本地六位 `code` 和发送时剩余分钟向上取整后的字符串 `min` 的 JSON 文本；作为单个 query 值编码。            |
 | `ValidTime`                                 | 发送前按原 Check 的 `expires_at` 计算剩余整秒；不改变本地截止。                                             |
 | `OutId`                                     | 原 `identity.messages.id` 的规范小写 UUID 文本；原消息始终复用同一关联值。                                  |
 | `Interval`、`AutoRetry`、`ReturnVerifyCode` | 分别固定 `60`、`0`、`false`；本地持久频控仍独立执行，不要求返回明文码。                                     |
-| `CodeLength`、`CodeType`、`DuplicatePolicy` | 分别固定 `8`、`1`、`1`；这些参数不代替本地生成、旧码失效或消费判断。                                        |
+| `CodeLength`、`CodeType`、`DuplicatePolicy` | 分别固定 `6`、`1`、`1`；这些参数不代替本地生成、旧码失效或消费判断。                                        |
 | `SmsUpExtendCode`                           | 不发送。                                                                                                    |
 
 PNVS 的 `OutId` 是透传外部流水号，没有已核验的发送去重保证。响应中的 `BizId` 是供应商业务标识，`RequestId` 是 API 请求标识，三者不能混用，也不证明用户控制手机号。无需在本地 Message 再存一份 `OutId`。当前不接入回执 HTTP 入口或自动状态查询；缺少回执不能证明短信没有发出。此前带方案名的认证短信已获供应商受理，并由接收者确认到达；省略方案名后的成功发送尚未实测。
 
 ## 签名与发送字节
 
-`domain::identity::message::client::Client::new(settings, access_key)` 接收并持有已验证的部署设置和凭据，建立可复用的 HTTP 客户端。nucleus 负责构造客户端，凭据随客户端存活，不为每个请求复制。`Client::request(input, context)` 构造并签名一次请求，绑定该客户端的连接。`Input` 引用规范 `Mobile` 和八位 `Code`，携带原 Message ID、剩余整秒与固定 `Purpose`。内部始终使用同一 11 位手机号；出站添加 `CountryCode=86` 不改变身份。构造过程不读环境、文件或时钟，也不连接供应商。nucleus 从专用 `message.json` 装载凭据；目标 RAM 权限仅授 `dypns:SendSmsVerifyCode`，资源为 `*`。
+`domain::identity::message::client::Client::new(settings, access_key)` 接收并持有已验证的部署设置和凭据，建立可复用的 HTTP 客户端。nucleus 负责构造客户端，凭据随客户端存活，不为每个请求复制。`Client::request(input, context)` 构造并签名一次请求，绑定该客户端的连接。`Input` 引用规范 `Mobile` 和六位 `Code`，携带原 Message ID、剩余整秒与固定 `Purpose`。内部始终使用同一 11 位手机号；出站添加 `CountryCode=86` 不改变身份。构造过程不读环境、文件或时钟，也不连接供应商。nucleus 从专用 `message.json` 装载凭据；目标 RAM 权限仅授 `dypns:SendSmsVerifyCode`，资源为 `*`。
 
-`message::settings::Settings` 通过构造方法接收已验证值，保存私有的 `signature` 和 `template: Templates`。嵌套模板配置的字段为 `authentication`、`mobile_change`、`mobile_binding`。`signature` 和各用途的模板代码分别使用 `Signature`、`TemplateCode` 值类型。值类型仅通过受控构造按[部署设置](../settings.md#3-必填项)的字符条件校验并保留原文本，设置类型不实现 `Deserialize`。nucleus 单独定义嵌套输入结构，反序列化时拒绝缺字段和未知字段，随后调用业务构造方法校验值。请求按已有 `challenge::Purpose` 选择本次 `TemplateCode`。`TemplateParam` 的 `code` 仍表示八位验证码，和模板码是不同的值。nucleus 仍拥有用途的可信来源和设置装载。供应商超时的默认值与接受条件见下节。环境键解析已由 nucleus 设置加载器交付，尚未验证真实供应商模板配对。
+`message::settings::Settings` 通过构造方法接收已验证值，保存私有的 `signature` 和 `template: Templates`。嵌套模板配置的字段为 `authentication`、`mobile_change`、`mobile_binding`。`signature` 和各用途的模板代码分别使用 `Signature`、`TemplateCode` 值类型。值类型仅通过受控构造按[部署设置](../settings.md#3-必填项)的字符条件校验并保留原文本，设置类型不实现 `Deserialize`。nucleus 单独定义嵌套输入结构，反序列化时拒绝缺字段和未知字段，随后调用业务构造方法校验值。请求按已有 `challenge::Purpose` 选择本次 `TemplateCode`。`TemplateParam` 的 `code` 仍表示六位验证码，和模板码是不同的值。nucleus 仍拥有用途的可信来源和设置装载。供应商超时的默认值与接受条件见下节。环境键解析已由 nucleus 设置加载器交付，尚未验证真实供应商模板配对。
 
 调用方在发送前按原 Check 截止计算剩余整秒，并提供当前 UTC 时间和独立 nonce。当前 `Context` 接收 UUID 值，构造不附加版本或变体限制。C1 调用方按[项目标识](../identifiers.md)生成独立 UUIDv4 nonce，并复查未复用、日期足够新及消息可发送。当前构造不生成 nonce，也不证明这些资格。构造已拒绝剩余不足 60 秒、超出供应商 `int64` 的秒数，以及不能表示为四位正年份的日期。日期输出到整秒，模板 `min` 向上取整；本地截止不变。
 
@@ -73,6 +73,8 @@ C1 调用方在发送前再次核对 Check 截止；剩余不足 60 秒时，本
 
 `Outcome` 的调试输出隐藏任意 `BizId` 文本，`Unknown` 的调试输出隐藏未知错误码原值。业务读取这些原值时仍不得写入日志。执行方法与客户端自身不记录请求、响应或错误日志。
 
+C1 保留未知 `Attempt` 的状态、耗时和受控原因。执行失败时，C1 单独测量 `execute` 的单调时钟耗时，不计入排队或结论回写。`Read` 的安全调试输出包含 HTTP 状态与 `is_timeout` 判断，区分正文超时和截断。最终事件中的供应商状态不表示本地 HTTP 响应状态。最终日志及回写失败的组合原因见[短信认证](../identity/authentication.md#首次接纳边界)。
+
 ## 验收与限制
 
 官方[返回码总表](https://help.aliyun.com/zh/pnvs/developer-reference/api-return-code)列出 `biz.FREQUENCY` 和 `isv.INVALID_PARAMETERS`，与实测一致。总表的手机号错误为 `isv.MOBILE_NUMBER_ILLEGAL`，但当前发送接口对非数字文本和 10 位数字串均返回 `ILLEGAL_MOBILE`。手机号错误采用实测准确值。另按总表的融合认证章节纳入未开通功能和号码流控码；本地替身覆盖其解析与状态判定，不代表真实接口已返回这些码。尚未纳入的码保留原文并返回未知结局。
@@ -105,4 +107,4 @@ C1 调用方在发送前再次核对 Check 截止；剩余不足 60 秒时，本
 
 复用测试在同一 TLS 连接上先后发送两个不同 Message，核对各自的用途模板、验证码和 `OutId`，并分别确认响应关联。客户端的调试输出隐藏设置和凭据。
 
-一次真实认证短信已验证当前凭据、赠送签名模板和自带八位码的受理，接收者确认到达。两次先后发码的 `OutId`、其他用途模板和完整 C1 业务验收尚未覆盖。C1 隔离测试已覆盖旧工作结束后的孤立占用回读，未知结局只回写 `unknown`。有限真实请求与本地替身均不构成完整业务流程的交付证据。
+此前一次真实认证短信已验证当前凭据、赠送签名模板和自带八位码的受理，接收者确认到达。当前六位码尚未进行真实供应商验收。两次先后发码的 `OutId`、其他用途模板和完整 C1 业务验收尚未覆盖。C1 隔离测试已覆盖旧工作结束后的孤立占用回读，未知结局只回写 `unknown`。有限真实请求与本地替身均不构成完整业务流程的交付证据。

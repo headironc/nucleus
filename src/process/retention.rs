@@ -2,26 +2,77 @@
 
 use std::time::Duration;
 
-use domain::identity::authentication;
+use domain::{
+    identity::{authentication, transfer},
+    kernel, registration,
+    startup::Services,
+};
 use tokio::{sync::watch, task::JoinHandle, time::sleep};
 
 pub(super) struct Retention {
-    task: JoinHandle<Result<(), authentication::Error>>,
+    task: JoinHandle<Result<(), Error>>,
     stopped: watch::Sender<bool>,
     joined: bool,
 }
 
 impl Retention {
-    pub(super) fn start(service: authentication::Service) -> Self {
+    pub(super) fn start(services: Services) -> Self {
         let (stopped, mut stopping) = watch::channel(false);
         let task = tokio::spawn(async move {
-            let mut retention = service.retention();
+            let mut authentication = services.authentication().retention();
+            let mut registration = services.registration().retention();
+            let mut transfer = services.transfer().retention();
+            let mut directory = services.directory().retention();
+            let mut avatar = services.avatar_retention();
             loop {
                 if *stopping.borrow() {
                     return Ok(());
                 }
-                let result = retention.run().await;
+                let result = transfer.run().await;
+                if matches!(
+                    result,
+                    Err(transfer::Error::Work(domain::runtime::work::Error::Closed))
+                ) && *stopping.borrow()
+                {
+                    return Ok(());
+                }
+                result?;
+                // Stopping never starts another cleanup step; each step owns its own work.
+                if *stopping.borrow() {
+                    return Ok(());
+                }
+                let result = authentication.run().await;
                 if matches!(result, Err(authentication::Error::Closed)) && *stopping.borrow() {
+                    return Ok(());
+                }
+                result?;
+                if *stopping.borrow() {
+                    return Ok(());
+                }
+                let result = registration.run().await;
+                if matches!(
+                    result,
+                    Err(registration::Error::Work(
+                        domain::runtime::work::Error::Closed
+                    ))
+                ) && *stopping.borrow()
+                {
+                    return Ok(());
+                }
+                result?;
+                if *stopping.borrow() {
+                    return Ok(());
+                }
+                let result = avatar.run().await;
+                if result.as_ref().is_err_and(kernel::Error::is_closed) && *stopping.borrow() {
+                    return Ok(());
+                }
+                result?;
+                if *stopping.borrow() {
+                    return Ok(());
+                }
+                let result = directory.run().await;
+                if result.as_ref().is_err_and(kernel::Error::is_closed) && *stopping.borrow() {
                     return Ok(());
                 }
                 result?;
@@ -72,6 +123,12 @@ impl Drop for Retention {
 pub enum Error {
     #[error("{0}")]
     Operation(#[from] authentication::Error),
+    #[error("{0}")]
+    Registration(#[from] registration::Error),
+    #[error("{0}")]
+    Transfer(#[from] transfer::Error),
+    #[error("{0}")]
+    Kernel(#[from] kernel::Error<std::convert::Infallible>),
     #[error("retention task failed")]
     Task {
         task_id: tokio::task::Id,
@@ -112,7 +169,7 @@ mod tests {
                 let mut retention = Retention {
                     task: tokio::spawn(async move {
                         released.await.expect("release task");
-                        Err(authentication::Error::Closed)
+                        Err(authentication::Error::Closed.into())
                     }),
                     stopped: watch::channel(false).0,
                     joined: false,

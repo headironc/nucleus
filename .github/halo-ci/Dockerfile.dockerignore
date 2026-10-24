@@ -1,0 +1,4 @@
+**
+!fixture/
+!fixture/postgresql.ts
+!fixture/postgresql.version
