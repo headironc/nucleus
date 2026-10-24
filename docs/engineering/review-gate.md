@@ -10,7 +10,7 @@
 
 `dev` 使用下文的 squash 队列，支持独立 PR 与两层原生 stack；`main` 使用普通 merge commit，不配置队列。`main` 的专属检查绑定当前 PR、头提交、当前目标基线和最近重开事件。它沿用控制器的审查、批准、讨论和 CI 评估，并在发布前后复核。控制器同时读取实时 `main` 引用，避免 PR 元数据滞后时沿用旧基线。目标前进后，原审查记录不再满足直接路径；更新候选并完成新输入的审查后，流程重新给出结果。
 
-`main` 还要求组织级必需工作流规则，仅匹配 Nucleus 的 `refs/heads/main`。来源固定为仓库 ID `1185290396` 的 `refs/heads/dev` 与 `.github/workflows/review-gate.yml`，不另用历史 SHA。`do_not_enforce_on_create` 为 `false`。控制器从生效规则核对这些绑定，缺失或改变时拒绝准入。私有来源仓库启用组织内 Actions 共享，组织内其他私有仓库因而可调用其工作流；这项访问范围由平台配置授权维护。
+`main` 还要求组织级必需工作流规则，仅匹配 Nucleus 的 `refs/heads/main`。来源固定为仓库 ID `1432619931` 的 `refs/heads/dev` 与 `.github/workflows/review-gate.yml`，不另用历史 SHA。`do_not_enforce_on_create` 为 `false`。控制器从生效规则核对这些绑定，缺失或改变时拒绝准入。私有来源仓库启用组织内 Actions 共享，组织内其他私有仓库因而可调用其工作流；这项访问范围由平台配置授权维护。
 
 GitHub 在 PR 创建、提交更新和重开时要求一次新的必需工作流运行。控制器先写入并回读当前候选的等待检查，再评估审查条件。写入失败或控制器禁用时，运行失败。旧 PR 的同 SHA 成功检查因而不能代替新 PR 或重开后的执行。工作流成功只完成这道生命周期检查；最终准入仍取决于专属检查及其余保护。其他可变审查状态继续采用下文的异步失效边界。
 
@@ -86,7 +86,7 @@ GitHub 负责依赖顺序及下层退出后的上层退出。项目控制器负�
 
 ## dev 队列检查
 
-本节描述启用后的队列契约。实际启用状态以 `dev` 生效规则和仓库变量的回读为准；启用时核对本节保证范围与有效授权。`main` 提升沿用现有流程。实现与发布依据见[检查刷新 #1199](https://github.com/silence-force/nucleus/pull/1199) 及[基线分离 #1207](https://github.com/silence-force/nucleus/pull/1207)。
+本节描述启用后的队列契约。实际启用状态以 `dev` 生效规则和仓库变量的回读为准；启用时核对本节保证范围与有效授权。`main` 提升沿用现有流程。实现与发布依据见[检查刷新 #1199](https://github.com/silence-force/nucleus-archive-20261025/pull/1199) 及[基线分离 #1207](https://github.com/silence-force/nucleus-archive-20261025/pull/1207)。
 
 `dev` 在[共同保护](#保护配置与准入异常)之外要求 GitHub 合并队列，只允许 squash。`strict_required_status_checks_policy` 继续启用，由实际队列候选验证当前目标。队列采用 `ALLGREEN`、`SQUASH`，`max_entries_to_build`、`max_entries_to_merge`、`min_entries_to_merge` 均为 `1`。实现读取当前生效规则，缺少队列时不发布成功。
 
@@ -134,6 +134,6 @@ Docs、Rust 和 Halo 工作流响应 `merge_group: checks_requested`，在实际
 
 启用验收不要求证明每次重入都生成新 SHA，也不要求证明失效总能先于合并完成。上述风险不允许合并者复用已知失效的批准或检查。已知新发现、证据矛盾和缺失的处置证据仍阻止放行。合并授权、最终准入状态、分支保护与未知写入回读继续按[交付入口](delivery.md#审查关卡与证据复用)执行。
 
-输入未变的有效验收直接复用，改变的条件按受影响范围补验。准确候选、运行与结果保存在对应 PR：[早期实验 #1200](https://github.com/silence-force/nucleus/pull/1200)、[准入与恢复 #1201](https://github.com/silence-force/nucleus/pull/1201)、[出队重入 #1203](https://github.com/silence-force/nucleus/pull/1203)、[基线推进 #1205](https://github.com/silence-force/nucleus/pull/1205)、[旧成功重入 #1208](https://github.com/silence-force/nucleus/pull/1208)、[重排候选 A #1211](https://github.com/silence-force/nucleus/pull/1211)、[重排候选 B #1212](https://github.com/silence-force/nucleus/pull/1212)、[新增发现 #1213](https://github.com/silence-force/nucleus/pull/1213)。
+输入未变的有效验收直接复用，改变的条件按受影响范围补验。准确候选、运行与结果保存在对应 PR：[早期实验 #1200](https://github.com/silence-force/nucleus-archive-20261025/pull/1200)、[准入与恢复 #1201](https://github.com/silence-force/nucleus-archive-20261025/pull/1201)、[出队重入 #1203](https://github.com/silence-force/nucleus-archive-20261025/pull/1203)、[基线推进 #1205](https://github.com/silence-force/nucleus-archive-20261025/pull/1205)、[旧成功重入 #1208](https://github.com/silence-force/nucleus-archive-20261025/pull/1208)、[重排候选 A #1211](https://github.com/silence-force/nucleus-archive-20261025/pull/1211)、[重排候选 B #1212](https://github.com/silence-force/nucleus-archive-20261025/pull/1212)、[新增发现 #1213](https://github.com/silence-force/nucleus-archive-20261025/pull/1213)。
 
 长期启用遵守既有操作授权与配置回读要求，不新增审批步骤或重复处置台账。

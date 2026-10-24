@@ -2477,7 +2477,8 @@ test("main requires its native lifecycle workflow from the trusted dev source", 
     ...(
       [
         { repository_id: 99n },
-        { repository_id: "1185290396" },
+        { repository_id: 1185290396n },
+        { repository_id: "1432619931" },
         { path: ".github/workflows/other.yml" },
         { ref: "refs/heads/main" },
         { sha: OLD },

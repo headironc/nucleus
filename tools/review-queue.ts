@@ -91,7 +91,7 @@ export function contract(gate: Gate, rules: Json[], target = "dev"): void {
         get(parameters, "do_not_enforce_on_create") === false &&
         array(field(parameters, "workflows")).some(
           (workflow) =>
-            get(workflow, "repository_id") === 1185290396n &&
+            get(workflow, "repository_id") === 1432619931n &&
             get(workflow, "path") === ".github/workflows/review-gate.yml" &&
             get(workflow, "ref") === "refs/heads/dev" &&
             (get(workflow, "sha") === null || get(workflow, "sha") === ""),

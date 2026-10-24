@@ -210,7 +210,7 @@ export const MAIN_RULES: Json[] = [
       do_not_enforce_on_create: false,
       workflows: [
         {
-          repository_id: 1185290396n,
+          repository_id: 1432619931n,
           path: ".github/workflows/review-gate.yml",
           ref: "refs/heads/dev",
         },
