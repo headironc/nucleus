@@ -1,0 +1,51 @@
+[package]
+name = "domain"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+test-support = []
+
+[dependencies]
+bytes = { version = "1.12.1", default-features = false }
+platform = { path = "../platform" }
+postgres-types = { version = "0.2.14", default-features = false, features = ["derive"] }
+base64 = { version = "0.23.1", default-features = false, features = ["std"] }
+chrono = { version = "0.4.45", default-features = false, features = ["serde", "std"] }
+derive_more = { version = "2.1.1", default-features = false, features = ["as_ref", "display"] }
+getrandom = "0.4.3"
+hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+nonempty = { version = "0.12.0", default-features = false }
+idna = { version = "1.1.0", default-features = false, features = ["std", "compiled_data"] }
+percent-encoding = { version = "2.3.2", default-features = false, features = ["alloc"] }
+reqwest = { version = "0.13.5", default-features = false, features = ["json", "rustls-no-provider"] }
+ring = { version = "0.17.14", default-features = false, features = ["alloc"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std"] }
+scopeguard = { version = "1.2.0", default-features = false }
+serde = { version = "1.0.229", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
+serde_with = { version = "3.24.0", default-features = false, features = ["macros"] }
+sha2 = { version = "0.11.0", default-features = false }
+strum = { version = "0.28.0", default-features = false, features = ["derive", "std"] }
+subtle = { version = "2.6.1", default-features = false }
+thiserror = "2.0.20"
+tokio = { version = "1.47.1", default-features = false, features = ["rt", "sync", "time"] }
+tokio-postgres = { version = "0.7.18", default-features = false, features = ["with-chrono-0_4", "with-uuid-1"] }
+tracing = { version = "0.1.44", default-features = false, features = ["std"] }
+url = { version = "2.5.8", default-features = false, features = ["std"] }
+utoipa = { version = "6.0.0", default-features = false, features = ["macros", "uuid"] }
+uuid = { version = "1.26.1", default-features = false, features = ["serde", "std", "v4"] }
+zeroize = { version = "1.9.0", default-features = false, features = ["alloc", "serde"] }
+
+[dev-dependencies]
+fixture = { path = "../fixture" }
+syn = { version = "2.0.119", default-features = false, features = ["full", "parsing"] }
+tempfile = "3.25.0"
+tracing-test = { version = "0.2.6", default-features = false }
+tokio = { version = "1.47.1", default-features = false, features = ["io-util", "macros", "net", "process", "rt-multi-thread", "time"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+
+[lints]
+workspace = true

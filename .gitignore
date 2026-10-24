@@ -1,0 +1,47 @@
+# Rust
+/target
+
+# Secrets & configs
+.env
+.env.test
+.env.local
+/message.json
+/challenge.json
+/certs
+*.pem
+# Test fixture certs (no secret material) are committed.
+!tests/fixtures/*.pem
+# Codex writes its MCP server config here, and an MCP database server is
+# configured with a connection string — i.e. a live password, in plaintext, in a
+# file at the repo root. It was untracked but not ignored, which is one
+# `git add -A` away from committed. Ignored so it cannot be.
+.codex/
+
+# Generated content
+/files
+/logs
+/node_modules
+/.cache/nucleus-tools/
+/storage
+
+# IDE
+.idea
+.vscode
+*.iml
+*.swp
+
+# macOS
+.DS_Store
+
+# Keep personal Claude runtime state and nested worktrees out of commits.
+.claude/
+
+# probes/ 是证据、不是产品代码（被 exclude 出 workspace）
+# —— 它有自己的 target/ 和 lock，都不入库
+probes/target/
+probes/Cargo.lock
+
+# tools/mascots/ 同样被 exclude 出 workspace，所以 `/target` 这条盖不到它。
+# ⚠️ 它的 Cargo.lock 是提交的，和 probes 不同：渲染出的字节取决于 tiny-skia 的版本，
+# 锁住版本是重跑能重现已提交 PNG 的必要条件（不是充分条件 —— 平台差异不在锁的管辖内）。
+tools/mascots/target/

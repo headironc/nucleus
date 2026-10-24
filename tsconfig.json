@@ -1,0 +1,12 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "module": "Preserve",
+    "moduleResolution": "bundler",
+    "types": ["bun", "node"],
+    "strict": true,
+    "noEmit": true
+  },
+  "include": ["tools/**/*.ts", "fixture/postgresql.ts"]
+}

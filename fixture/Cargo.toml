@@ -1,0 +1,21 @@
+[package]
+name = "fixture"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+postgresql_embedded = { version = "0.21.0", default-features = false, features = ["blocking", "tls-rustls-ring"] }
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
+rustls-pki-types = { version = "1.15.1", default-features = false, features = ["std"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
+tokio = { version = "1.47.1", default-features = false, features = ["io-util", "macros", "net", "rt", "sync"] }
+tokio-rustls = { version = "0.26.6", default-features = false, features = ["ring", "tls12"] }
+tempfile = "3.25.0"
+
+[dev-dependencies]
+tokio = { version = "1.47.1", default-features = false, features = ["time"] }
+
+[lints]
+workspace = true

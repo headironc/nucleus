@@ -1,0 +1,74 @@
+name: Rust
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-24.04
+    env:
+      CARGO_TARGET_DIR: target/cargo
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check workspace inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f Cargo.toml
+          test -f Cargo.lock
+          test -f rust-toolchain.toml
+          rustup show active-toolchain
+      - name: Install formatting toolchain
+        run: rustup toolchain install nightly-2026-09-06 --profile minimal --component rustfmt
+      - name: Check formatting
+        run: cargo +nightly-2026-09-06 fmt --all -- --check
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.4.2
+      - name: Install tool dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Check tool types
+        run: bun run check:tools
+      - name: Install PostgreSQL build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential bison flex curl pkg-config libssl-dev libicu-dev libreadline-dev zlib1g-dev libxml2-dev
+      - name: Identify build environment
+        id: environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          packages=$(dpkg-query --show --showformat='${binary:Package}=${Version}\n' |
+            LC_ALL=C sort | sha256sum | cut -d ' ' -f 1)
+          printf 'key=%s-%s-%s\n' "$ImageOS" "$ImageVersion" "$packages" >> "$GITHUB_OUTPUT"
+          printf 'postgresql=%s\n' "$(cat fixture/postgresql.version)" >> "$GITHUB_OUTPUT"
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ steps.environment.outputs.key }}
+          workspaces: ". -> target/cargo"
+          cache-bin: false
+      - name: Test dependency checks
+        run: python3 -B tools/test_dependencies.py -v
+      - name: Check dependency boundaries
+        run: python3 -B tools/check_dependencies.py
+      - name: Test package checks
+        run: bun test tools/check-packages.test.ts
+      - name: Cache PostgreSQL installation
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: target/postgresql/${{ steps.environment.outputs.postgresql }}
+          key: postgresql-${{ runner.os }}-${{ runner.arch }}-${{ steps.environment.outputs.key }}-${{ hashFiles('fixture/postgresql.version', 'fixture/postgresql.ts') }}
+      - name: Prepare the pinned test PostgreSQL
+        run: bun fixture/postgresql.ts
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Build and test each package
+        run: bun tools/check-packages.ts

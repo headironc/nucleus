@@ -1,0 +1,36 @@
+[package]
+name = "platform"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+bytes = { version = "1.12.1", default-features = false }
+aes-gcm-siv = { version = "0.12.1", default-features = false, features = ["aes", "zeroize"] }
+getrandom = "0.4.3"
+libc = "0.2.189"
+derive_more = { version = "2.1.1", default-features = false, features = ["as_ref"] }
+ring = { version = "0.17.14", default-features = false, features = ["alloc"] }
+deadpool = { version = "0.13.0", default-features = false, features = ["managed", "rt_tokio_1"] }
+rustls = { version = "0.23.45", default-features = false, features = ["ring", "std", "tls12"] }
+rustls-pki-types = { version = "1.15.1", default-features = false, features = ["std"] }
+scopeguard = { version = "1.2.0", default-features = false }
+thiserror = "2.0.20"
+serde = { version = "1.0.229", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "1.0.151", default-features = false, features = ["std"] }
+tokio = { version = "1.47.1", default-features = false, features = ["rt", "sync", "time"] }
+tokio-postgres = { version = "0.7.18", default-features = false, features = ["runtime"] }
+tokio-postgres-rustls = { version = "0.14.0", default-features = false, features = ["ring"] }
+zeroize = { version = "1.9.0", default-features = false, features = ["alloc", "serde"] }
+
+[dev-dependencies]
+hex = { version = "0.4.3", default-features = false, features = ["alloc"] }
+fixture = { path = "../fixture" }
+tempfile = "3.25.0"
+rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }
+tokio = { version = "1.47.1", default-features = false, features = ["io-util", "macros", "net", "rt-multi-thread"] }
+uuid = { version = "1.26.1", default-features = false, features = ["std", "v4"] }
+
+[lints]
+workspace = true

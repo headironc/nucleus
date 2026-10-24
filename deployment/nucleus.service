@@ -1,0 +1,35 @@
+[Unit]
+Description=Nucleus C1 HTTP service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=nucleus
+Group=nucleus
+RuntimeDirectory=nucleus
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+EnvironmentFile=/etc/nucleus/settings
+LoadCredentialEncrypted=database.json:/etc/credstore.encrypted/nucleus-database
+LoadCredentialEncrypted=challenge.json:/etc/credstore.encrypted/nucleus-challenge
+LoadCredentialEncrypted=message.json:/etc/credstore.encrypted/nucleus-message
+LoadCredentialEncrypted=challenge-keys.json:/etc/credstore.encrypted/nucleus-challenge-keys
+LoadCredentialEncrypted=mobile-keys.json:/etc/credstore.encrypted/nucleus-mobile-keys
+LoadCredentialEncrypted=encryption-keys.json:/etc/credstore.encrypted/nucleus-encryption-keys
+LoadCredentialEncrypted=message-keys.json:/etc/credstore.encrypted/nucleus-message-keys
+ExecStartPre=/usr/local/bin/nucleus check
+ExecStart=/usr/local/bin/nucleus
+KillMode=control-group
+ExitType=cgroup
+# Retained history is checked in bounded batches, without a total scan deadline.
+TimeoutStartSec=infinity
+TimeoutStopSec=35s
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=yes
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
