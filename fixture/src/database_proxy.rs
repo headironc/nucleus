@@ -75,6 +75,7 @@ pub enum Fault {
     PausedAuthenticationSession,
     ExpiredInvitationCompletion,
     StalledAvatarUploads,
+    PausedCommit,
 }
 
 struct Control {
@@ -240,6 +241,7 @@ impl Proxy {
                 Fault::PausedAuthenticationSession => 50,
                 Fault::ExpiredInvitationCompletion => 51,
                 Fault::StalledAvatarUploads => 52,
+                Fault::PausedCommit => 53,
             },
             Ordering::SeqCst,
         );
@@ -1083,6 +1085,15 @@ async fn relay(
                 }
             }
             if message[0] == b'Q' && &message[5..] == b"COMMIT\0" {
+                if changed
+                    && control
+                        .fault
+                        .compare_exchange(53, 0, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_ok()
+                {
+                    // Delay a write decision while preserving the caller's live connection.
+                    control.pause(&backend_pid).await?;
+                }
                 let fault = control.fault.load(Ordering::SeqCst);
                 if !changed
                     && (coordinated || listing || keys)

@@ -2154,6 +2154,58 @@ mod tests {
     }
 
     #[test]
+    fn cancellation_removes_retained_avatar_completions_in_one_statement() {
+        let server = server();
+        Runtime::new().expect("runtime").block_on(Box::pin(async {
+            timeout(Duration::from_secs(60), Box::pin(async {
+                let database = Database::initialized(Arc::clone(&server)).await;
+                let mut supplier = Supplier::new().await;
+                let (context, services) = start(database.connections(&database.user), &supplier).await;
+                let other = Box::pin(actor(&database, &services, &mut supplier)).await;
+                let actor = Box::pin(crate::access::appointment::tests::register(&database, &services, &mut supplier)).await;
+                let before = services.current().read(&actor).await.expect("cancellable account");
+                let bytes = png(&[83; 16]);
+                let first = replace(&services, &actor, operation::Id::allocate(), before.avatar().revision(), "image/png", &bytes)
+                    .await.expect("changed upload");
+                for _ in 0..7 {
+                    let result = replace(&services, &actor, operation::Id::allocate(), first.completion().revision(), "image/png", &bytes)
+                        .await.expect("retained unchanged upload");
+                    assert!(!result.completion().changed());
+                }
+                let other_before = services.current().read(&other).await.expect("other account");
+                let other_operation = operation::Id::allocate();
+                replace(&services, &other, other_operation, other_before.avatar().revision(), "image/png", &bytes)
+                    .await.expect("another account retains its result");
+                let owner = database.connections(&database.owner).recover().await.expect("isolated fixture owner");
+                owner.client().batch_execute(
+                    "CREATE TABLE identity.avatar_completion_deletes (deleted bigint NOT NULL);
+                     GRANT INSERT, SELECT ON identity.avatar_completion_deletes TO PUBLIC;
+                     CREATE FUNCTION identity.record_avatar_completion_delete() RETURNS trigger LANGUAGE plpgsql AS $$
+                     BEGIN
+                       INSERT INTO identity.avatar_completion_deletes SELECT count(*) FROM removed WHERE family='avatar';
+                       RETURN NULL;
+                     END $$;
+                     CREATE TRIGGER avatar_completion_delete_observer AFTER DELETE ON identity.completions
+                     REFERENCING OLD TABLE AS removed FOR EACH STATEMENT EXECUTE FUNCTION identity.record_avatar_completion_delete()"
+                ).await.expect("observe actual deletion statements in isolated fixture");
+                services.cancellation().cancel(actor.clone(), operation::Id::allocate(), crate::cancellation::tests::confirmation(&before))
+                    .await.expect("real cancellation with retained unchanged uploads");
+                let counts: Vec<i64> = owner.client().query_one(
+                    "SELECT array_agg(deleted) FROM identity.avatar_completion_deletes WHERE deleted > 0", &[]
+                ).await.expect("statement observations").get(0);
+                assert_eq!(counts, [8], "all authenticated originals leave in one database statement");
+                assert!(completion::avatar_removed::<Rejection>(owner.client(), &before.id().to_string()).await.expect("cancelled originals"));
+                assert!(Original::find_optional(owner.client(), services.app().keys(), other_operation).await.expect("other original").is_some());
+                assert!(completion::original::<Rejection>(owner.client(), services.app().keys(), COMPLETIONS, other_operation).await.expect("other authenticated completion").is_some());
+                assert!(services.current().read(&actor).await.is_err());
+                services.current().read(&other).await.expect("unrelated account remains usable");
+                owner.terminate().await.expect("fixture observer ended");
+                services.close(); services.drain().await.expect("drained"); context.stop().await.expect("clock stopped"); supplier.stop().await;
+            })).await.expect("bounded cancellation with accumulated originals");
+        }));
+    }
+
+    #[test]
     fn retained_upload_verification_renews_each_batch_budget_and_bounds_a_stalled_batch() {
         async fn start_retained(
             database: &Database,

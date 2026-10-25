@@ -55,7 +55,8 @@ pub(super) async fn authenticate_upload(
     context.admission.write(source.address())?;
     authenticate_at(context, &mut request, deadline, true).await?;
     request.extensions_mut().insert(Deadline(deadline));
-    Ok(timeout_at(deadline, next.run(request)).await?)
+    // The upload handler distinguishes body expiry from waiting on supervised work.
+    Ok(next.run(request).await)
 }
 
 pub(super) async fn authenticate_original(

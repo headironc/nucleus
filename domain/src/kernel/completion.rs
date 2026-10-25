@@ -670,6 +670,10 @@ pub(crate) async fn remove_avatar<R>(
         )
         .await
         .map_err(Error::query)?;
+    let mut operations = Vec::with_capacity(rows.len());
+    let mut seals = Vec::with_capacity(rows.len());
+    let mut key_ids = Vec::with_capacity(rows.len());
+    let mut versions = Vec::with_capacity(rows.len());
     for row in rows {
         let record = Record::decode(template, &row, keys)?;
         if record.target() != target {
@@ -678,27 +682,40 @@ pub(crate) async fn remove_avatar<R>(
             ));
         }
         record.check_time(now)?;
-        let changed = client
-            .execute(
-                &format!(
-                    "DELETE FROM {} WHERE family=$1 AND operation_id=$2 AND seal=$3 AND seal_key_id=$4 AND seal_version=$5",
-                    template.family.completions()
-                ),
-                &[
-                    &template.family.label(),
-                    &record.operation_id(),
-                    &record.seal.tag(),
-                    &record.seal.key_id(),
-                    &record.seal.version(),
-                ],
-            )
-            .await
-            .map_err(Error::query)?;
-        if changed != 1 {
-            return Err(Error::corrupt(
-                "avatar completion removal deletes its authenticated row",
-            ));
-        }
+        operations.push(record.operation_id());
+        seals.push(record.seal.tag().to_vec());
+        key_ids.push(record.seal.key_id());
+        versions.push(record.seal.version());
+    }
+    // Keep each authenticated seal in the deletion predicate without one round trip per row.
+    let changed = client
+        .execute(
+            &format!(
+                "DELETE FROM {} AS completion
+                 USING unnest($2::uuid[], $3::bytea[], $4::bigint[], $5::smallint[])
+                   AS original(operation_id, seal, seal_key_id, seal_version)
+                 WHERE completion.family=$1 AND completion.target=$6
+                   AND completion.operation_id=original.operation_id
+                   AND completion.seal=original.seal
+                   AND completion.seal_key_id=original.seal_key_id
+                   AND completion.seal_version=original.seal_version",
+                template.family.completions()
+            ),
+            &[
+                &template.family.label(),
+                &operations,
+                &seals,
+                &key_ids,
+                &versions,
+                &target,
+            ],
+        )
+        .await
+        .map_err(Error::query)?;
+    if changed != operations.len() as u64 {
+        return Err(Error::corrupt(
+            "avatar completion removal deletes every authenticated row",
+        ));
     }
     Ok(())
 }

@@ -352,10 +352,9 @@ async fn replace(
             return failure(StatusCode::SERVICE_UNAVAILABLE, "dependency_unavailable");
         }
     };
-    match context
-        .services
-        .avatar()
-        .upload(
+    match timeout_at(
+        deadline,
+        context.services.avatar().upload(
             context.services.current(),
             actor,
             operation_id,
@@ -364,11 +363,15 @@ async fn replace(
             bytes,
             permit,
             deadline,
-        )
-        .await
+        ),
+    )
+    .await
     {
-        Ok(result) => (Json(Receipt::new(result.completion(), result.avatar()))).into_response(),
-        Err(error) => kernel(error, operation_id),
+        Ok(Ok(result)) => {
+            (Json(Receipt::new(result.completion(), result.avatar()))).into_response()
+        }
+        Ok(Err(error)) => kernel(error, operation_id),
+        Err(_) => failure(StatusCode::SERVICE_UNAVAILABLE, "outcome_unknown"),
     }
 }
 

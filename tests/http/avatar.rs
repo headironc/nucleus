@@ -7,6 +7,114 @@ use uuid::Uuid;
 use crate::{application::*, authentication::*, database::*, supplier::*, suspension::*};
 
 #[test]
+fn accepted_avatar_upload_timeout_preserves_unknown_outcome_and_original_work() {
+    use fixture::database_proxy::{Fault, Proxy};
+    use image::{ExtendedColorType, ImageEncoder as _, codecs::png::PngEncoder};
+    use serde_json::Value;
+    use tokio::{
+        io::{AsyncReadExt as _, AsyncWriteExt as _},
+        net::TcpStream,
+        time::Instant,
+    };
+
+    let server = server();
+    Runtime::new().expect("runtime").block_on(async {
+        timeout(Duration::from_secs(75), async {
+            let name = database(&server).await;
+            let proxy = Proxy::start(&server).await;
+            let supplier = Supplier::echoing().await;
+            let mut sms = fixture::supplier::Supplier::start().await;
+            let application = Application::start(
+                proxy_connections(&name, &proxy), keys(0), services(8).expect("settings"),
+                process::Settings::new(Duration::from_secs(5)).expect("stop budget"),
+                supplier.client(), message_at(sms.address(), sms.authority()),
+            ).await.expect("startup");
+            let (base, stop, task) = running(application).await;
+            let actor = issued_session_from(&base, &mut sms, "13900000000", "203.0.158.1").await;
+            let client = http_client();
+            let current: Value = client.get(format!("{base}/api/v1/accounts/current"))
+                .header("operation-id", Uuid::new_v4().to_string()).header("session-id", &actor.0)
+                .header("cookie", &actor.1).header("x-real-ip", "203.0.158.2")
+                .send().await.expect("current").error_for_status().expect("current success")
+                .json().await.expect("current body");
+            let revision = current["account"]["avatar"]["revision"].as_str().expect("revision");
+            let mut png = Vec::new();
+            PngEncoder::new(&mut png).write_image(&[89; 16], 2, 2, ExtendedColorType::Rgba8).expect("PNG");
+            let blocker = connections(&server, &name, "postgres").recover().await.expect("isolated lock owner");
+            let observer = connections(&server, &name, "clerk").recover().await.expect("independent observer");
+            let blocker_pid: i32 = blocker.client().query_one("SELECT pg_backend_pid()", &[]).await.expect("blocker identity").get(0);
+            blocker.client().batch_execute("BEGIN; LOCK TABLE identity.uploads IN SHARE MODE").await.expect("hold result INSERT only");
+            let operation = Uuid::new_v4();
+            let address = base.strip_prefix("http://").expect("loopback HTTP address").to_owned();
+            let headers = format!("PUT /api/v1/accounts/current/avatar HTTP/1.1\r\nHost: {address}\r\nOrigin: https://example.com\r\nOperation-Id: {operation}\r\nSession-Id: {}\r\nCookie: {}\r\nX-Real-IP: 203.0.158.3\r\nAvatar-Revision: {revision}\r\nContent-Type: image/png\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", actor.0, actor.1, png.len());
+            proxy.arm(Fault::PausedCommit);
+            let started = Instant::now();
+            let caller = tokio::spawn(async move {
+                let mut socket = TcpStream::connect(address).await.expect("upload connection");
+                socket.write_all(headers.as_bytes()).await.expect("upload headers");
+                // Spend part of the real 30-second budget without exceeding the 15-second body limit.
+                tokio::time::sleep(Duration::from_secs(13)).await;
+                socket.write_all(&png).await.expect("complete PNG body");
+                let mut response = Vec::new();
+                socket.read_to_end(&mut response).await.expect("bounded HTTP response");
+                response
+            });
+            timeout(Duration::from_secs(18), proxy.intercepted()).await.expect("publication COMMIT held");
+            // Complete publication within its write budget; later result recovery crosses the HTTP deadline.
+            tokio::time::sleep(Duration::from_secs(8)).await;
+            proxy.release();
+            timeout(Duration::from_secs(5), async {
+                loop {
+                    let waiting: bool = observer.client().query_one(
+                        "SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND query LIKE 'INSERT INTO identity.uploads %' AND $1=ANY(pg_blocking_pids(pid)))", &[&blocker_pid]
+                    ).await.expect("exact result transaction waiting").get(0);
+                    if waiting { break; }
+                    tokio::task::yield_now().await;
+                }
+            }).await.expect("publication confirmed and result transaction reached");
+            proxy.arm(Fault::DelayedCommit);
+            blocker.client().batch_execute("COMMIT").await.expect("allow original result COMMIT");
+            let backend = timeout(Duration::from_secs(5), proxy.intercepted()).await.expect("original result COMMIT held");
+            let response = timeout(Duration::from_secs(12), caller).await.expect("HTTP total wait is bounded").expect("HTTP waiter");
+            assert!(started.elapsed() >= Duration::from_secs(29), "the HTTP deadline wins over original recovery");
+            let boundary = response.windows(4).position(|bytes| bytes == b"\r\n\r\n").expect("HTTP response boundary");
+            assert!(response.starts_with(b"HTTP/1.1 503 "));
+            assert_eq!(serde_json::from_slice::<Value>(&response[boundary + 4..]).expect("failure body")["code"], "outcome_unknown");
+            assert!(!observer.client().query_one("SELECT EXISTS (SELECT 1 FROM identity.uploads WHERE operation_id=$1)", &[&operation])
+                .await.expect("result still uncommitted").get::<_, bool>(0));
+            assert!(observer.client().query_one("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND pid=$1)", &[&backend])
+                .await.expect("original backend still retained").get::<_, bool>(0));
+            proxy.release();
+            timeout(Duration::from_secs(10), async {
+                loop {
+                    let response = client.get(format!("{base}/api/v1/replacements/{operation}"))
+                        .header("operation-id", Uuid::new_v4().to_string()).header("session-id", &actor.0)
+                        .header("cookie", &actor.1).header("x-real-ip", "203.0.158.4")
+                        .send().await.expect("read exact original after release");
+                    if response.status() == 200 {
+                        let result: Value = response.json().await.expect("original receipt");
+                        assert_eq!(result["completion"]["id"], operation.to_string());
+                        assert_eq!(result["completion"]["changed"], true);
+                        assert_ne!(result["avatar"]["revision"], revision);
+                        break;
+                    }
+                    assert_eq!(response.status(), 503);
+                    assert_eq!(response.json::<Value>().await.expect("pending original")["code"], "outcome_unknown");
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                }
+            }).await.expect("same accepted work completes after HTTP timeout");
+            assert_eq!(observer.client().query_one("SELECT count(*) FROM identity.uploads WHERE operation_id=$1", &[&operation])
+                .await.expect("one original result").get::<_, i64>(0), 1);
+            stop.send(()).expect("stop");
+            let (application, ended) = task.await.expect("server task");
+            ended.expect("drained accepted work"); drop(application);
+            blocker.terminate().await.expect("blocker ended"); observer.terminate().await.expect("observer ended");
+            proxy.stop().await; sms.stop().await;
+        }).await.expect("bounded accepted upload timeout acceptance");
+    });
+}
+
+#[test]
 fn uploaded_avatar_http_preserves_original_results_and_pixels_after_restart() {
     use image::{ExtendedColorType, ImageEncoder as _, codecs::png::PngEncoder};
     use serde_json::{Value, json};
