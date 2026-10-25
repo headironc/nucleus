@@ -398,7 +398,7 @@ try {
   ).readFile("deploy/halo.nginx.conf", "utf8");
   const routes = production
     .replace("include /srv/halo/current/build/nginx-assets.conf;", assetConfig)
-    .replace("http://127.0.0.1:8080", "$halo_fixture_backend")
+    .replaceAll("http://127.0.0.1:8080", "$halo_fixture_backend")
     .replace("http://127.0.0.1:3080", `http://127.0.0.1:${nodePort}`)
     // Independent fictional visitors share one loopback socket in this fixture.
     .replace(

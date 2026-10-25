@@ -663,6 +663,7 @@ impl Error {
     pub(crate) fn unreliable(&self) -> bool {
         match self {
             Self::Runtime(error) => error.unreliable(),
+            Self::Files(storage::Error::Io(_)) => false,
             Self::Mismatch
             | Self::Facts { .. }
             | Self::Decode(_)
@@ -710,6 +711,38 @@ mod tests {
         },
         runtime::{Context, registry::Registry},
     };
+
+    #[test]
+    fn supervised_image_io_failure_preserves_admission_but_identity_failure_closes_it() {
+        Runtime::new().expect("runtime").block_on(async {
+            let registry = Arc::new(Registry::new(1, tokio::sync::watch::channel(false).0));
+            let work = crate::runtime::work::Work::default();
+            for (error, corrupt) in [
+                (
+                    platform::files::Error::Io(std::io::Error::from_raw_os_error(24)),
+                    false,
+                ),
+                (platform::files::Error::Identity, true),
+            ] {
+                let capacity = super::read_capacity();
+                let permit = registry.transfer(capacity).expect("image reservation");
+                let result = work
+                    .run_reserved(
+                        Arc::clone(&registry),
+                        crate::runtime::registry::Family::Image,
+                        crate::identity::operation::Id::allocate(),
+                        permit,
+                        async move { Err::<(), _>(Error::Files(error)) },
+                    )
+                    .await;
+                assert!(matches!(result, Err(Error::Files(_))));
+                assert_eq!(registry.ready().is_err(), corrupt);
+            }
+            work.drain(&registry)
+                .await
+                .expect("failed requests still drain normally");
+        });
+    }
 
     #[test]
     fn image_work_retains_capacity_and_drain_after_its_waiter_leaves() {

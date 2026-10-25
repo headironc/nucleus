@@ -46,6 +46,12 @@ pub(super) async fn verify(
     app: &App,
     now: DateTime<Utc>,
 ) -> Result<(), Error<Rejection>> {
+    let mut completions: std::collections::HashMap<_, _> =
+        completion::fetch_all(client, app.keys(), COMPLETIONS)
+            .await?
+            .into_iter()
+            .map(|record| (record.operation_id(), record))
+            .collect();
     let mut cursor: Option<operation::Id> = None;
     loop {
         let complete = super::verify_batch(async {
@@ -56,9 +62,7 @@ pub(super) async fn verify(
         }
         for row in rows {
             let original = Original::decode(&row, app.keys())?;
-            let completion =
-                completion::original(client, app.keys(), COMPLETIONS, original.operation)
-                    .await?
+            let completion = completions.remove(&original.operation)
                     .ok_or_else(|| {
                         Error::corrupt("retained upload has its authenticated original completion")
                     })?;
@@ -88,6 +92,11 @@ pub(super) async fn verify(
         if complete {
             break;
         }
+    }
+    if !completions.is_empty() {
+        return Err(Error::corrupt(
+            "every retained avatar completion has its upload result",
+        ));
     }
     cursor = None;
     loop {
@@ -2043,6 +2052,108 @@ mod tests {
     }
 
     #[test]
+    fn startup_rejects_an_avatar_completion_after_its_upload_result_is_deleted() {
+        let server = server();
+        Runtime::new().expect("runtime").block_on(Box::pin(async {
+            timeout(
+                Duration::from_secs(40),
+                Box::pin(async {
+                    let database = Database::initialized(server).await;
+                    let mut supplier = Supplier::new().await;
+                    let (context, services) =
+                        start(database.connections(&database.user), &supplier).await;
+                    let actor = Box::pin(actor(&database, &services, &mut supplier)).await;
+                    let before = services
+                        .current()
+                        .read(&actor)
+                        .await
+                        .expect("current owner");
+                    let operation = operation::Id::allocate();
+                    replace(
+                        &services,
+                        &actor,
+                        operation,
+                        before.avatar().revision(),
+                        "image/png",
+                        &png(&[79; 16]),
+                    )
+                    .await
+                    .expect("completed upload");
+                    let avatar = services.avatar();
+                    settle(services.app(), &avatar.0.storage, operation)
+                        .await
+                        .expect("retire publication intent");
+                    let owner = database
+                        .connections(&database.owner)
+                        .recover()
+                        .await
+                        .expect("fixture owner");
+                    avatar
+                        .verify(owner.client(), Utc::now())
+                        .await
+                        .expect("valid retained completion and upload");
+                    assert!(
+                        Publication::find(owner.client(), services.app().keys(), operation)
+                            .await
+                            .expect("intent lookup")
+                            .is_none()
+                    );
+                    owner
+                        .client()
+                        .batch_execute(
+                            "ALTER TABLE identity.uploads DISABLE TRIGGER uploads_deletion_check",
+                        )
+                        .await
+                        .expect("enable partial deletion fixture");
+                    assert_eq!(
+                        owner
+                            .client()
+                            .execute(
+                                "DELETE FROM identity.uploads WHERE operation_id=$1",
+                                &[&operation]
+                            )
+                            .await
+                            .expect("remove only upload result"),
+                        1
+                    );
+                    owner
+                        .client()
+                        .batch_execute(
+                            "ALTER TABLE identity.uploads ENABLE TRIGGER uploads_deletion_check",
+                        )
+                        .await
+                        .expect("restore deletion guard");
+                    assert!(
+                        completion::original::<Rejection>(
+                            owner.client(),
+                            services.app().keys(),
+                            COMPLETIONS,
+                            operation
+                        )
+                        .await
+                        .expect("authenticated original remains")
+                        .is_some()
+                    );
+                    assert!(
+                        matches!(
+                            avatar.verify(owner.client(), Utc::now()).await,
+                            Err(Error::Corrupt(_))
+                        ),
+                        "startup rejects partial deletion even without a publication intent"
+                    );
+                    services.close();
+                    services.drain().await.expect("drained");
+                    context.stop().await.expect("stopped");
+                    owner.terminate().await.expect("owner ended");
+                    supplier.stop().await;
+                }),
+            )
+            .await
+            .expect("bounded orphan original verification");
+        }));
+    }
+
+    #[test]
     fn retained_upload_verification_renews_each_batch_budget_and_bounds_a_stalled_batch() {
         async fn start_retained(
             database: &Database,
@@ -2078,7 +2189,7 @@ mod tests {
 
         let server = server();
         Runtime::new().expect("runtime").block_on(Box::pin(async {
-            timeout(Duration::from_secs(70), Box::pin(async {
+            timeout(Duration::from_secs(180), Box::pin(async {
                 let database = Database::initialized(Arc::clone(&server)).await;
                 let proxy = Proxy::start(&server).await;
                 let mut supplier = Supplier::new().await;
@@ -2088,13 +2199,17 @@ mod tests {
                 let actor = Box::pin(actor(&database, &services, &mut supplier)).await;
                 let before = services.current().read(&actor).await.expect("current owner");
                 let bytes = png(&[71; 16]);
-                let first = replace(&services, &actor, operation::Id::allocate(), before.avatar().revision(), "image/png", &bytes)
-                    .await.expect("first private upload");
-                for _ in 0..128 {
-                    let result = replace(&services, &actor, operation::Id::allocate(), first.completion().revision(), "image/png", &bytes)
-                        .await.expect("retained unchanged upload");
-                    assert!(!result.completion().changed());
-                }
+                // Fixture construction performs 129 durable writes; its CI I/O
+                // budget is separate from the startup and per-batch assertions.
+                timeout(Duration::from_secs(120), async {
+                    let first = replace(&services, &actor, operation::Id::allocate(), before.avatar().revision(), "image/png", &bytes)
+                        .await.expect("first private upload");
+                    for _ in 0..128 {
+                        let result = replace(&services, &actor, operation::Id::allocate(), first.completion().revision(), "image/png", &bytes)
+                            .await.expect("retained unchanged upload");
+                        assert!(!result.completion().changed());
+                    }
+                }).await.expect("bounded retained upload fixture construction");
                 services.close(); services.drain().await.expect("original drained"); context.stop().await.expect("original stopped");
                 proxy.arm(ProxyFault::StalledAvatarUploads);
                 let delays = async {
