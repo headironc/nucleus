@@ -488,6 +488,7 @@ async fn execute(
     let start = start(
         app,
         current,
+        limits,
         actor,
         operation_id,
         expected,
@@ -547,6 +548,7 @@ async fn execute(
             let publication = publish_intent(
                 app,
                 current,
+                limits,
                 actor,
                 operation_id,
                 expected,
@@ -592,6 +594,7 @@ enum Start {
 async fn start(
     app: &App,
     current: &current::Service,
+    limits: Limits,
     actor: &current::Actor,
     operation_id: operation::Id,
     expected: Revision,
@@ -655,6 +658,12 @@ async fn start(
                         Err(Error::corrupt(
                             "a completed publication retains its public original result",
                         ))
+                    } else if account.avatar() != expected {
+                        Err(Error::Rejected(Rejection::Changed))
+                    } else if publication.revision != expected
+                        && quota(tx.client(), account.id(), state.observed_at(), limits).await?
+                    {
+                        Err(Error::Rejected(Rejection::Limited))
                     } else {
                         Ok(Start::Resume(publication))
                     }
@@ -877,6 +886,7 @@ fn current_bytes(
 async fn publish_intent(
     app: &App,
     current: &current::Service,
+    limits: Limits,
     actor: &current::Actor,
     operation_id: operation::Id,
     expected: Revision,
@@ -912,6 +922,9 @@ async fn publish_intent(
         }
         if state.account_state().current().is_none() {
             return Err(Error::Unauthenticated);
+        }
+        if changed && quota(tx.client(), state.account_id(), state.observed_at(), limits).await? {
+            return Err(Error::Rejected(Rejection::Limited));
         }
         if Publication::find(tx.client(), app.keys(), operation_id)
             .await?
@@ -2412,6 +2425,7 @@ mod tests {
                         super::start(
                             services.app(),
                             services.current(),
+                            services.avatar().0.limits,
                             &actor,
                             operation,
                             before.avatar().revision(),
@@ -2480,7 +2494,7 @@ mod tests {
                 let output = Output { digest: Sha256::digest(&converted.bytes).into(), bytes: converted.bytes,
                     width: converted.width, height: converted.height };
                 let operation = operation::Id::allocate();
-                publish_intent(services.app(), services.current(), &actor, operation, before.avatar().revision(),
+                publish_intent(services.app(), services.current(), services.avatar().0.limits, &actor, operation, before.avatar().revision(),
                     codec::Media::Png, Sha256::digest(&input).into(), input.len(), &output, true, true,
                     Instant::now() + BUSINESS).await.expect("durable pending intent before file publication");
                 let mut permit = services.app().registry().acquire_for(
@@ -2717,7 +2731,7 @@ mod tests {
                     };
                     let avatar = services.avatar();
                     let publication = publish_intent(
-                        services.app(), services.current(), &actor, operation, before.avatar().revision(),
+                        services.app(), services.current(), avatar.0.limits, &actor, operation, before.avatar().revision(),
                         codec::Media::Png, Sha256::digest(&input).into(), input.len(), &output,
                         true, true, Instant::now() + Duration::from_secs(10),
                     ).await.expect("confirmed first transaction");
@@ -2804,7 +2818,7 @@ mod tests {
                         },
                     );
                     assert!(matches!(outcome, Err(Error::Unknown(_))), "the first response retains the unknown publication outcome");
-                    let recovered = super::start(services.app(), services.current(), &actor, operation,
+                    let recovered = super::start(services.app(), services.current(), services.avatar().0.limits, &actor, operation,
                         before.avatar().revision(), "image/png", Sha256::digest(&input).into(), input.len(),
                         Instant::now() + Duration::from_secs(10)).await.expect("same original lock resolves the intent");
                     match recovered {
@@ -2831,12 +2845,37 @@ mod tests {
 
     #[test]
     fn replacement_quota_preserves_unchanged_and_original_success_at_the_hour_boundary() {
+        fn files(root: &std::path::Path) -> std::collections::BTreeMap<std::path::PathBuf, u64> {
+            let mut result = std::collections::BTreeMap::new();
+            for entry in std::fs::read_dir(root).expect("private directory") {
+                let path = entry.expect("private entry").path();
+                let metadata = path.metadata().expect("private metadata");
+                if metadata.is_dir() {
+                    result.extend(files(&path));
+                } else {
+                    result.insert(path, metadata.len());
+                }
+            }
+            result
+        }
+
         let server = server();
         Runtime::new().expect("runtime").block_on(async {
             timeout(Duration::from_secs(60), async {
+                let (root, mount, device) = server.files();
+                let storage = avatar::storage::Settings::new(root.clone(), mount, device).expect("private storage");
                 let database = Database::initialized(server).await;
                 let mut supplier = Supplier::new().await;
-                let (context, services) = start(database.connections(&database.user), &supplier).await;
+                let context = crate::runtime::Context::new(database.connections(&database.user)).await.expect("context");
+                let settings = crate::startup::Settings::new(
+                    4, crate::identity::message::Limits::default(), authentication::session_settings(),
+                    crate::registration::Limits::default(), authentication::avatar_settings(),
+                ).expect("settings").with_avatar_storage(Some(storage));
+                let services = Box::pin(crate::startup::Services::start(
+                    crate::database::Barrier::begin(context.clone()).await.expect("barrier"),
+                    authentication::inventory(authentication::keys()), settings, supplier.client(),
+                    authentication::unused_client().await,
+                )).await.expect("services with inspectable private storage");
                 let actor = Box::pin(actor(&database, &services, &mut supplier)).await;
                 let before = services.current().read(&actor).await.expect("initial account");
                 let initial = before.avatar().revision();
@@ -2844,28 +2883,53 @@ mod tests {
                 let first_input = png(&[1; 16]);
                 let first = replace(&services, &actor, first_operation, initial, "image/png", &first_input).await.expect("first replacement");
                 let mut revision = first.completion().revision();
-                let mut input = first_input.clone();
-                for color in 2..=10 {
-                    input = png(&[color; 16]);
+                for color in 2..=9 {
+                    let input = png(&[color; 16]);
                     let completed = replace(&services, &actor, operation::Id::allocate(), revision, "image/png", &input).await.expect("remaining hourly replacement");
                     assert!(completed.completion().changed());
                     revision = completed.completion().revision();
                 }
-                let refused = replace(&services, &actor, operation::Id::allocate(), revision, "image/png", &png(&[11; 16])).await;
-                assert!(matches!(refused, Err(Error::Rejected(Rejection::Limited))));
+                let pending_operation = operation::Id::allocate();
+                let pending_input = png(&[42; 16]);
+                let converted = codec::convert(codec::Media::Png, &pending_input).expect("pending output");
+                let output = Output { digest: Sha256::digest(&converted.bytes).into(), bytes: converted.bytes,
+                    width: converted.width, height: converted.height };
+                let pending = publish_intent(services.app(), services.current(), services.avatar().0.limits,
+                    &actor, pending_operation, revision, codec::Media::Png, Sha256::digest(&pending_input).into(),
+                    pending_input.len(), &output, true, true, Instant::now() + BUSINESS,
+                ).await.expect("pending intent while one replacement remains");
+                let input = png(&[10; 16]);
+                let tenth = replace(&services, &actor, operation::Id::allocate(), revision, "image/png", &input)
+                    .await.expect("last hourly replacement");
+                revision = tenth.completion().revision();
+                let existing_files = files(&root);
+                assert_eq!(existing_files.len(), 10, "ten durable private replacements");
+                let observer = database.connections(&database.user).recover().await.expect("independent observer");
+                for color in 11..=14 {
+                    let operation = operation::Id::allocate();
+                    let refused = replace(&services, &actor, operation, revision, "image/png", &png(&[color; 16])).await;
+                    assert!(matches!(refused, Err(Error::Rejected(Rejection::Limited))));
+                    assert_eq!(files(&root), existing_files, "quota rejection never publishes a candidate");
+                    assert!(Publication::find(observer.client(), services.app().keys(), operation).await.expect("publication lookup").is_none(),
+                        "quota rejection never creates a fresh intent");
+                }
+                let resumed = replace(&services, &actor, pending_operation, pending.expected, "image/png", &pending_input).await;
+                assert!(matches!(resumed, Err(Error::Rejected(Rejection::Changed))));
+                assert!(services.avatar().0.storage.open_file(pending.candidate).expect("pending candidate lookup").is_none(),
+                    "a superseded intent is rejected before candidate publication");
+                assert_eq!(files(&root), existing_files);
                 let unchanged = replace(&services, &actor, operation::Id::allocate(), revision, "image/png", &input).await.expect("unchanged does not consume quota");
                 assert!(!unchanged.completion().changed());
                 assert_eq!(unchanged.avatar().revision(), revision);
                 let replay = replace(&services, &actor, first_operation, initial, "image/png", &first_input).await.expect("original success precedes quota and stale revision");
                 assert_eq!(replay.completion().revision(), first.completion().revision());
                 assert_eq!(replay.avatar().revision(), revision);
-                let observer = database.connections(&database.user).recover().await.expect("independent observer");
                 let row = observer.client().query_one("SELECT (SELECT count(*) FROM identity.uploads WHERE account_id=$1), (SELECT count(*) FROM identity.portraits WHERE account_id=$1)", &[&before.id()]).await.expect("independent counts");
                 assert_eq!((row.get::<_, i64>(0), row.get::<_, i64>(1)), (11, 10));
                 let boundary = first.completion().completed_at() + TimeDelta::hours(1);
                 assert!(quota(observer.client(), before.id(), boundary - TimeDelta::microseconds(1), Limits::default()).await.expect("inside window"));
                 assert!(!quota(observer.client(), before.id(), boundary, Limits::default()).await.expect("first replacement expires at equality"));
-                services.avatar_retention().run().await.expect("unused over-quota candidate is reclaimed");
+                services.avatar_retention().run().await.expect("superseded pending intent is reclaimed");
                 assert_eq!(services.current().read(&actor).await.expect("current account after cleanup").avatar().revision(), revision);
                 services.close(); services.drain().await.expect("work drained"); context.stop().await.expect("clock stopped");
                 observer.terminate().await.expect("observer ended"); supplier.stop().await;
