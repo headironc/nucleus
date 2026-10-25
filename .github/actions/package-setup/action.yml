@@ -19,7 +19,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        if ! [[ "$HALO_CI_IMAGE" =~ ^ghcr.io/silence-force/nucleus-halo-ci@sha256:[0-9a-f]{64}$ ]]; then
+        if ! [[ "$HALO_CI_IMAGE" =~ ^ghcr.io/silence-force/nucleus-ci@sha256:[0-9a-f]{64}$ ]]; then
           printf '%s\n' 'Rust packages require the pinned Nucleus dependency image.' >&2
           exit 1
         fi
