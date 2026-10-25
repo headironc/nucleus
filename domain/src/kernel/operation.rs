@@ -3,6 +3,7 @@
 /// One family names its registry slot, original-operation lock, completion table and log label.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Family {
+    ContentColumn,
     CenterAffiliation,
     InstitutionRole,
     WorkforceRole,
@@ -65,6 +66,7 @@ impl Family {
     /// The original-operation lock domain. The Workforce cleanup trigger derives the same key.
     pub(crate) fn lock(self) -> &'static [u8] {
         match self {
+            Self::ContentColumn => b"content/column/operation",
             Self::CenterAffiliation => b"center/affiliation/operation",
             Self::InstitutionRole => b"access/role/operation",
             Self::WorkforceRole => b"access/workforce/role/operation",
@@ -96,6 +98,7 @@ impl Family {
     /// The completion table built from the kernel template, selected from this fixed mapping.
     pub(crate) fn completions(self) -> &'static str {
         match self {
+            Self::ContentColumn => crate::kernel::completion::CONTENT,
             Self::CenterAffiliation => crate::kernel::completion::CENTER,
             Self::InstitutionRole
             | Self::WorkforceRole
@@ -127,6 +130,7 @@ impl Family {
 
     pub fn label(self) -> &'static str {
         match self {
+            Self::ContentColumn => "content_column",
             Self::CenterAffiliation => "center_affiliation",
             Self::InstitutionRole => "institution_role",
             Self::WorkforceRole => "workforce_role",

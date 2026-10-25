@@ -1090,6 +1090,12 @@ pub(super) mod tests {
                 .await
                 .expect("directory migration");
             transaction
+                .batch_execute(include_str!(
+                    "../../../../deployment/migrations/V13__columns.sql"
+                ))
+                .await
+                .expect("column migration");
+            transaction
                 .batch_execute(&crate::database::permissions::grants())
                 .await
                 .expect("runtime grants");

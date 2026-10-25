@@ -4,6 +4,7 @@ pub mod access;
 pub mod account;
 pub mod cancellation;
 pub mod center;
+pub mod content;
 pub mod correction;
 pub mod database;
 pub mod history;

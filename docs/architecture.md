@@ -527,7 +527,9 @@ Center 的管理候选复用 Identity 的 `account::Reader` 和 `person::Reader`
 
 供应商适配归消费能力：domain::identity::challenge::client 接入 Turnstile，domain::identity::message::client 接入 PNVS。共同密码和传输原语才下沉到 Platform。domain::runtime 提供可信时间、连接资源与停止原语，供写用例与恢复者使用。请求执行寿命归 authentication，后台任务寿命归 process。nucleus 创建并持有运行上下文。runtime 不依赖 nucleus，不解释业务状态。
 
-网站公开内容由 `domain::content` 协调，HTTP 适配位于 `src/content/`。`content::publication` 拥有文章与首页编排共用的草稿、版本、上线事件和当前指针规则；`column`、`article`、`home`、`image` 分别拥有栏目、文章、首页编排与内容图片的形状、校验和引用。写入消费同一 Work 和各自动作家族，可变状态的原完成记录在 `content.completions`。权限判断复用 Access 的当前机构权限查询，办理人复用 Identity 的实名版本；匿名读取不进入 Work，在只读快照内只解析当前上线版本。规则见[内容草稿、版本与上线](content/publication.md)。该能力尚未实施。
+网站公开内容由 `domain::content` 协调。当前栏目创建消费同一 Work 和 `ContentColumn` 家族；栏目拥有永久身份与取值，导航单例拥有完整顺序。两者在同一事务推进，分别使用封印状态、永久记录和锚定。原完成永久保存于 `content.completions`。权限判断复用 Access 的当前机构权限查询，办理人复用 Identity 的实名版本。
+
+目标中的 HTTP 适配位于 `src/content/`。`content::publication` 拥有文章与首页编排共用的草稿、版本、上线事件和当前指针规则。`article`、`home`、`image` 分别拥有文章、首页编排与内容图片的形状、校验和引用。匿名读取不进入 Work，在只读快照内只解析当前上线版本。规则见[内容草稿、版本与上线](content/publication.md)。
 
 Render 发现、文件后果恢复与合法清理归所属业务能力。`process` 装配、监督并停止这些消费者，不解释业务记录。普通重启后的推进依据所属持久事实，不依赖客户端再次请求。消费者直接调用业务用例，不绕经 HTTP；执行寿命与许可遵守[进程内工作](#进程内工作与容量)。初始化、迁移、换钥和停机维护仍归独立 deployment 入口。
 
