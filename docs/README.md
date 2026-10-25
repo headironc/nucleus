@@ -22,6 +22,7 @@
 | 默认头像与已知账户头像读取                | 已交付 | [头像](identity/avatar.md)                                                                                                                           |
 | 注销后默认头像元数据清理                  | 已交付 | [头像](identity/avatar.md#工作事务与故障恢复)                                                                                                        |
 | 头像更换与上传内容                        | 目标   | [头像](identity/avatar.md)                                                                                                                           |
+| 私人文件持久发布、读取句柄与幂等删除组件  | 已交付 | [本地文件](storage/files.md)                                                                                                                         |
 | 网站当前及全部退出                        | 已交付 | [退出](identity/revocation.md)                                                                                                                       |
 | 账户暂停恢复及状态历史                    | 已交付 | [暂停恢复](identity/suspension.md)                                                                                                                   |
 | 实名更正及系统管理员停机更正              | 已交付 | [实名更正](identity/correction.md)                                                                                                                   |
