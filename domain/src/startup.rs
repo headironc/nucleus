@@ -338,6 +338,12 @@ impl Services {
                 )
                 .await?
                 .map_err(Error::AvatarFacts)?;
+            registration::ready(barrier.client(), &app, now).await?;
+            verification::Stage::BarrierConfirmation
+                .query(Duration::from_secs(10), barrier.confirm())
+                .await??;
+            // Recovery transactions need the committed generation and shared barrier.
+            // Request services remain unavailable until their file effects are settled.
             avatar::retention::Retention::new(
                 app.clone(),
                 avatar.clone(),
@@ -346,10 +352,6 @@ impl Services {
             .restore()
             .await
             .map_err(Error::AvatarFacts)?;
-            registration::ready(barrier.client(), &app, now).await?;
-            verification::Stage::BarrierConfirmation
-                .query(Duration::from_secs(10), barrier.confirm())
-                .await??;
             let current =
                 current::Service::prepare(app.clone(), Arc::clone(&keys), app_id, avatar.clone());
             let authentication = authentication::Service::prepare(

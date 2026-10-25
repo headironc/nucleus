@@ -21,7 +21,7 @@ use crate::{
         current, operation,
     },
     kernel::{
-        App, Authorization, Error, Rejection as KernelRejection, Status,
+        App, Authorization, Error, Query, Rejection as KernelRejection, Status,
         completion::{self, Template},
         error::{Fault, FaultKind, Stage},
         operation::Family,
@@ -230,75 +230,101 @@ pub(crate) async fn lookup(
     operation_id: operation::Id,
     deadline: Instant,
 ) -> Result<Lookup, Error<Rejection>> {
-    match timeout_at(
-        bounded(deadline, BUSINESS),
-        app.registry().wait_for(
-            crate::runtime::registry::Family::Kernel(Family::Avatar),
+    timeout_at(
+        deadline,
+        app.query(&OriginalQuery {
+            app,
+            defaults,
+            current,
+            actor,
             operation_id,
-        ),
+        }),
     )
     .await
-    {
-        Ok(result) => result?,
-        Err(_) => return Ok(Lookup::Pending),
+    .unwrap_or_else(Error::elapsed)
+}
+
+struct OriginalQuery<'a> {
+    app: &'a App,
+    defaults: &'a Defaults,
+    current: &'a current::Service,
+    actor: &'a current::Actor,
+    operation_id: operation::Id,
+}
+
+impl Query for OriginalQuery<'_> {
+    const RETAIN_ON_END_FAILURE: bool = true;
+    type Authorized = current::database::State;
+    type Output = Lookup;
+    type Rejection = Rejection;
+
+    async fn authorize(
+        &self,
+        client: &Client,
+        view: history::View,
+    ) -> Result<Self::Authorized, Error<Rejection>> {
+        self.current
+            .at(view)
+            .fetch_state(client, self.actor, history::Read::Snapshot(view))
+            .await
+            .map_err(identity_fault)
     }
-    let lease = timeout_at(deadline, app.context().connections().lease())
-        .await
-        .map_err(|error| {
-            Error::Unavailable(Fault::new(Stage::Connection, FaultKind::Timeout(error)))
-        })?
-        .map_err(Error::connection)?;
-    let (tx, begun) = Tx::begin(
-        app.context(),
-        Connection::Online(lease),
-        deadline,
-        Family::Avatar,
-        operation_id,
-    )
-    .await;
-    if let Err(fault) = begun {
-        return Err(Error::Unavailable(fault.then_result(tx.discard().await)));
-    }
-    let result = timeout_at(deadline, async {
-        let state = lock(app, current, tx.client(), actor).await?;
-        // Both public values come from one statement snapshot after the original-work barrier.
-        let row = tx.client().query_opt(
+
+    async fn read(
+        &self,
+        client: &Client,
+        state: Self::Authorized,
+        _: history::View,
+    ) -> Result<Lookup, Error<Rejection>> {
+        let Self {
+            app,
+            defaults,
+            operation_id,
+            ..
+        } = self;
+        // Authorization, original result and current avatar share the same read snapshot.
+        // A registry entry alone never proves that this account owns an in-flight upload.
+        let row = client.query_opt(
             "SELECT upload.operation_id, upload.account_id, upload.changed, upload.revision, upload.completed_at, upload.seal, upload.seal_key_id, upload.seal_version, avatar.id, avatar.revision AS avatar, avatar.digest, avatar.size, avatar.width, avatar.height, avatar.content_seal, avatar.content_seal_key_id, avatar.content_seal_version FROM identity.uploads upload LEFT JOIN identity.avatars avatar ON avatar.account_id=upload.account_id AND avatar.released_at IS NULL WHERE upload.operation_id=$1 AND upload.account_id=$2",
-            &[&operation_id, &state.account_id()],
+            &[operation_id, &state.account_id()],
         ).await.map_err(Error::query)?;
         let Some(row) = row else {
-            return match Publication::find(tx.client(), app.keys(), operation_id).await? {
+            return match Publication::find(client, app.keys(), *operation_id).await? {
                 Some(publication) if publication.account == state.account_id() => {
                     if publication.completed_at.is_some() {
-                        Err(Error::corrupt("an active account retains its completed upload result"))
-                    } else { Ok(Lookup::Pending) }
+                        Err(Error::corrupt(
+                            "an active account retains its completed upload result",
+                        ))
+                    } else {
+                        Ok(Lookup::Pending)
+                    }
                 }
                 _ => Ok(Lookup::Absent),
             };
         };
         let original = Original::decode(&row, app.keys())?;
-        let record = completion::original(tx.client(), app.keys(), COMPLETIONS, operation_id).await?
+        let record = completion::original(client, app.keys(), COMPLETIONS, *operation_id)
+            .await?
             .ok_or_else(|| Error::corrupt("an upload result retains its original completion"))?;
         record.check_time(state.observed_at())?;
         if record.target() != state.account_id().to_string()
             || record.person_id() != state.person_id()
             || record.created_at() != original.completed_at
         {
-            return Err(Error::corrupt("upload result and original authorization agree"));
+            return Err(Error::corrupt(
+                "upload result and original authorization agree",
+            ));
         }
         let snapshot = Snapshot::read(&row, app.keys().seals, defaults).map_err(avatar_fault)?;
         if snapshot.revision() != state.account_state().avatar() {
-            return Err(Error::corrupt("current avatar belongs to the authenticated account revision"));
+            return Err(Error::corrupt(
+                "current avatar belongs to the authenticated account revision",
+            ));
         }
-        Ok(Lookup::Available(Completed { completion: Completion::original(original), snapshot }))
-    }).await.unwrap_or_else(Error::elapsed);
-    match result {
-        Ok(view) => {
-            let (known, cleanup) = tx.confirm(view).await;
-            report_end(known.end, cleanup);
-            Ok(known.value)
-        }
-        Err(error) => Err(ended(error, tx.discard().await)),
+        Ok(Lookup::Available(Completed {
+            completion: Completion::original(original),
+            snapshot,
+        }))
     }
 }
 
@@ -485,8 +511,9 @@ async fn execute(
             let declared =
                 codec::Media::parse(declared).ok_or(Error::Rejected(Rejection::Unsupported))?;
             let output = decode(std::sync::Arc::clone(&permit), declared, bytes, total).await?;
-            let fixed = current_snapshot(app, defaults, actor.account_id()).await?;
-            let current_bytes = current_bytes(storage, defaults, &fixed).await?;
+            let (fixed, current_bytes) =
+                current_content(app, current, storage, defaults, actor, operation_id, total)
+                    .await?;
             let unchanged = output.digest == *fixed.digest().as_bytes();
             if unchanged && current_bytes != output.bytes {
                 return Err(Error::corrupt(
@@ -716,20 +743,66 @@ async fn decode(
     })
 }
 
-async fn current_snapshot(
+async fn current_content(
     app: &App,
+    current: &current::Service,
+    storage: &Storage,
     defaults: &Defaults,
-    account_id: account::Id,
-) -> Result<Snapshot, Error<Rejection>> {
+    actor: &current::Actor,
+    operation_id: operation::Id,
+    total: Instant,
+) -> Result<(Snapshot, Vec<u8>), Error<Rejection>> {
     let lease = app
         .context()
         .connections()
         .lease()
         .await
         .map_err(Error::connection)?;
-    let result = snapshot(lease.client(), app.keys().seals, defaults, account_id).await;
-    lease.release();
-    result
+    let (tx, begun) = Tx::begin(
+        app.context(),
+        Connection::Online(lease),
+        bounded(total, BUSINESS),
+        Family::Avatar,
+        operation_id,
+    )
+    .await;
+    if let Err(fault) = begun {
+        return Err(Error::Unavailable(fault.then_result(tx.discard().await)));
+    }
+    let selected = timeout_at(tx.deadline(), async {
+        let state = lock(app, current, tx.client(), actor).await?;
+        let fixed = snapshot(tx.client(), app.keys().seals, defaults, state.account_id()).await?;
+        if fixed.revision() != state.account_state().avatar() {
+            return Err(Error::corrupt(
+                "the current avatar matches its qualified account revision",
+            ));
+        }
+        // Acquire the inode while cancellation/replacement cannot release this current row.
+        // Bytes are read after the transaction; a later unlink cannot invalidate the reader.
+        let reader = if defaults.contains(fixed.digest().as_bytes(), fixed.size()) {
+            None
+        } else {
+            Some(
+                storage
+                    .open_file(fixed.id())
+                    .map_err(file_fault)?
+                    .ok_or_else(|| file_fault(avatar::storage::Error::Identity))?,
+            )
+        };
+        Ok((fixed, reader))
+    })
+    .await
+    .unwrap_or_else(Error::elapsed);
+    let (fixed, reader) = match selected {
+        Ok(value) => {
+            let (known, cleanup) = tx.confirm(value).await;
+            report_end(known.end, cleanup);
+            known.value
+        }
+        Err(error) => return Err(ended(error, tx.discard().await)),
+    };
+    let bytes = current_bytes(defaults, &fixed, reader)?;
+    Ok((fixed, bytes))
 }
 
 async fn snapshot(
@@ -752,10 +825,10 @@ async fn snapshot(
         .ok_or_else(|| Error::corrupt("a current account retains one current avatar"))
 }
 
-async fn current_bytes(
-    storage: &Storage,
+fn current_bytes(
     defaults: &Defaults,
     snapshot: &Snapshot,
+    reader: Option<platform::files::Reader>,
 ) -> Result<Vec<u8>, Error<Rejection>> {
     if defaults.contains(snapshot.digest().as_bytes(), snapshot.size()) {
         return defaults
@@ -763,9 +836,9 @@ async fn current_bytes(
             .map(|content| content.bytes().to_vec())
             .ok_or_else(|| Error::corrupt("default avatar content is frozen"));
     }
-    let bytes = storage
+    let bytes = reader
+        .ok_or_else(|| Error::corrupt("private current content retains its opened inode"))?
         .read(
-            snapshot.id(),
             u64::try_from(snapshot.size())
                 .map_err(|_| Error::corrupt("avatar size is positive"))?,
         )
@@ -883,6 +956,9 @@ async fn ensure_candidate(
     {
         let bytes = reader.read(size).map_err(file_fault)?;
         verify_output(publication, &bytes)?;
+        storage
+            .publish(publication.candidate, &bytes)
+            .map_err(file_fault)?;
         return Ok(bytes);
     }
     // The previous accepted work ended before this operation lock was acquired. Reusing the
@@ -934,8 +1010,8 @@ async fn result(
     let mut outcome;
     let mut attempt = 0;
     loop {
-        let fixed = current_snapshot(app, defaults, actor.account_id()).await?;
-        let fixed_bytes = current_bytes(storage, defaults, &fixed).await?;
+        let (fixed, fixed_bytes) =
+            current_content(app, current, storage, defaults, actor, operation_id, total).await?;
         outcome = result_once(
             app,
             defaults,
@@ -1955,6 +2031,293 @@ mod tests {
     }
 
     #[test]
+    fn reused_candidates_finish_interrupted_publication_before_adoption() {
+        use std::{io::Write as _, os::unix::fs::OpenOptionsExt as _};
+
+        let server = server();
+        Runtime::new().expect("runtime").block_on(async {
+            let (root, mount, device) = server.files();
+            let storage = Storage::open(
+                &super::super::storage::Settings::new(root.clone(), mount, device)
+                    .expect("private storage settings"),
+            )
+            .expect("private storage");
+            let input = png(&[47; 16]);
+            let converted = codec::convert(codec::Media::Png, &input).expect("real static output");
+            let candidate = Id::allocate();
+            let publication = Publication {
+                operation: operation::Id::allocate(),
+                account: Uuid::new_v4().to_string().parse().expect("account ID"),
+                expected: Revision::allocate(),
+                media: codec::Media::Png,
+                input_digest: Sha256::digest(&input).into(),
+                input_size: input.len() as i64,
+                candidate,
+                work: Uuid::new_v4(),
+                output_digest: Sha256::digest(&converted.bytes).into(),
+                output_size: converted.bytes.len() as i64,
+                width: converted.width,
+                height: converted.height,
+                private: true,
+                revision: Revision::allocate(),
+                changed: None,
+                completed_at: None,
+                created_at: Utc::now(),
+            };
+            storage
+                .publish(candidate, &converted.bytes)
+                .expect("visible candidate");
+            let staging = root
+                .join("avatars")
+                .join(hex::encode(&candidate.as_bytes()[..1]))
+                .join(hex::encode(&candidate.as_bytes()[1..2]))
+                .join(format!(
+                    "{}.candidate",
+                    Uuid::from_bytes(*candidate.as_bytes())
+                ));
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(&staging)
+                .expect("interrupted publication artifact")
+                .write_all(b"unfinished")
+                .expect("partial staging bytes");
+            let permit = Arc::new(
+                Arc::new(tokio::sync::Semaphore::new(1))
+                    .acquire_owned()
+                    .await
+                    .expect("upload permit"),
+            );
+            let bytes = ensure_candidate(
+                &storage,
+                &Defaults::verify().expect("defaults"),
+                codec::Media::Png,
+                &input,
+                &publication,
+                permit,
+                Instant::now() + BUSINESS,
+            )
+            .await
+            .expect("repaired publication");
+            assert_eq!(bytes, converted.bytes);
+            assert!(
+                !staging.exists(),
+                "reuse completes the existing-file publication protocol"
+            );
+            assert_eq!(
+                storage
+                    .read(candidate, bytes.len() as u64)
+                    .expect("same immutable inode bytes"),
+                bytes
+            );
+        });
+    }
+
+    #[test]
+    fn cancellation_between_upload_authorization_and_content_selection_keeps_admission_open() {
+        let server = server();
+        Runtime::new().expect("runtime").block_on(Box::pin(async {
+            timeout(
+                Duration::from_secs(40),
+                Box::pin(async {
+                    let database = Database::initialized(server).await;
+                    let mut supplier = Supplier::new().await;
+                    let (context, services) =
+                        start(database.connections(&database.user), &supplier).await;
+                    let manager = Box::pin(actor(&database, &services, &mut supplier)).await;
+                    let actor = Box::pin(crate::access::appointment::tests::register(
+                        &database,
+                        &services,
+                        &mut supplier,
+                    ))
+                    .await;
+                    let before = services
+                        .current()
+                        .read(&actor)
+                        .await
+                        .expect("qualified upload owner");
+                    let operation = operation::Id::allocate();
+                    let input = png(&[37; 16]);
+                    assert!(matches!(
+                        super::start(
+                            services.app(),
+                            services.current(),
+                            &actor,
+                            operation,
+                            before.avatar().revision(),
+                            "image/png",
+                            Sha256::digest(&input).into(),
+                            input.len(),
+                            Instant::now() + BUSINESS
+                        )
+                        .await
+                        .expect("upload preflight"),
+                        Start::Fresh
+                    ));
+                    services
+                        .cancellation()
+                        .cancel(
+                            actor.clone(),
+                            operation::Id::allocate(),
+                            crate::cancellation::tests::confirmation(&before),
+                        )
+                        .await
+                        .expect("cancellation during decoding");
+                    let avatar = services.avatar();
+                    let outcome = current_content(
+                        services.app(),
+                        services.current(),
+                        &avatar.0.storage,
+                        &avatar.0.defaults,
+                        &actor,
+                        operation,
+                        Instant::now() + BUSINESS,
+                    )
+                    .await;
+                    assert!(
+                        matches!(outcome, Err(Error::Unauthenticated)),
+                        "legitimate cancellation is not corruption"
+                    );
+                    services
+                        .current()
+                        .read(&manager)
+                        .await
+                        .expect("unrelated account remains admitted");
+                    services.close();
+                    services.drain().await.expect("drained");
+                    context.stop().await.expect("stopped");
+                    supplier.stop().await;
+                }),
+            )
+            .await
+            .expect("bounded cancellation race");
+        }));
+    }
+
+    #[test]
+    fn pending_originals_require_account_ownership_and_restart_settles_retained_intents() {
+        let server = server();
+        Runtime::new().expect("runtime").block_on(Box::pin(async {
+            timeout(Duration::from_secs(40), Box::pin(async {
+                let database = Database::initialized(server).await;
+                let mut supplier = Supplier::new().await;
+                let (context, services) = start(database.connections(&database.user), &supplier).await;
+                let actor = Box::pin(actor(&database, &services, &mut supplier)).await;
+                let other = Box::pin(crate::access::appointment::tests::register(&database, &services, &mut supplier)).await;
+                let before = services.current().read(&actor).await.expect("current owner");
+                let input = png(&[41; 16]);
+                let converted = codec::convert(codec::Media::Png, &input).expect("static output");
+                let output = Output { digest: Sha256::digest(&converted.bytes).into(), bytes: converted.bytes,
+                    width: converted.width, height: converted.height };
+                let operation = operation::Id::allocate();
+                publish_intent(services.app(), services.current(), &actor, operation, before.avatar().revision(),
+                    codec::Media::Png, Sha256::digest(&input).into(), input.len(), &output, true, true,
+                    Instant::now() + BUSINESS).await.expect("durable pending intent before file publication");
+                let mut permit = services.app().registry().acquire_for(
+                    crate::runtime::registry::Family::Kernel(Family::Avatar), operation).await.expect("active original");
+                permit.begin();
+                for (reader, own) in [(&other, false), (&actor, true)] {
+                    let value = services.avatar().original(services.current(), reader, operation,
+                        Instant::now() + Duration::from_millis(500)).await.expect("bounded lookup during active work");
+                    assert!(matches!((value, own), (avatar::OriginalView::Pending, true) | (avatar::OriginalView::Absent, false)));
+                }
+                permit.finish();
+                services.close(); services.drain().await.expect("old work ended"); context.stop().await.expect("old instance ended");
+                let (context, services) = timeout(Duration::from_secs(5), start(database.connections(&database.user), &supplier))
+                    .await.expect("startup recovery must not wait behind its own exclusive barrier");
+                let observer = database.connections(&database.user).recover().await.expect("independent reader");
+                let remains: bool = observer.client().query_one("SELECT EXISTS(SELECT 1 FROM identity.publications WHERE operation_id=$1)",
+                    &[&operation]).await.expect("startup intent readback").get(0);
+                assert!(!remains, "startup completes unused publication cleanup before exposing services");
+                services.close(); services.drain().await.expect("restart drained"); context.stop().await.expect("restart ended");
+                observer.terminate().await.expect("reader ended"); supplier.stop().await;
+            })).await.expect("bounded pending original and restart acceptance");
+        }));
+    }
+
+    #[test]
+    fn original_lookup_closes_admission_on_a_damaged_retained_seal() {
+        let server = server();
+        Runtime::new().expect("runtime").block_on(Box::pin(async {
+            timeout(
+                Duration::from_secs(40),
+                Box::pin(async {
+                    let database = Database::initialized(server).await;
+                    let mut supplier = Supplier::new().await;
+                    let (context, services) =
+                        start(database.connections(&database.user), &supplier).await;
+                    let actor = Box::pin(actor(&database, &services, &mut supplier)).await;
+                    let before = services
+                        .current()
+                        .read(&actor)
+                        .await
+                        .expect("current owner");
+                    let operation = operation::Id::allocate();
+                    replace(
+                        &services,
+                        &actor,
+                        operation,
+                        before.avatar().revision(),
+                        "image/png",
+                        &png(&[43; 16]),
+                    )
+                    .await
+                    .expect("completed upload");
+                    let owner = database
+                        .connections(&database.owner)
+                        .recover()
+                        .await
+                        .expect("fixture owner");
+                    owner
+                        .client()
+                        .batch_execute(
+                            "ALTER TABLE identity.uploads DISABLE TRIGGER uploads_immutable_check",
+                        )
+                        .await
+                        .expect("enable stored-fact damage fixture");
+                    owner
+                        .client()
+                        .execute(
+                            "UPDATE identity.uploads SET seal=$2 WHERE operation_id=$1",
+                            &[&operation, &vec![0_u8; 32]],
+                        )
+                        .await
+                        .expect("damage retained seal");
+                    owner
+                        .client()
+                        .batch_execute(
+                            "ALTER TABLE identity.uploads ENABLE TRIGGER uploads_immutable_check",
+                        )
+                        .await
+                        .expect("restore immutable guard");
+                    let result = services
+                        .avatar()
+                        .original(
+                            services.current(),
+                            &actor,
+                            operation,
+                            Instant::now() + BUSINESS,
+                        )
+                        .await;
+                    assert!(matches!(result, Err(Error::Corrupt(_))));
+                    assert!(
+                        services.app().registry().ready().is_err(),
+                        "detected corruption closes common admission"
+                    );
+                    services.close();
+                    services.drain().await.expect("drained");
+                    context.stop().await.expect("stopped");
+                    owner.terminate().await.expect("fixture owner ended");
+                    supplier.stop().await;
+                }),
+            )
+            .await
+            .expect("bounded corrupt original read");
+        }));
+    }
+
+    #[test]
     fn real_uploads_preserve_original_results_pixels_and_unchanged_revisions() {
         let server = server();
         Runtime::new().expect("runtime").block_on(Box::pin(async {
@@ -1972,8 +2335,9 @@ mod tests {
                 assert!(changed.completion().changed());
                 let revision = changed.completion().revision();
                 assert_ne!(revision, initial);
-                let snapshot = current_snapshot(services.app(), &services.avatar().0.defaults, before.id()).await.expect("current private avatar");
-                let stored = services.avatar().0.storage.read(snapshot.id(), snapshot.size() as u64).expect("real private bytes");
+                let (_, stored) = current_content(services.app(), services.current(), &services.avatar().0.storage,
+                    &services.avatar().0.defaults, &actor, operation::Id::allocate(), Instant::now() + BUSINESS)
+                    .await.expect("current private avatar bytes");
                 assert_eq!(image::load_from_memory_with_format(&stored, image::ImageFormat::WebP).expect("independent WebP decode").to_rgba8().as_raw(), &pixels);
                 let unchanged = replace(&services, &actor, operation::Id::allocate(), revision, "image/png", &input).await.expect("unchanged upload");
                 assert!(!unchanged.completion().changed());

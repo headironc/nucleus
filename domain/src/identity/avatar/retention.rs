@@ -101,7 +101,7 @@ impl Retention {
     /// intentions have crossed their original lock and reached a confirmed outcome.
     pub(crate) async fn restore(&mut self) -> Result<(), Error<Infallible>> {
         loop {
-            Box::pin(self.recover_files()).await?;
+            Box::pin(self.recover_files(true)).await?;
             if self.publication_cursor.is_none() && self.deletion_cursor.is_none() {
                 return Ok(());
             }
@@ -110,7 +110,7 @@ impl Retention {
 
     /// The process owns this round through cancellation, recovery and connection termination.
     pub async fn run(&mut self) -> Result<(), Error<Infallible>> {
-        Box::pin(self.recover_files()).await?;
+        Box::pin(self.recover_files(false)).await?;
         let registry = self.app.registry();
         registry.ready()?;
         let rows = match self.candidates().await {
@@ -151,7 +151,7 @@ impl Retention {
         Ok(())
     }
 
-    async fn recover_files(&mut self) -> Result<(), Error<Infallible>> {
+    async fn recover_files(&mut self, restoring: bool) -> Result<(), Error<Infallible>> {
         let lease = self
             .app
             .context()
@@ -198,6 +198,9 @@ impl Retention {
             scopeguard::ScopeGuard::into_inner(guard);
             permit.finish();
             if let Err(error) = result {
+                if restoring {
+                    return Err(cleanup_error(error));
+                }
                 self.handle(cleanup_error(error), "avatar_publication_cleanup")?;
             }
         }
@@ -233,6 +236,9 @@ impl Retention {
             scopeguard::ScopeGuard::into_inner(guard);
             permit.finish();
             if let Err(error) = result {
+                if restoring {
+                    return Err(error);
+                }
                 self.handle(error, "avatar_deletion_cleanup")?;
             }
         }
