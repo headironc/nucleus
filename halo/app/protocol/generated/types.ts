@@ -241,6 +241,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/accounts/current/codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Verify and send to the current website account phone. Replays preserve the original person and session. Authentication and mobile verification share the same sending budgets. */
+        post: operations["sendCurrentMobileCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/mobile-changes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Prove the current account phone with its latest original-phone code. A successful transfer lasts ten minutes and is bound to this website session. Replaying the original input neither creates another transfer nor counts a wrong code again. */
+        post: operations["createMobileTransfer"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/mobile-changes/{id}/codes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Send a verification code to a different phone using the website session that established the current transfer. New sends require an unexpired latest transfer and unchanged target identity. Assisted sends and original reads require current institution.accounts and a strictly lower target; paused targets remain eligible. Phone occupancy is not disclosed. Original results remain readable without another supplier call. */
+        post: operations["sendNewMobileCode"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/accounts/current/mobile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** @description Replace the current phone after its latest new-phone verification. Completion revokes all existing account sessions. Authenticate with the new phone before reading the transfer status. */
+        put: operations["completeMobileTransfer"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/mobile-changes/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read a mobile change's minimal status as its person, or as a current manager with institution.accounts and a strictly higher institution level. Paused targets remain readable. Missing and unauthorized targets both return 404. Completed results survive short-term record cleanup. Origin must match when supplied; absent Origin requires Sec-Fetch-Site: same-origin. Any supplied Sec-Fetch-Site must be same-origin. */
+        get: operations["readMobileTransfer"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -532,6 +617,53 @@ export interface components {
             id: components["schemas"]["session.Id"];
             /** Format: date-time */
             revokedAt: string;
+        };
+        "transfer.Input": {
+            code: string;
+            messageId: components["schemas"]["message.Id"];
+        };
+        "transfer.Receipt": {
+            code: string;
+            transfer: components["schemas"]["transfer.Transfer"];
+        };
+        "transfer.Transfer": {
+            /** Format: date-time */
+            expiresAt: string;
+            id: components["schemas"]["transfer.Id"];
+        };
+        /** Format: uuid */
+        "transfer.Id": string;
+        "transfer.CompletionInput": {
+            code: string;
+            messageId: components["schemas"]["message.Id"];
+            mobile: string;
+        };
+        "transfer.Completed": {
+            code: string;
+            completion: components["schemas"]["transfer.Completion"];
+        };
+        "transfer.Completion": {
+            /** Format: date-time */
+            completedAt: string;
+            id: components["schemas"]["transfer.Id"];
+        };
+        "transfer.Status": {
+            code: string;
+            transfer: components["schemas"]["transfer.State"];
+        };
+        "transfer.State": {
+            /** Format: date-time */
+            expiresAt: string;
+            /** @enum {string} */
+            status: "pending";
+        } | {
+            /** Format: date-time */
+            completedAt: string;
+            /** @enum {string} */
+            status: "completed";
+        } | {
+            /** @enum {string} */
+            status: "expired";
         };
     };
     responses: never;
@@ -2446,6 +2578,764 @@ export interface operations {
                     /** @description no-store */
                     "Cache-Control"?: string;
                     /** @description Wait seconds before another attempt */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description internal_error */
+            500: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    sendCurrentMobileCode: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Original sending operation UUID */
+                "Operation-Id": string;
+                /** @description Selects the website session cookie */
+                "Session-Id": string;
+                /** @description Required exact configured origin */
+                Origin: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Input"];
+            };
+        };
+        responses: {
+            /** @description Original message; sent means supplier acceptance */
+            200: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Receipt"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description verification_invalid or permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description request_mismatch or target_changed */
+            409: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description verification_required */
+            410: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input; body exceeds 8192 bytes */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            415: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            422: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description internal_error */
+            500: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable or outcome_unknown */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    createMobileTransfer: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Original transfer operation UUID */
+                "Operation-Id": string;
+                /** @description Selects the website session cookie */
+                "Session-Id": string;
+                /** @description Required exact configured origin */
+                Origin: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["transfer.Input"];
+            };
+        };
+        responses: {
+            /** @description Established transfer ID and fixed expiry */
+            201: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["transfer.Receipt"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description verification_invalid or permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description request_mismatch */
+            409: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description verification_required */
+            410: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input; body exceeds 8192 bytes */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            415: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            422: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description internal_error */
+            500: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable or outcome_unknown */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    sendNewMobileCode: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Original sending operation UUID */
+                "Operation-Id": string;
+                /** @description Selects the website session cookie */
+                "Session-Id": string;
+                /** @description Required exact configured origin */
+                Origin: string;
+            };
+            path: {
+                /** @description Original mobile transfer */
+                id: components["schemas"]["transfer.Id"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["Input"];
+            };
+        };
+        responses: {
+            /** @description Original message; sent means supplier acceptance */
+            200: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Receipt"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description verification_invalid or permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description target_unavailable; assisted target is not currently manageable */
+            404: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description request_mismatch or state_conflict */
+            409: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description verification_required; transfer or verification no longer applicable */
+            410: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input; body exceeds 8192 bytes */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            415: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            422: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description internal_error */
+            500: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable or outcome_unknown */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    completeMobileTransfer: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Original completion operation UUID */
+                "Operation-Id": string;
+                /** @description Selects the original transfer session cookie */
+                "Session-Id": string;
+                /** @description Required exact configured origin */
+                Origin: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["transfer.CompletionInput"];
+            };
+        };
+        responses: {
+            /** @description Completed transfer ID and effective time */
+            200: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["transfer.Completed"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description verification_invalid or permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description request_mismatch, state_conflict or mobile_taken */
+            409: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description verification_required */
+            410: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input; body exceeds 8192 bytes */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            415: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            422: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description internal_error */
+            500: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable or outcome_unknown */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    readMobileTransfer: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description This read request UUID */
+                "Operation-Id": string;
+                /** @description Selects a currently valid website session cookie */
+                "Session-Id": string;
+            };
+            path: {
+                /** @description Original transfer UUID */
+                id: components["schemas"]["transfer.Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Pending, completed or expired transfer */
+            200: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["transfer.Status"];
+                };
+            };
+            /** @description invalid_input; no query or body is accepted */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description target_unavailable */
+            404: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds */
                     "Retry-After"?: number;
                     [name: string]: unknown;
                 };

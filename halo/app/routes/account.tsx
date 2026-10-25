@@ -283,18 +283,23 @@ function Account({
                 进入本人政治面貌页面。未填写时可自愿首次填写；已有值只读。
               </p>
             </div>
-            <a className="quiet-link" href="/workforce">
-              查看员工服务
-            </a>
-            <a className="quiet-link" href="/sessions/logout-all">
-              退出全部设备
-            </a>
-            <a className="quiet-link" href="/sessions/logout">
-              退出本次登录
-            </a>
-            <a className="quiet-link danger-link" href="/account/cancellation">
-              注销账户
-            </a>
+            <div className="account-actions">
+              <a className="quiet-link" href="/workforce">
+                查看员工服务
+              </a>
+              <a className="quiet-link" href="/account/mobile">
+                更换手机号
+              </a>
+              <a className="quiet-link" href="/sessions/logout-all">
+                退出全部设备
+              </a>
+              <a className="quiet-link" href="/sessions/logout">
+                退出本次登录
+              </a>
+              <a className="quiet-link danger-link" href="/account/cancellation">
+                注销账户
+              </a>
+            </div>
             <a className="primary send-button" href="/">
               返回首页
             </a>

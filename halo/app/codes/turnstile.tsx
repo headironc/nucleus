@@ -2,9 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { Button } from "@base-ui/react/button";
 import { ShieldCheck, RefreshCw } from "lucide-react";
 
+export type Action =
+  | "send_authentication_code"
+  | "send_mobile_change_code"
+  | "send_mobile_binding_code";
+
 type Options = {
   sitekey: string;
-  action: "send_authentication_code";
+  action: Action;
   cData: string;
   "response-field": false;
   theme: "auto";
@@ -61,12 +66,14 @@ function load(): Promise<Widget> {
 export function Turnstile({
   siteKey,
   operation,
+  action,
   waiting,
   reset,
   onToken,
 }: {
   siteKey: string;
   operation: string;
+  action: Action;
   waiting: boolean;
   reset: number;
   onToken: (token: string | undefined) => void;
@@ -98,7 +105,7 @@ export function Turnstile({
         };
         const id = widget.render(element.current, {
           sitekey: siteKey,
-          action: "send_authentication_code",
+          action,
           cData: operation,
           "response-field": false,
           theme: "auto",
@@ -121,7 +128,7 @@ export function Turnstile({
       if (instance.current) instance.current.widget.remove(instance.current.id);
       instance.current = undefined;
     };
-  }, [siteKey, operation, attempt]);
+  }, [siteKey, operation, action, attempt]);
   useEffect(() => {
     if (reset && instance.current) {
       callback.current(undefined);

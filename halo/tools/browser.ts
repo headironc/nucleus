@@ -31,7 +31,7 @@ import { redactText } from "./redact.ts";
 
 // Allow bounded variation across the full suite, including real SMS cooldowns.
 // The Rust fixture retains another 120 seconds for cleanup and final assertions.
-const EXECUTION_DEADLINE_MS = 660_000;
+const EXECUTION_DEADLINE_MS = 900_000;
 const CHILD_TERM_MS = 5_000;
 const CHILD_KILL_MS = 2_000;
 const SERVICE_CLOSE_MS = 5_000;
@@ -420,6 +420,8 @@ default ${backend};
 map $http_x_halo_fixture_source $halo_fixture_source {
 default 192.0.2.200;
 ${Array.from({ length: 16 }, (_, index) => `${String(index + 1).padStart(2, "0")} 192.0.2.${index + 1};`).join("\n")}
+40 192.0.2.40;
+41 192.0.2.41;
 }
 server { listen 127.0.0.1:${port} ssl; server_name 127.0.0.1;
 ssl_certificate ${directory}/cert.pem; ssl_certificate_key ${directory}/key.pem;

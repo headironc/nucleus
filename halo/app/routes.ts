@@ -7,6 +7,7 @@ export default [
   route("authentication/register", "routes/register.tsx"),
   route("account", "routes/account.tsx"),
   route("account/affiliation", "routes/affiliation.tsx"),
+  route("account/mobile", "routes/mobile-change.tsx"),
   route("account/cancellation", "routes/cancellation.tsx"),
   route("workforce/termination", "routes/workforce-termination.tsx"),
   route("workforce", "routes/workforce.tsx"),
