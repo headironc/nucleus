@@ -416,7 +416,7 @@ export interface components {
         };
         /**
          * Format: uuid
-         * @description The client-supplied identifier of an original Identity operation.
+         * @description An Identity operation identifier. Business originals use client-supplied IDs.
          */
         "operation.Id": string;
         "registration.Input": {

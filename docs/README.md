@@ -21,7 +21,8 @@
 | Halo 网站本人当前头像读取                 | 已交付 | [头像](identity/avatar.md)、[网站交付](http/site.md)、[网站验收](../halo/README.md#浏览器隔离验收)                                                   |
 | 默认头像与已知账户头像读取                | 已交付 | [头像](identity/avatar.md)                                                                                                                           |
 | 注销后默认头像元数据清理                  | 已交付 | [头像](identity/avatar.md#工作事务与故障恢复)                                                                                                        |
-| 头像更换与上传内容                        | 目标   | [头像](identity/avatar.md)                                                                                                                           |
+| 网站本人头像上传、更换及原结果后端        | 已交付 | [头像](identity/avatar.md)                                                                                                                           |
+| 头像更换页面与小程序接入                  | 目标   | [头像](identity/avatar.md)                                                                                                                           |
 | 私人文件持久发布、读取句柄与幂等删除组件  | 已交付 | [本地文件](storage/files.md)                                                                                                                         |
 | 网站当前及全部退出                        | 已交付 | [退出](identity/revocation.md)                                                                                                                       |
 | 账户暂停恢复及状态历史                    | 已交付 | [暂停恢复](identity/suspension.md)                                                                                                                   |

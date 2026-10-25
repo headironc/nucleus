@@ -29,19 +29,24 @@ impl Service {
                         .await?
                         .filter(|account| account.current().is_some())
                         .ok_or(Error::Absent)?;
-                    let snapshot = avatar::find_by_account(client, &account).await?.ok_or(
+                    let snapshot = self.avatar.find_by_account(client, &account).await?.ok_or(
                         avatar::Error::Facts {
                             rule: "a current account retains its current avatar",
                         },
                     )?;
-                    Ok((snapshot, now))
+                    Ok(snapshot)
                 })
                 .await
         })
         .await
         .map_err(Error::from)
         .and_then(std::convert::identity);
-        let (snapshot, now) = self.finish(lease, deadline, result).await?;
+        let snapshot = self.finish(lease, deadline, result).await?;
+        let now = self
+            .context
+            .read_time()
+            .await
+            .map_err(avatar::Error::Runtime)?;
         Ok(self.avatar.sign(snapshot, now)?)
     }
 }
@@ -111,7 +116,7 @@ mod tests {
                     for reader in [&viewer, &target] {
                         let value = services.account().fetch_avatar(reader, id).await.expect("known target readable by any current actor");
                         assert_eq!(value.revision(), expected);
-                        assert_eq!(services.avatar().read(proof(&value)).await.expect("signed anonymous image").bytes(), include_bytes!("../../../assets/avatars/0-cat.webp"));
+                        assert_eq!(services.avatar().read(proof(&value), avatar::read_capacity()).await.expect("signed anonymous image").bytes(), include_bytes!("../../../assets/avatars/0-cat.webp"));
                     }
                     assert_ne!(services.account().fetch_avatar(&viewer, viewer.account_id()).await.expect("self through known-account entry").revision(), expected);
                     let after: String = observer.client().query_one("SELECT jsonb_build_array((SELECT jsonb_agg(to_jsonb(avatar) ORDER BY id) FROM identity.avatars avatar), (SELECT jsonb_agg(to_jsonb(session) ORDER BY id) FROM identity.sessions session))::text", &[]).await.expect("reads preserve avatar and session facts").get(0);
@@ -224,7 +229,7 @@ mod tests {
                 let owner = database.connections("postgres").recover().await.expect("isolated lock owner");
                 let observer = database.connections(&database.user).recover().await.expect("independent SQL observer");
                 let blocker: i32 = owner.client().query_one("SELECT pg_backend_pid()", &[]).await.expect("lock owner PID").get(0);
-                let query="SELECT $2::uuid AS avatar, avatar.digest, avatar.size, avatar.width, avatar.height
+                let query="SELECT avatar.revision AS avatar, avatar.id, avatar.account_id, avatar.digest, avatar.size, avatar.width, avatar.height, avatar.content_seal, avatar.content_seal_key_id, avatar.content_seal_version
                 FROM identity.avatars avatar WHERE avatar.account_id=$1 AND avatar.released_at IS NULL";
                 let work = Box::pin(async {
                     for cancelled in [false, true] {

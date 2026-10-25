@@ -12,7 +12,7 @@ use crate::OPERATION_BUDGET;
 
 /// Every embedded migration as `(name, SQL)` in version order. The online test harnesses apply
 /// exactly this list; a test requires it to equal the `migrations` directory.
-pub const MIGRATIONS: [(&str, &str); 13] = [
+pub const MIGRATIONS: [(&str, &str); 14] = [
     ("V1__keys", include_str!("../migrations/V1__keys.sql")),
     (
         "V2__challenge_acceptance",
@@ -61,6 +61,10 @@ pub const MIGRATIONS: [(&str, &str); 13] = [
     (
         "V13__columns",
         include_str!("../migrations/V13__columns.sql"),
+    ),
+    (
+        "V14__avatar_uploads",
+        include_str!("../migrations/V14__avatar_uploads.sql"),
     ),
 ];
 
@@ -567,7 +571,7 @@ mod tests {
                 .get_applied_migrations_async(session.client_mut())
                 .await
                 .expect("history");
-            assert_eq!(applied.len(), 13);
+            assert_eq!(applied.len(), 14);
             assert_eq!(applied[0].version(), 1);
             assert_eq!(applied[1].version(), 2);
             assert_eq!(applied[2].version(), 3);
@@ -642,7 +646,7 @@ mod tests {
             &[],
         ).await.expect("independent complete migration history");
         let expected = runner().expect("embedded migrations");
-        assert_eq!(rows.len(), if applied { 13 } else { 0 });
+        assert_eq!(rows.len(), if applied { 14 } else { 0 });
         let mut snapshot = Vec::new();
         for (row, migration) in rows.iter().zip(expected.get_migrations()) {
             assert_eq!(row.get::<_, i32>("version"), migration.version());
@@ -795,7 +799,7 @@ mod tests {
                                     .await
                                     .expect("observe original commit")
                                     .get(0);
-                                if count == 13 {
+                                if count == 14 {
                                     break;
                                 }
                                 tokio::task::yield_now().await;

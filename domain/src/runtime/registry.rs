@@ -1,7 +1,7 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
 use platform::database::{self, Connections, Lease};
-use tokio::sync::{Mutex, watch};
+use tokio::sync::{Mutex, OwnedSemaphorePermit, watch};
 
 use crate::{identity::operation, runtime::work::Error};
 
@@ -14,6 +14,7 @@ pub(crate) struct Registry {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) enum Family {
+    Image,
     Challenge,
     CreateSession,
     Register,
@@ -128,6 +129,19 @@ impl Registry {
         self.reserve(&mut entries, (family, operation_id))
     }
 
+    /// Image reads use their transport capacity, not a business write or original-result slot.
+    /// Work still owns their execution and drain through this reservation.
+    pub(crate) fn transfer(&self, capacity: Arc<OwnedSemaphorePermit>) -> Result<Permit, Error> {
+        self.ready()?;
+        let (completion, _) = watch::channel(());
+        Ok(Permit {
+            closed: self.closed.clone(),
+            completion,
+            running: false,
+            _transfer: Some(capacity),
+        })
+    }
+
     fn reserve(
         &self,
         entries: &mut HashMap<(Family, operation::Id), watch::Receiver<()>>,
@@ -142,6 +156,7 @@ impl Registry {
             closed: self.closed.clone(),
             completion,
             running: false,
+            _transfer: None,
         })
     }
 }
@@ -151,6 +166,7 @@ pub(crate) struct Permit {
     closed: watch::Sender<bool>,
     completion: watch::Sender<()>,
     running: bool,
+    _transfer: Option<Arc<OwnedSemaphorePermit>>,
 }
 
 impl Permit {

@@ -3,7 +3,7 @@
 use std::{collections::BTreeMap, time::Duration};
 
 use chrono::{DateTime, Utc};
-use platform::cryptography::{self, sha256};
+use platform::cryptography;
 use tokio_postgres::Client;
 
 use crate::{
@@ -113,31 +113,29 @@ async fn load(
     let mut active = accounts
         .iter()
         .filter(|state| state.current().is_some())
-        .map(|state| (*state.id().as_bytes(), 0_usize))
+        .map(|state| (*state.id().as_bytes(), (state.avatar(), 0_usize)))
         .collect::<BTreeMap<_, _>>();
     let mut option: Option<avatar::Id> = None;
     loop {
-        let rows = verification::Stage::Avatars.query(Duration::from_secs(10), client.query("SELECT id, account_id, digest, size, width, height, released_at FROM identity.avatars WHERE ($1::uuid IS NULL OR id > $1) ORDER BY id LIMIT 128", &[&option])).await??;
+        let rows = verification::Stage::Avatars.query(Duration::from_secs(10), client.query("SELECT id, revision AS avatar, account_id, digest, size, width, height, released_at, content_seal, content_seal_key_id, content_seal_version FROM identity.avatars WHERE ($1::uuid IS NULL OR id > $1) ORDER BY id LIMIT 128", &[&option])).await??;
         if rows.is_empty() {
             break;
         }
         for row in rows {
             let id: avatar::Id = row.try_get("id")?;
-            let digest: sha256::Digest = row.try_get("digest")?;
-            if !defaults.contains(digest.as_ref(), row.try_get("size")?)
-                || row.try_get::<_, i32>("width")? != 512
-                || row.try_get::<_, i32>("height")? != 512
-            {
-                return Err(Error::Facts {
-                    rule: "default avatar content",
-                });
-            }
+            let snapshot = avatar::Snapshot::read(&row, seals, &defaults)?;
             let account_id: account::Id = row.try_get("account_id")?;
             match row.try_get::<_, Option<DateTime<Utc>>>("released_at")? {
                 None => {
-                    let count = active.get_mut(account_id.as_bytes()).ok_or(Error::Facts {
-                        rule: "unreleased avatar belongs to a current account",
-                    })?;
+                    let (revision, count) =
+                        active.get_mut(account_id.as_bytes()).ok_or(Error::Facts {
+                            rule: "unreleased avatar belongs to a current account",
+                        })?;
+                    if *revision != snapshot.revision() {
+                        return Err(Error::Facts {
+                            rule: "current avatar revision matches its authenticated account",
+                        });
+                    }
                     *count += 1;
                 }
                 Some(at) if at > now => {
@@ -150,7 +148,7 @@ async fn load(
             option = Some(id);
         }
     }
-    if active.values().any(|count| *count != 1) {
+    if active.values().any(|(_, count)| *count != 1) {
         return Err(Error::Facts {
             rule: "current account has one unreleased avatar",
         });

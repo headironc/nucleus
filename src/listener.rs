@@ -93,7 +93,7 @@ pub(crate) struct Transmission {
 enum State {
     Idle,
     Image {
-        _permit: OwnedSemaphorePermit,
+        permit: Arc<OwnedSemaphorePermit>,
         deadline: Pin<Box<Sleep>>,
         prepared: bool,
     },
@@ -115,11 +115,20 @@ impl Transmission {
         }
         let deadline = Instant::now() + Duration::from_secs(30);
         *state = State::Image {
-            _permit: permit,
+            permit: Arc::new(permit),
             deadline: Box::pin(sleep_until(deadline)),
             prepared: false,
         };
         Ok(deadline)
+    }
+
+    /// The content read keeps capacity even if its peer disconnects before it returns.
+    pub(crate) fn hold_read(&self) -> io::Result<Arc<OwnedSemaphorePermit>> {
+        let state = self.state.lock().map_err(poisoned)?;
+        match &*state {
+            State::Image { permit, .. } => Ok(Arc::clone(permit)),
+            _ => Err(io::ErrorKind::ConnectionAborted.into()),
+        }
     }
 
     /// Finish the bounded read before shutdown may interrupt this response's byte stream.
@@ -269,6 +278,7 @@ mod tests {
         );
         let mut connection = connections.pop().expect("last transfer");
         let late = connection.transmission();
+        let reading = late.hold_read().expect("accepted content read");
         // A real TCP receive window saturates. Cancelling the write waiter does not finish IO ownership.
         let bytes = vec![42; 8 * 1024 * 1024];
         assert!(
@@ -298,6 +308,12 @@ mod tests {
             "timing out a caller does not release the connection permit"
         );
         drop(connection);
+        assert_eq!(
+            capacity.available_permits(),
+            0,
+            "a disconnected peer cannot release unfinished content work"
+        );
+        drop(reading);
         assert_eq!(capacity.available_permits(), 1);
         assert!(
             late.begin(

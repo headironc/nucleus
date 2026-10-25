@@ -65,7 +65,7 @@ pub(crate) fn router(context: Context) -> OpenApiRouter {
         .merge(cancellation::router(&context))
         .merge(correction::router(&context))
         .merge(transfer::router(&context))
-        .merge(avatar::router())
+        .merge(avatar::router(&context))
         .layer(DefaultBodyLimit::max(8192))
         .with_state(context)
 }

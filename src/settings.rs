@@ -39,8 +39,19 @@ struct Input {
     http: Http,
     identity: Identity,
     wechat: Wechat,
+    storage: Storage,
     #[serde(default)]
     process: Process,
+}
+
+#[serde_as]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Storage {
+    root: String,
+    mount: String,
+    #[serde_as(as = "DisplayFromStr")]
+    device: u64,
 }
 
 #[serde_as]
@@ -82,6 +93,9 @@ struct Avatar {
     #[serde_as(as = "DisplayFromStr")]
     #[serde(default = "default_avatar_retention")]
     retention_seconds: u64,
+    #[serde_as(as = "DisplayFromStr")]
+    #[serde(default = "default_avatar_hourly")]
+    hourly: usize,
 }
 
 fn default_avatar_lifetime() -> u64 {
@@ -90,6 +104,10 @@ fn default_avatar_lifetime() -> u64 {
 
 fn default_avatar_retention() -> u64 {
     domain::identity::avatar::retention::Settings::default().seconds()
+}
+
+fn default_avatar_hourly() -> usize {
+    domain::identity::avatar::UploadLimits::default().hourly()
 }
 
 #[derive(Deserialize)]
@@ -217,6 +235,7 @@ impl Identity {
     fn parse(
         self,
         app_id: domain::identity::website::AppId,
+        storage: Storage,
     ) -> Result<domain::startup::Settings, Error> {
         let input = self;
         let mobile = message::limits::Mobile::new(
@@ -250,6 +269,14 @@ impl Identity {
         )?
         .with_avatar_retention(domain::identity::avatar::retention::Settings::new(
             input.avatar.retention_seconds,
+        )?)
+        .with_avatar_storage(Some(domain::identity::avatar::StorageSettings::new(
+            storage.root.into(),
+            storage.mount.into(),
+            storage.device,
+        )?))
+        .with_avatar_limits(domain::identity::avatar::UploadLimits::new(
+            input.avatar.hourly,
         )?))
     }
 }
@@ -330,7 +357,9 @@ impl TryFrom<Input> for Settings {
             listen: input.http.listen,
             source: crate::source::Settings::new(input.http.trusted_proxies)?,
             requests: crate::identity::Settings::new(input.http.origin, input.challenge.site_key)?,
-            services: input.identity.parse(input.wechat.website.app_id.parse()?)?,
+            services: input
+                .identity
+                .parse(input.wechat.website.app_id.parse()?, input.storage)?,
             process: crate::process::Settings::new(Duration::from_secs(
                 input.process.stop_seconds,
             ))?,
@@ -367,6 +396,10 @@ pub enum Error {
     Avatar(#[from] domain::identity::avatar::link::SettingsError),
     #[error("{0}")]
     AvatarRetention(#[from] domain::identity::avatar::retention::SettingsError),
+    #[error("{0}")]
+    AvatarStorage(#[from] domain::identity::avatar::StorageError),
+    #[error("{0}")]
+    AvatarUpload(#[from] domain::identity::avatar::UploadLimitsError),
     #[error("{0}")]
     Website(#[from] domain::identity::website::Error),
     #[error("{0}")]
@@ -473,6 +506,9 @@ mod tests {
                 "NUCLEUS_IDENTITY__AVATAR__ORIGIN",
                 "https://avatars.example.com",
             ),
+            ("NUCLEUS_STORAGE__ROOT", "/fictional/avatar-root"),
+            ("NUCLEUS_STORAGE__MOUNT", "/"),
+            ("NUCLEUS_STORAGE__DEVICE", "1"),
             ("NUCLEUS_WECHAT__WEBSITE__APP_ID", "website-fixture"),
         ]
         .into_iter()
@@ -523,6 +559,14 @@ mod tests {
             ("IDENTITY__REGISTRATION__HOURLY", "6"),
             ("IDENTITY__REGISTRATION__HOURLY", ""),
             ("IDENTITY__AVATAR__LIFETIME_SECONDS", "59"),
+            ("IDENTITY__AVATAR__HOURLY", "0"),
+            ("IDENTITY__AVATAR__HOURLY", ""),
+            ("IDENTITY__AVATAR__HOURLY", "18446744073709551615"),
+            ("STORAGE__ROOT", "relative/path"),
+            ("STORAGE__ROOT", "/"),
+            ("STORAGE__MOUNT", "relative/path"),
+            ("STORAGE__DEVICE", "-1"),
+            ("STORAGE__DEVICE", ""),
             ("IDENTITY__AVATAR__LIFETIME_SECONDS", "86401"),
             ("IDENTITY__AVATAR__LIFETIME_SECONDS", ""),
             ("IDENTITY__AVATAR__RETENTION_SECONDS", "0"),

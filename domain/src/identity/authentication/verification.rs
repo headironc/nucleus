@@ -1096,6 +1096,12 @@ pub(super) mod tests {
                 .await
                 .expect("column migration");
             transaction
+                .batch_execute(include_str!(
+                    "../../../../deployment/migrations/V14__avatar_uploads.sql"
+                ))
+                .await
+                .expect("avatar upload migration");
+            transaction
                 .batch_execute(&crate::database::permissions::grants())
                 .await
                 .expect("runtime grants");

@@ -74,6 +74,8 @@ pub enum Fault {
     StalledClock,
     PausedAuthenticationSession,
     ExpiredInvitationCompletion,
+    StalledAvatarUploads,
+    PausedCommit,
 }
 
 struct Control {
@@ -238,6 +240,8 @@ impl Proxy {
                 Fault::StalledClock => 49,
                 Fault::PausedAuthenticationSession => 50,
                 Fault::ExpiredInvitationCompletion => 51,
+                Fault::StalledAvatarUploads => 52,
+                Fault::PausedCommit => 53,
             },
             Ordering::SeqCst,
         );
@@ -747,6 +751,12 @@ async fn relay(
                         .windows(b"INSERT INTO identity.rejections".len())
                         .any(|bytes| bytes == b"INSERT INTO identity.rejections")
                     || message
+                        .windows(b"INSERT INTO identity.uploads".len())
+                        .any(|bytes| bytes == b"INSERT INTO identity.uploads")
+                    || message
+                        .windows(b"INSERT INTO identity.publications".len())
+                        .any(|bytes| bytes == b"INSERT INTO identity.publications")
+                    || message
                         .windows(b"DELETE FROM identity.transfers".len())
                         .any(|bytes| bytes == b"DELETE FROM identity.transfers")
                     || message
@@ -1045,6 +1055,12 @@ async fn relay(
                 5
             } else if message[0] == b'P'
                 && message
+                    .windows(b"FROM identity.uploads WHERE $1::uuid IS NULL".len())
+                    .any(|bytes| bytes == b"FROM identity.uploads WHERE $1::uuid IS NULL")
+            {
+                52
+            } else if message[0] == b'P'
+                && message
                     .windows(b"SELECT state.id,state.account_id,state.authentication_id,state.receipt_id,".len())
                     .any(|bytes| bytes == b"SELECT state.id,state.account_id,state.authentication_id,state.receipt_id,")
                 && message
@@ -1061,17 +1077,26 @@ async fn relay(
                     .compare_exchange(stalled, 0, Ordering::SeqCst, Ordering::SeqCst)
                     .is_ok()
             {
-                if matches!(stalled, 28 | 32..=36 | 38 | 39 | 44..=48) {
+                if matches!(stalled, 28 | 32..=36 | 38 | 39 | 44..=48 | 52) {
                     // Keep PostgreSQL's idle timeout from racing the read deadline.
                     stalled_query.store(true, Ordering::SeqCst);
                 }
                 control.pause(&backend_pid).await?;
-                if matches!(stalled, 28 | 32..=36 | 38 | 39 | 44..=48) {
+                if matches!(stalled, 28 | 32..=36 | 38 | 39 | 44..=48 | 52) {
                     stalled_query.store(false, Ordering::SeqCst);
                     resumed.notify_one();
                 }
             }
             if message[0] == b'Q' && &message[5..] == b"COMMIT\0" {
+                if changed
+                    && control
+                        .fault
+                        .compare_exchange(53, 0, Ordering::SeqCst, Ordering::SeqCst)
+                        .is_ok()
+                {
+                    // Delay a write decision while preserving the caller's live connection.
+                    control.pause(&backend_pid).await?;
+                }
                 let fault = control.fault.load(Ordering::SeqCst);
                 if !changed
                     && (coordinated || listing || keys)

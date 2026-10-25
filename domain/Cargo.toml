@@ -18,6 +18,7 @@ derive_more = { version = "2.1.1", default-features = false, features = ["as_ref
 fontsan = { version = "=0.7.0", default-features = false, features = ["libz-sys", "woff2"] }
 getrandom = "0.4.3"
 hex = { version = "0.4.3", default-features = false, features = ["std"] }
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 nonempty = { version = "0.12.0", default-features = false }
 idna = { version = "1.1.0", default-features = false, features = ["std", "compiled_data"] }
 percent-encoding = { version = "2.3.2", default-features = false, features = ["alloc"] }
@@ -42,6 +43,7 @@ uuid = { version = "1.26.1", default-features = false, features = ["serde", "std
 zeroize = { version = "1.9.0", default-features = false, features = ["alloc", "serde"] }
 
 [dev-dependencies]
+png = { version = "0.18.1", default-features = false }
 fixture = { path = "../fixture" }
 syn = { version = "2.0.119", default-features = false, features = ["full", "parsing"] }
 tempfile = "3.25.0"

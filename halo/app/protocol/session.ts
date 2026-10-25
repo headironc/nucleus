@@ -146,6 +146,7 @@ export async function current(
     const account = (value as Current).account;
     if (
       account.name.normalize("NFC") !== account.name ||
+      account.avatar.width !== account.avatar.height ||
       !validAvatarLink(account.avatar)
     )
       return { kind: "untrusted" };

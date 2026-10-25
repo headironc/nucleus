@@ -243,8 +243,32 @@ const TABLES: &[Table] = &[
     table(
         "identity.avatars",
         &[Select, Delete],
-        "id, account_id, digest, size, width, height",
-        "released_at",
+        "id, account_id, revision, digest, size, width, height, content_seal, content_seal_key_id, content_seal_version",
+        "released_at, release, release_operation_id, release_transaction_id",
+    ),
+    table(
+        crate::identity::avatar::upload::UPLOADS,
+        &[Select, Delete],
+        "operation_id, account_id, changed, revision, completed_at, seal, seal_key_id, seal_version",
+        "",
+    ),
+    table(
+        crate::identity::avatar::upload::PUBLICATIONS,
+        &[Select, Delete],
+        "operation_id, account_id, expected_revision, media_type, input_digest, input_size, candidate_id, work_id, output_digest, output_size, width, height, private, revision, created_at, seal, seal_key_id, seal_version",
+        "changed, completed_at, result_seal, result_seal_key_id, result_seal_version",
+    ),
+    table(
+        crate::identity::avatar::retention::DELETIONS,
+        &[Select, Delete],
+        "id, account_id, digest, size, released_at, release, release_operation_id, created_at, seal, seal_key_id, seal_version",
+        "",
+    ),
+    table(
+        crate::identity::account::record::PORTRAITS,
+        &[Select],
+        "id, account_id, person_id, sequence, operation_id, portrait_at, previous_revision, revision, seal, seal_key_id, seal_version",
+        "",
     ),
     table(
         "identity.attempts",

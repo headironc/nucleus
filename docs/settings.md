@@ -64,6 +64,9 @@ C1 设置接收已校验的 `domain::identity::message::Limits`。该类型拥�
 | `NUCLEUS_MESSAGE__TEMPLATE__MOBILE_CHANGE`   | 同上；换号第一次发码，发往账户当前号码                                      | `domain::identity::message::settings::Settings`   |
 | `NUCLEUS_MESSAGE__TEMPLATE__MOBILE_BINDING`  | 同上；换号第二次发码，发往新号                                              | `domain::identity::message::settings::Settings`   |
 | `NUCLEUS_IDENTITY__AVATAR__ORIGIN`           | 绝对 HTTPS origin，按 §3.2 校验                                             | `domain::identity::avatar::link::Link`            |
+| `NUCLEUS_STORAGE__ROOT`                      | 私人文件根目录的绝对路径，严格位于指定挂载点内；目录须已存在                | `platform::files::Settings`                       |
+| `NUCLEUS_STORAGE__MOUNT`                     | 已挂载目录的绝对路径；逐层拒绝符号链接                                      | `platform::files::Settings`                       |
+| `NUCLEUS_STORAGE__DEVICE`                    | 预期挂载设备的十进制 `st_dev`，启动时核对实际句柄                           | `platform::files::Settings`                       |
 | `NUCLEUS_DATABASE__HOST`                     | 按 Rustls ServerName 校验，接受范围见[数据库连接输入](database.md#连接输入) | `platform::database::Settings`                    |
 | `NUCLEUS_DATABASE__PORT`                     | 必填整数，1 至 65535，无默认值                                              | `platform::database::Settings`                    |
 | `NUCLEUS_DATABASE__USER`                     | 非空且不含 NUL，保留原文                                                    | `platform::database::Settings`                    |
@@ -94,24 +97,25 @@ C1 设置接收已校验的 `domain::identity::message::Limits`。该类型拥�
 
 端口按 `u16` 解析。大于 65535 的值在输入反序列化时失败；端口为零由连接设置构造器拒绝。
 
-| 部署键                                                | 默认值  | 允许范围（含两端）     | 所有者                                                          |
-| ----------------------------------------------------- | ------- | ---------------------- | --------------------------------------------------------------- |
-| `NUCLEUS_IDENTITY__MESSAGE__LIFETIME_SECONDS`         | 300     | 120 – 600              | `domain::identity::message::Limits`                             |
-| `NUCLEUS_IDENTITY__MESSAGE__DAILY`                    | 100     | 1 – 100                | `domain::identity::message::Limits`                             |
-| `NUCLEUS_IDENTITY__MESSAGE__MOBILE__INTERVAL_SECONDS` | 60      | 60 – 600               | `domain::identity::message::Limits`                             |
-| `NUCLEUS_IDENTITY__MESSAGE__MOBILE__HOURLY`           | 5       | 1 – 5                  | `domain::identity::message::Limits`                             |
-| `NUCLEUS_IDENTITY__MESSAGE__MOBILE__DAILY`            | 10      | 1 – 10                 | `domain::identity::message::Limits`                             |
-| `NUCLEUS_IDENTITY__MESSAGE__SOURCE__MINUTE`           | 3       | 1 – 3                  | `domain::identity::message::Limits`                             |
-| `NUCLEUS_IDENTITY__MESSAGE__SOURCE__HOURLY`           | 10      | 1 – 10                 | `domain::identity::message::Limits`                             |
-| `NUCLEUS_IDENTITY__SESSION__MESSAGE_SECONDS`          | 86400   | 3600 – 86400           | `domain::identity::session::settings::Settings`                 |
-| `NUCLEUS_IDENTITY__SESSION__WECHAT_SECONDS`           | 2592000 | 3600 – 2592000         | `domain::identity::session::Lifetimes`                          |
-| `NUCLEUS_IDENTITY__REGISTRATION__LIFETIME_SECONDS`    | 600     | 60 – 600               | `domain::identity::authentication::session::settings::Settings` |
-| `NUCLEUS_IDENTITY__REGISTRATION__HOURLY`              | 5       | 1 – 5                  | `domain::registration::Limits`                                  |
-| `NUCLEUS_IDENTITY__AUTHENTICATION_RECOVERY_SECONDS`   | 600     | 60 – 600               | `domain::identity::session::settings::Settings`                 |
-| `NUCLEUS_IDENTITY__AVATAR__LIFETIME_SECONDS`          | 86400   | 60 – 86400             | `domain::identity::avatar::link::Link`                          |
-| `NUCLEUS_IDENTITY__AVATAR__RETENTION_SECONDS`         | 86400   | 正整数且时钟可表示     | `domain::identity::avatar::retention::Settings`                 |
-| `NUCLEUS_MESSAGE__TIMEOUT_MILLISECONDS`               | 10000   | 1000 – 10000           | `domain::identity::message::settings::Settings`                 |
-| `NUCLEUS_PROCESS__STOP_SECONDS`                       | 30      | 正数且能形成单调截止点 | `nucleus::process::Settings`                                    |
+| 部署键                                                | 默认值  | 允许范围（含两端）            | 所有者                                                          |
+| ----------------------------------------------------- | ------- | ----------------------------- | --------------------------------------------------------------- |
+| `NUCLEUS_IDENTITY__MESSAGE__LIFETIME_SECONDS`         | 300     | 120 – 600                     | `domain::identity::message::Limits`                             |
+| `NUCLEUS_IDENTITY__MESSAGE__DAILY`                    | 100     | 1 – 100                       | `domain::identity::message::Limits`                             |
+| `NUCLEUS_IDENTITY__MESSAGE__MOBILE__INTERVAL_SECONDS` | 60      | 60 – 600                      | `domain::identity::message::Limits`                             |
+| `NUCLEUS_IDENTITY__MESSAGE__MOBILE__HOURLY`           | 5       | 1 – 5                         | `domain::identity::message::Limits`                             |
+| `NUCLEUS_IDENTITY__MESSAGE__MOBILE__DAILY`            | 10      | 1 – 10                        | `domain::identity::message::Limits`                             |
+| `NUCLEUS_IDENTITY__MESSAGE__SOURCE__MINUTE`           | 3       | 1 – 3                         | `domain::identity::message::Limits`                             |
+| `NUCLEUS_IDENTITY__MESSAGE__SOURCE__HOURLY`           | 10      | 1 – 10                        | `domain::identity::message::Limits`                             |
+| `NUCLEUS_IDENTITY__SESSION__MESSAGE_SECONDS`          | 86400   | 3600 – 86400                  | `domain::identity::session::settings::Settings`                 |
+| `NUCLEUS_IDENTITY__SESSION__WECHAT_SECONDS`           | 2592000 | 3600 – 2592000                | `domain::identity::session::Lifetimes`                          |
+| `NUCLEUS_IDENTITY__REGISTRATION__LIFETIME_SECONDS`    | 600     | 60 – 600                      | `domain::identity::authentication::session::settings::Settings` |
+| `NUCLEUS_IDENTITY__REGISTRATION__HOURLY`              | 5       | 1 – 5                         | `domain::registration::Limits`                                  |
+| `NUCLEUS_IDENTITY__AUTHENTICATION_RECOVERY_SECONDS`   | 600     | 60 – 600                      | `domain::identity::session::settings::Settings`                 |
+| `NUCLEUS_IDENTITY__AVATAR__LIFETIME_SECONDS`          | 86400   | 60 – 86400                    | `domain::identity::avatar::link::Link`                          |
+| `NUCLEUS_IDENTITY__AVATAR__RETENTION_SECONDS`         | 86400   | 正整数且时钟可表示            | `domain::identity::avatar::retention::Settings`                 |
+| `NUCLEUS_IDENTITY__AVATAR__HOURLY`                    | 10      | 正整数且可表示为 SQL `bigint` | `domain::identity::avatar::UploadLimits`                        |
+| `NUCLEUS_MESSAGE__TIMEOUT_MILLISECONDS`               | 10000   | 1000 – 10000                  | `domain::identity::message::settings::Settings`                 |
+| `NUCLEUS_PROCESS__STOP_SECONDS`                       | 30      | 正数且能形成单调截止点        | `nucleus::process::Settings`                                    |
 
 数据库在线池容量通过必填键 `NUCLEUS_DATABASE__CAPACITY` 提供，接受可表示为 `usize` 且至少为 2 的整数，不设固定业务上限；还须通过[连接库的技术边界校验](database.md#已交付的连接库)。阶段预算通过 `NUCLEUS_DATABASE__BUDGETS__WAIT_SECONDS`、`NUCLEUS_DATABASE__BUDGETS__CONNECT_SECONDS` 和 `NUCLEUS_DATABASE__BUDGETS__RECYCLE_SECONDS` 提供，默认分别为 3、5、3 秒。环境输入接受非零整数秒，并校验能否形成计时截止点；各项独立应用缺省值。容量和预算由 `platform::database::settings` 校验。
 
@@ -136,7 +140,9 @@ R2 每手机号滚动小时额度由 `domain::registration::Limits` 校验。业
 | `domain::identity::authentication::session::settings::Settings` | R1 待注册凭据期限的默认值及校验，并组合 Session 设置         |
 | `domain::registration::Limits`                                  | R2 每手机号小时额度的默认值及范围校验，已接入环境装载        |
 | `domain::identity::avatar::link::Link`                          | 头像 origin 与新签链接有效期，已接入环境装载                 |
-| `domain::identity::avatar::retention::Settings`                 | 已注销账户默认头像元数据的保留宽限、默认值与校验             |
+| `domain::identity::avatar::retention::Settings`                 | 更换或注销后头像的保留宽限、默认值与校验                     |
+| `domain::identity::avatar::UploadLimits`                        | 每账户滚动一小时内实际更换次数；无需变更不计数               |
+| `platform::files::Settings`                                     | 挂载身份和私人根目录；头像是当前文件消费者                   |
 | `domain::identity::website::AppId`                              | 已交付网站身份的受控构造及 SQL 解码；无 SDK 或网络依赖       |
 | `nucleus::identity::challenge::Settings`                        | 公开 site key 的受控构造与公开投影                           |
 | `domain::identity::challenge::settings::Settings`               | 主机名集合，已交付                                           |

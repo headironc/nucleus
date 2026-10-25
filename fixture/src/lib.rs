@@ -9,7 +9,7 @@ use std::{
     collections::HashMap,
     fs,
     io::{self, Read, Seek, SeekFrom},
-    os::unix::fs::PermissionsExt,
+    os::unix::fs::{MetadataExt as _, PermissionsExt},
     path::{Path, PathBuf},
     process::Command,
     time::Duration,
@@ -138,6 +138,24 @@ impl Server {
             );
         }
         self
+    }
+
+    /// A private directory and its actual filesystem identity, removed with this server.
+    pub fn files(&self) -> (PathBuf, PathBuf, u64) {
+        let root = tempfile::Builder::new()
+            .permissions(fs::Permissions::from_mode(0o700))
+            .tempdir_in(self.directory.path())
+            .expect("private file directory")
+            .keep();
+        let device = root.metadata().expect("file directory device").dev();
+        let mut mount = root.clone();
+        while let Some(parent) = mount.parent() {
+            if parent.metadata().expect("mount ancestor").dev() != device {
+                break;
+            }
+            mount = parent.to_path_buf();
+        }
+        (root, mount, device)
     }
 
     pub fn port(&self) -> u16 {

@@ -8,7 +8,7 @@ use syn::{
     parse::{ParseStream, Parser},
 };
 
-const PROTECTED_TABLES: [(&str, &[&str]); 51] = [
+const PROTECTED_TABLES: [(&str, &[&str]); 55] = [
     ("content.columns", &["content/column/state.rs"]),
     (
         "content.changes",
@@ -95,6 +95,13 @@ const PROTECTED_TABLES: [(&str, &[&str]); 51] = [
     ("identity.replacements", &["identity/account/record.rs"]),
     ("identity.logouts", &["identity/account/record.rs"]),
     ("identity.projections", &["identity/account/record.rs"]),
+    ("identity.portraits", &["identity/account/record.rs"]),
+    ("identity.uploads", &["identity/avatar/upload.rs"]),
+    (
+        "identity.publications",
+        &["identity/avatar/upload.rs", "identity/avatar/retention.rs"],
+    ),
+    ("identity.deletions", &["identity/avatar/retention.rs"]),
     ("identity.sessions", &["identity/session/state.rs"]),
     ("identity.issuances", &["identity/session/state.rs"]),
     ("identity.revocations", &["identity/session/state.rs"]),
@@ -120,10 +127,24 @@ fn string_literals(input: ParseStream, strings: &mut Vec<String>) -> syn::Result
                 input.call(Attribute::parse_outer)?
             };
             if test_only(&attributes) {
+                let named_field = {
+                    let field = input.fork();
+                    field.call(syn::Field::parse_named).is_ok()
+                        && (field.is_empty() || field.peek(Token![,]))
+                };
+                let field_value = {
+                    let field = input.fork();
+                    field.parse::<syn::FieldValue>().is_ok()
+                        && (field.is_empty() || field.peek(Token![,]))
+                };
                 if input.fork().parse::<Item>().is_ok() {
                     let _: Item = input.parse()?;
                 } else if input.fork().parse::<syn::Arm>().is_ok() {
                     let _: syn::Arm = input.parse()?;
+                } else if named_field {
+                    let _ = input.call(syn::Field::parse_named)?;
+                } else if field_value {
+                    let _: syn::FieldValue = input.parse()?;
                 } else {
                     let _: syn::Variant = input.parse()?;
                 }
@@ -499,6 +520,10 @@ mod tests {
             ("identity/account/state.rs/extra.rs", "identity.accounts"),
             ("identity/session/state.rs.extra", "identity.sessions"),
             ("access/holder.rs", "identity.projections"),
+            ("identity/avatar/upload.rs", "identity.portraits"),
+            ("identity/cancellation.rs", "identity.uploads"),
+            ("identity/avatar/mod.rs", "identity.publications"),
+            ("identity/avatar/upload.rs", "identity.deletions"),
             ("identity/account/record.rs", "access.projections"),
         ] {
             let source = format!(r#"fn query() {{ execute!("SELECT * FROM {table}"); }}"#);
@@ -568,6 +593,41 @@ mod tests {
             r#"#![cfg(test)] const SQL: &str = "center.profiles";"#,
         )
         .expect("test-only source is excluded");
+    }
+
+    #[test]
+    fn sql_guard_handles_test_fields_without_excluding_production_initializers() {
+        let source = r#"
+            struct Example {
+                active: bool,
+                #[cfg(test)]
+                sql: &'static str,
+            }
+            fn example() -> Example {
+                Example {
+                    active: true,
+                    #[cfg(test)]
+                    sql: concat!("center.profiles"),
+                }
+            }
+        "#;
+        check_source(Path::new("consumer.rs"), source)
+            .expect("test fields are outside production SQL");
+        check_source(
+            Path::new("consumer.rs"),
+            r#"enum ExampleKind {
+                #[cfg(test)]
+                Test([u8; { "center.profiles".len() }]),
+                Production,
+            }"#,
+        )
+        .expect("a tuple variant is not mistaken for a shorthand field");
+        for condition in ["not(test)", "any(test, feature = \"production\")"] {
+            let source = source.replace("cfg(test)", &format!("cfg({condition})"));
+            let error = check_source(Path::new("consumer.rs"), &source)
+                .expect_err("production field initializers remain guarded");
+            assert!(error.contains("protected table center.profiles"), "{error}");
+        }
     }
 
     #[test]

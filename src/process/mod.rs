@@ -538,6 +538,46 @@ mod tests {
 
     static SERVER: Mutex<Weak<fixture::Server>> = Mutex::new(Weak::new());
 
+    fn services(capacity: usize) -> Settings {
+        let server = SERVER
+            .lock()
+            .expect("fixture lock")
+            .upgrade()
+            .expect("running fixture server");
+        let (root, mount, device) = server.files();
+        let storage = domain::identity::avatar::StorageSettings::new(root, mount, device)
+            .expect("actual file storage");
+        service_settings(capacity, storage)
+    }
+
+    fn child_services(capacity: usize) -> Settings {
+        let value = |key| std::env::var(key).expect("inherited fixture storage");
+        let storage = domain::identity::avatar::StorageSettings::new(
+            value("NUCLEUS_STORAGE__ROOT").into(),
+            value("NUCLEUS_STORAGE__MOUNT").into(),
+            value("NUCLEUS_STORAGE__DEVICE")
+                .parse()
+                .expect("fixture device"),
+        )
+        .expect("actual inherited file storage");
+        service_settings(capacity, storage)
+    }
+
+    fn service_settings(
+        capacity: usize,
+        storage: domain::identity::avatar::StorageSettings,
+    ) -> Settings {
+        Settings::new(
+            capacity,
+            domain::identity::message::Limits::default(),
+            session_settings(),
+            domain::registration::Limits::default(),
+            avatar_settings(),
+        )
+        .expect("settings")
+        .with_avatar_storage(Some(storage))
+    }
+
     async fn message() -> domain::identity::message::client::Client {
         let supplier = fixture::supplier::Supplier::start().await;
         message_at(supplier.address(), supplier.authority())
@@ -925,14 +965,7 @@ mod tests {
         Application::start(
             connections(server, name, "clerk"),
             keys(active),
-            Settings::new(
-                capacity,
-                domain::identity::message::Limits::default(),
-                session_settings(),
-                domain::registration::Limits::default(),
-                avatar_settings(),
-            )
-            .expect("settings"),
+            services(capacity),
             process::Settings::new(Duration::from_secs(30)).expect("process settings"),
             supplier.client(),
             message().await,
@@ -1209,7 +1242,7 @@ mod tests {
                     let name=database(&server).await;
                     let supplier=Supplier::echoing().await;
                     let mut sms=fixture::supplier::Supplier::start().await;
-                    let application=Application::start(connections(&server,&name,"clerk"),keys(0),Settings::new(8,domain::identity::message::Limits::default(),session_settings(),domain::registration::Limits::default(),avatar_settings()).expect("settings"),process::Settings::new(Duration::from_secs(5)).expect("stop"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("initial startup");
+                    let application=Application::start(connections(&server,&name,"clerk"),keys(0),services(8),process::Settings::new(Duration::from_secs(5)).expect("stop"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("initial startup");
                     let (base,stop,task)=running(application).await;
                     let original=issued_session_for(&base,&mut sms,"13800000000").await;
                     let observer=connections(&server,&name,"clerk").recover().await.expect("runtime observer");
@@ -1219,7 +1252,7 @@ mod tests {
                     let mut owner=connections(&server,&name,"postgres").recover().await.expect("isolated time fixture owner");
                     issuance.age_for_test(owner.client_mut(), chrono::TimeDelta::hours(i64::from(hours))).await.expect("consistent history and holder seals");
                     owner.terminate().await.expect("owner ended");
-                    let application=Application::start(connections(&server,&name,"clerk"),keys(0),Settings::new(8,domain::identity::message::Limits::default(),session_settings(),domain::registration::Limits::default(),avatar_settings()).expect("settings"),process::Settings::new(Duration::from_secs(5)).expect("stop"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("complete historical graph passes startup");
+                    let application=Application::start(connections(&server,&name,"clerk"),keys(0),services(8),process::Settings::new(Duration::from_secs(5)).expect("stop"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("complete historical graph passes startup");
                     application.services.registration().retention().run().await.expect("real R2 cleanup before background starts");
                     let row=observer.client().query_one("SELECT (SELECT count(*) FROM identity.sessions WHERE account_id=$1) AS sessions, NOT EXISTS(SELECT 1 FROM identity.handoffs WHERE id=$2::text::uuid) AS no_handoff, EXISTS(SELECT 1 FROM identity.accounts WHERE id=$1) AND EXISTS(SELECT 1 FROM access.holders WHERE id=$1) AND EXISTS(SELECT 1 FROM identity.receipts WHERE account_id=$1) AS retained, NOT EXISTS(SELECT 1 FROM identity.sessions WHERE account_id=$1 AND expires_at>clock_timestamp()) AS expired",&[&account_id,&original.0]).await.expect("legal cleanup effects");
                     assert_eq!(row.get::<_,i64>("sessions"),i64::from(hours==25));assert!(row.get::<_,bool>("no_handoff"));assert!(row.get::<_,bool>("retained"));assert!(row.get::<_,bool>("expired"));
@@ -1801,14 +1834,7 @@ mod tests {
                         Application::start(
                             connections,
                             keys(0),
-                            Settings::new(
-                                2,
-                                domain::identity::message::Limits::default(),
-                                session_settings(),
-                                domain::registration::Limits::default(),
-                                avatar_settings(),
-                            )
-                            .expect("settings"),
+                            services(2),
                             process::Settings::new(Duration::from_secs(30))
                                 .expect("process settings"),
                             client,
@@ -1902,14 +1928,7 @@ mod tests {
                 let second = Application::start(
                     connections(&server, &name, "clerk"),
                     keys(0),
-                    Settings::new(
-                        8,
-                        domain::identity::message::Limits::default(),
-                        session_settings(),
-                        domain::registration::Limits::default(),
-                        avatar_settings(),
-                    )
-                    .expect("settings"),
+                    services(8),
                     process::Settings::new(Duration::from_secs(30)).expect("process settings"),
                     supplier.client(),
                     message().await,
@@ -2371,7 +2390,7 @@ mod tests {
             reader.terminate().await.expect("reader ends");
             let supplier = Supplier::responding(serde_json::json!({"success":true,"challenge_ts":now,"hostname":"example.com","action":"send_authentication_code","cdata":OPERATION}).to_string()).await;
             let mut sms = fixture::supplier::Supplier::start().await;
-            let application = Application::start(connections(&server, &name, "clerk"), keys(0), Settings::new(8, domain::identity::message::Limits::default(), session_settings(), domain::registration::Limits::default(), avatar_settings()).expect("settings"), process::Settings::new(Duration::from_millis(20)).expect("stop"), supplier.client(), message_at(sms.address(), sms.authority())).await.expect("start");
+            let application = Application::start(connections(&server, &name, "clerk"), keys(0), services(8), process::Settings::new(Duration::from_millis(20)).expect("stop"), supplier.client(), message_at(sms.address(), sms.authority())).await.expect("start");
             let (base, stop, task) = running(application).await;
             let caller = tokio::spawn(http_client().post(format!("{base}/api/v1/codes")).header("operation-id", OPERATION).json(&serde_json::json!({"mobile":"13800000000","token":"fictional-token"})).send());
             let sent = timeout(Duration::from_secs(4), sms.request()).await.expect("accepted send");
@@ -2454,14 +2473,7 @@ mod tests {
             let starting = Application::start(
                 connections,
                 keys(0),
-                Settings::new(
-                    8,
-                    domain::identity::message::Limits::default(),
-                    session_settings(),
-                    domain::registration::Limits::default(),
-                    avatar_settings(),
-                )
-                .expect("C1 settings"),
+                child_services(8),
                 process::Settings::new(stop).expect("stop budget"),
                 supplier,
                 sms,
@@ -2511,6 +2523,7 @@ mod tests {
                 .await
                 .expect("occupied HTTP address");
             let stop = Duration::from_millis(if released { 3000 } else { 1000 });
+            let (storage_root, storage_mount, storage_device) = server.files();
             let mut child =
                 tokio::process::Command::new(std::env::current_exe().expect("test binary"))
                     .args([
@@ -2521,6 +2534,9 @@ mod tests {
                     .env("NUCLEUS_HTTP_TEST_DATABASE", &name)
                     .env("NUCLEUS_HTTP_TEST_PORT", proxy.port().to_string())
                     .env("NUCLEUS_HTTP_TEST_AUTHORITY", server.authority())
+                    .env("NUCLEUS_STORAGE__ROOT", &storage_root)
+                    .env("NUCLEUS_STORAGE__MOUNT", &storage_mount)
+                    .env("NUCLEUS_STORAGE__DEVICE", storage_device.to_string())
                     .env(
                         "NUCLEUS_HTTP_TEST_CHALLENGE_PORT",
                         supplier.port.to_string(),
@@ -2746,6 +2762,7 @@ mod tests {
             let client = http_client();
             let mut option = None;
             let mut registration = None;
+            let (storage_root, storage_mount, storage_device) = server.files();
             for attempt in 0..2 {
                 let ready = TcpListener::bind("127.0.0.1:0").await.expect("readiness IPC");
                 let mut command = tokio::process::Command::new(std::env::current_exe().expect("test executable"));
@@ -2753,6 +2770,9 @@ mod tests {
                     .env("NUCLEUS_HTTP_TEST_DATABASE",&name)
                     .env("NUCLEUS_HTTP_TEST_PORT",server.port().to_string())
                     .env("NUCLEUS_HTTP_TEST_AUTHORITY",server.authority())
+                    .env("NUCLEUS_STORAGE__ROOT",&storage_root)
+                    .env("NUCLEUS_STORAGE__MOUNT",&storage_mount)
+                    .env("NUCLEUS_STORAGE__DEVICE",storage_device.to_string())
                     .env("NUCLEUS_HTTP_TEST_CHALLENGE_PORT",supplier.port.to_string())
                     .env("NUCLEUS_HTTP_TEST_MESSAGE_ADDRESS",sms.address().to_string())
                     .env("NUCLEUS_HTTP_TEST_MESSAGE_AUTHORITY",&certificate)
@@ -2804,11 +2824,11 @@ mod tests {
                 assert!(timeout(Duration::from_secs(7),child.wait()).await.expect("confirmed process exit").expect("reap owned process").success());
                 assert!(instance_released(&server, &name).await, "old process released lock");
             }
-            let mut preparation=Application::start(connections(&server,&name,"clerk"),keys(0),Settings::new(8,domain::identity::message::Limits::default(),session_settings(),domain::registration::Limits::default(),avatar_settings()).expect("settings"),process::Settings::new(Duration::from_secs(5)).expect("stop"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("authenticated original history");
+            let mut preparation=Application::start(connections(&server,&name,"clerk"),keys(0),services(8),process::Settings::new(Duration::from_secs(5)).expect("stop"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("authenticated original history");
             let mut admin=connections(&server,&name,"postgres").recover().await.expect("isolated retained R2 history");
             preparation.registration().age_for_test(admin.client_mut(),chrono::TimeDelta::hours(25)).await.expect("consistent historical graph");
             preparation.stop().await.expect("fixture application drained");drop(preparation);
-            let application=Application::start(connections(&server,&name,"clerk"),keys(0),Settings::new(8,domain::identity::message::Limits::default(),session_settings(),domain::registration::Limits::default(),avatar_settings()).expect("settings"),process::Settings::new(Duration::from_millis(30)).expect("stop"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("historical startup");
+            let application=Application::start(connections(&server,&name,"clerk"),keys(0),services(8),process::Settings::new(Duration::from_millis(30)).expect("stop"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("historical startup");
             let operation:Uuid=admin.client().query_one("SELECT operation_id FROM identity.receipts",&[]).await.expect("original permanent R2 operation").get(0);
             let lock=registration_cleanup_lock(operation);
             admin.client().batch_execute("BEGIN").await.expect("fixture lock transaction");
@@ -2906,14 +2926,14 @@ mod tests {
                 let name = database(&server).await;
                 let supplier = Supplier::echoing().await;
                 let mut sms = fixture::supplier::Supplier::start().await;
-                let application = Application::start(connections(&server,&name,"clerk"),keys(0),Settings::new(8,domain::identity::message::Limits::default(),session_settings(),domain::registration::Limits::default(),avatar_settings()).expect("settings"),process::Settings::new(Duration::from_secs(5)).expect("stop settings"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("initial application");
+                let application = Application::start(connections(&server,&name,"clerk"),keys(0),services(8),process::Settings::new(Duration::from_secs(5)).expect("stop settings"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("initial application");
                 let (base,stop,task) = running(application).await;
                 let (session_id,cookie) = issued_session_for(&base,&mut sms,"13900000000").await;
                 stop.send(()).expect("stop original issuance"); let (application,result)=task.await.expect("original task"); result.expect("original drain"); let issuance=application.registration().clone(); drop(application);
                 let mut admin = connections(&server,&name,"postgres").recover().await.expect("isolated history owner");
                 issuance.age_for_test(admin.client_mut(),chrono::TimeDelta::minutes(11)).await.expect("consistent sealed history with expired handoff and valid session");
                 let proxy = Proxy::start(&server).await;
-                let application = Application::start(proxy_connections(&name,&proxy),keys(0),Settings::new(8,domain::identity::message::Limits::default(),session_settings(),domain::registration::Limits::default(),avatar_settings()).expect("settings"),process::Settings::new(Duration::from_millis(30)).expect("short stop budget"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("healthy historical startup");
+                let application = Application::start(proxy_connections(&name,&proxy),keys(0),services(8),process::Settings::new(Duration::from_millis(30)).expect("short stop budget"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("healthy historical startup");
                 admin.client().batch_execute("BEGIN; SELECT FROM identity.accounts FOR UPDATE").await.expect("hold R1 cleanup account");
                 let blocker: i32 = admin.client().query_one("SELECT pg_backend_pid()",&[]).await.expect("account blocker").get(0);
                 let observer = connections(&server,&name,"clerk").recover().await.expect("independent observer");
@@ -2949,7 +2969,7 @@ mod tests {
                     tokio::task::yield_now().await;
                 }}).await.expect("both original and recovery backends ended");
                 assert!(observer.client().query_one(effects,&[&session_id,&authentication_id,&operation,&expires_at]).await.expect("effects remain before restart").get::<_,bool>(0));
-                let application = Application::start(connections(&server,&name,"clerk"),keys(0),Settings::new(8,domain::identity::message::Limits::default(),session_settings(),domain::registration::Limits::default(),avatar_settings()).expect("settings"),process::Settings::new(Duration::from_secs(5)).expect("stop settings"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("restart without handoff");
+                let application = Application::start(connections(&server,&name,"clerk"),keys(0),services(8),process::Settings::new(Duration::from_secs(5)).expect("stop settings"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("restart without handoff");
                 let (base,stop,task)=running(application).await;
                 let response=http_client().get(format!("{base}/api/v1/accounts/current")).header("operation-id",OPERATION).header("session-id",&session_id).header("cookie",cookie).send().await.expect("original session remains usable"); assert_eq!(response.status(),200);
                 stop.send(()).expect("stop later round"); let (application,result)=task.await.expect("later process task"); result.expect("later drain"); drop(application);
@@ -3011,7 +3031,7 @@ mod tests {
                     let name = database(&server).await;
                     let supplier = Supplier::echoing().await;
                     let mut sms = fixture::supplier::Supplier::start().await;
-                    let application = Application::start(connections(&server,&name,"clerk"), keys(0), Settings::new(8,domain::identity::message::Limits::default(),session_settings(),domain::registration::Limits::default(),avatar_settings()).expect("settings"), process::Settings::new(Duration::from_secs(5)).expect("stop settings"), supplier.client(), message_at(sms.address(),sms.authority())).await.expect("initial online application");
+                    let application = Application::start(connections(&server,&name,"clerk"), keys(0), services(8), process::Settings::new(Duration::from_secs(5)).expect("stop settings"), supplier.client(), message_at(sms.address(),sms.authority())).await.expect("initial online application");
                     let (base,stop,task) = running(application).await;
                     let (session_id,cookie) = issued_session_for(&base,&mut sms,"13800000000").await;
                     let response = http_client().get(format!("{base}/api/v1/accounts/current")).header("operation-id",OPERATION).header("session-id",&session_id).header("cookie",&cookie).send().await.expect("complete original credentials before cleanup");
@@ -3026,7 +3046,7 @@ mod tests {
                     // Only the stalled round asserts a stop timeout. The other stop drains cleanup that is still
                     // running after the injected FATAL, so a short budget would race scheduling instead of testing it.
                     let budget = if stalled { Duration::from_millis(30) } else { Duration::from_secs(5) };
-                    let application = Application::start(proxy_connections(&name,&proxy), keys(0), Settings::new(8,domain::identity::message::Limits::default(),session_settings(),domain::registration::Limits::default(),avatar_settings()).expect("settings"), process::Settings::new(budget).expect("round stop budget"), supplier.client(), message_at(sms.address(),sms.authority())).await.expect("healthy historical startup");
+                    let application = Application::start(proxy_connections(&name,&proxy), keys(0), services(8), process::Settings::new(budget).expect("round stop budget"), supplier.client(), message_at(sms.address(),sms.authority())).await.expect("healthy historical startup");
                     let operation:Uuid=admin.client().query_one("SELECT operation_id FROM identity.receipts",&[]).await.expect("original R2 operation").get(0);
                     let lock=registration_cleanup_lock(operation);
                     admin.client().batch_execute("BEGIN").await.expect("fixture lock transaction");
@@ -3064,7 +3084,7 @@ mod tests {
                         if observer.client().query_one("SELECT NOT EXISTS(SELECT 1 FROM pg_catalog.pg_stat_activity WHERE pid=ANY($1))", &[&vec![original_pid,recovery_pid]]).await.expect("actual cleanup backends ended").get::<_,bool>(0) { break; }
                         tokio::task::yield_now().await;
                     }}).await.expect("both original and readback backends ended");
-                    let application = Application::start(connections(&server,&name,"clerk"),keys(0),Settings::new(8,domain::identity::message::Limits::default(),session_settings(),domain::registration::Limits::default(),avatar_settings()).expect("settings"),process::Settings::new(Duration::from_secs(5)).expect("stop"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("restart with permanent receipt and deleted credentials");
+                    let application = Application::start(connections(&server,&name,"clerk"),keys(0),services(8),process::Settings::new(Duration::from_secs(5)).expect("stop"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("restart with permanent receipt and deleted credentials");
                     let (base,stop,task) = running(application).await;
                     let response = http_client().get(format!("{base}/api/v1/accounts/current")).header("operation-id",OPERATION).header("session-id",&session_id).header("cookie",cookie).send().await.expect("complete original credentials after cleanup and restart");
                     assert_eq!(response.status(),401);
@@ -3122,7 +3142,7 @@ mod tests {
                 let name=database(&server).await;
                 let supplier=Supplier::responding(serde_json::json!({"success":true,"challenge_ts":chrono::Utc::now(),"hostname":"example.com","action":"send_authentication_code","cdata":OPERATION}).to_string()).await;
                 let mut sms=fixture::supplier::Supplier::start().await;
-                let mut application=Application::start(connections(&server,&name,"clerk"),keys(0),Settings::new(8,domain::identity::message::Limits::default(),session_settings(),domain::registration::Limits::default(),avatar_settings()).expect("settings"),process::Settings::new(Duration::from_secs(5)).expect("stop"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("initial application");
+                let mut application=Application::start(connections(&server,&name,"clerk"),keys(0),services(8),process::Settings::new(Duration::from_secs(5)).expect("stop"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("initial application");
                 let service=application.authentication().clone();
                 let task=tokio::spawn(async move { service.send(input(OPERATION,"13800000000","fictional-retention-token")).await });
                 let request=timeout(Duration::from_secs(5),sms.request()).await.expect("original PNVS request");
@@ -3147,7 +3167,7 @@ mod tests {
                             UPDATE identity.checks SET expires_at=expires_at-interval '25 hours';
                             UPDATE identity.claims SET created_at=created_at-interval '25 hours'; COMMIT").await.expect("consistent isolated C1 history");
                         let proxy=Proxy::start(&server).await;
-                        let application=Application::start(proxy_connections(&name,&proxy),keys(0),Settings::new(8,domain::identity::message::Limits::default(),session_settings(),domain::registration::Limits::default(),avatar_settings()).expect("settings"),process::Settings::new(Duration::from_millis(30)).expect("short stop"),supplier.client(),message_at(address,&authority)).await.expect("healthy historical startup");
+                        let application=Application::start(proxy_connections(&name,&proxy),keys(0),services(8),process::Settings::new(Duration::from_millis(30)).expect("short stop"),supplier.client(),message_at(address,&authority)).await.expect("healthy historical startup");
                         let observer=connections(&server,&name,"clerk").recover().await.expect("independent observer");
                         let row=observer.client().query_one("SELECT challenge.id,challenge.operation_id FROM identity.challenges challenge JOIN identity.messages message ON message.challenge_id=challenge.id WHERE message.id=$1",&[&receipt.id()]).await.expect("original graph from independent SQL");
                         let challenge_id:Uuid=row.get(0);let operation:Uuid=row.get(1);
@@ -3184,7 +3204,7 @@ mod tests {
                             if observer.client().query_one("SELECT NOT EXISTS(SELECT 1 FROM pg_catalog.pg_stat_activity WHERE pid=ANY($1))",&[&vec![original_pid,recovery_pid]]).await.expect("actual backend termination").get::<_,bool>(0) {break;}
                             tokio::task::yield_now().await;
                         }}).await.expect("both original and recovery backends ended");
-                        let application=Application::start(connections(&server,&name,"clerk"),keys(0),Settings::new(8,domain::identity::message::Limits::default(),session_settings(),domain::registration::Limits::default(),avatar_settings()).expect("settings"),process::Settings::new(Duration::from_secs(5)).expect("stop"),supplier.client(),message_at(address,&authority)).await.expect("restart without original C1 facts");
+                        let application=Application::start(connections(&server,&name,"clerk"),keys(0),services(8),process::Settings::new(Duration::from_secs(5)).expect("stop"),supplier.client(),message_at(address,&authority)).await.expect("restart without original C1 facts");
                         let (_,stop,task)=running(application).await;
                         stop.send(()).expect("stop next process round");let (application,result)=task.await.expect("next process task");result.expect("next drain");drop(application);
                         let row=observer.client().query_one(group,&[&challenge_id,&message_id]).await.expect("original IDs remain absent");assert!((0..4).all(|column|!row.get::<_,bool>(column)));
@@ -3206,14 +3226,7 @@ mod tests {
             let error = Application::start(
                 connections(&server, &name, "missing_runtime_identity"),
                 keys(0),
-                Settings::new(
-                    2,
-                    domain::identity::message::Limits::default(),
-                    session_settings(),
-                    domain::registration::Limits::default(),
-                    avatar_settings(),
-                )
-                .expect("settings"),
+                services(2),
                 process::Settings::new(Duration::from_secs(30)).expect("process settings"),
                 supplier.client(),
                 message().await,
@@ -3326,14 +3339,7 @@ mod tests {
             let mut service = Application::start(
                 connections(&server, &name, "clerk"),
                 keys(0),
-                Settings::new(
-                    1,
-                    domain::identity::message::Limits::default(),
-                    session_settings(),
-                    domain::registration::Limits::default(),
-                    avatar_settings(),
-                )
-                .expect("settings"),
+                services(1),
                 process::Settings::new(Duration::from_secs(1)).expect("process settings"),
                 supplier.client(),
                 message().await,
@@ -3704,7 +3710,7 @@ mod tests {
             drop(service);
             proxy.stop().await;
             admin.client().batch_execute("UPDATE security.clocks SET observed_at = clock_timestamp() + interval '1 hour'").await.expect("future persisted high-water fixture");
-            let error = Application::start(connections(&server, &name, "clerk"), keys(0), Settings::new(2, domain::identity::message::Limits::default(), session_settings(), domain::registration::Limits::default(), avatar_settings()).expect("settings"), process::Settings::new(Duration::from_secs(30)).expect("process settings"),
+            let error = Application::start(connections(&server, &name, "clerk"), keys(0), services(2), process::Settings::new(Duration::from_secs(30)).expect("process settings"),
                 supplier.client(), message().await).await.err().expect("restart detects rollback");
             assert!(matches!(error, process::Error::Services(domain::startup::Error::Runtime(domain::runtime::Error::ClockInvalid))));
             assert_eq!(supplier.calls.load(Ordering::SeqCst), 0);
@@ -3741,14 +3747,7 @@ mod tests {
         Application::start(
             proxy_connections(name, proxy),
             keys(0),
-            Settings::new(
-                4,
-                domain::identity::message::Limits::default(),
-                session_settings(),
-                domain::registration::Limits::default(),
-                avatar_settings(),
-            )
-            .expect("settings"),
+            services(4),
             process::Settings::new(Duration::from_secs(30)).expect("process settings"),
             supplier.client(),
             message().await,
@@ -3771,8 +3770,8 @@ mod tests {
                         observer.client().batch_execute("
                             BEGIN;
                             SET LOCAL session_replication_role = replica;
-                            INSERT INTO identity.avatars (id, account_id, digest, size, width, height, released_at)
-                            SELECT gen_random_uuid(), gen_random_uuid(), digest, size, width, height, clock_timestamp() - interval '1 hour'
+                            INSERT INTO identity.avatars (id, account_id, revision, digest, size, width, height, released_at, release, release_operation_id, release_transaction_id)
+                            SELECT gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), digest, size, width, height, clock_timestamp() - interval '1 hour', 'cancellation', gen_random_uuid(), pg_current_xact_id()
                             FROM identity.avatars CROSS JOIN generate_series(1, 129) WHERE released_at IS NULL;
                             COMMIT;
                             CREATE TEMP TABLE original_avatar AS
@@ -3804,13 +3803,13 @@ mod tests {
                     observer.client().batch_execute("COMMIT").await.expect("publish invalid fixture");
                     let error = Application::start(
                         connections(&server, &name, "clerk"), keys(0),
-                        Settings::new(2, domain::identity::message::Limits::default(), session_settings(), domain::registration::Limits::default(), avatar_settings()).expect("settings"),
+                        services(2),
                         process::Settings::new(Duration::from_secs(30)).expect("process settings"),
                         supplier.client(), message().await,
                     ).await.err().expect("invalid retained facts prevent startup");
                     match (owner, error) {
                         ("identity", process::Error::Services(domain::startup::Error::Identity(
-                            domain::identity::verification::Error::Facts { rule: "default avatar content" },
+                            domain::identity::verification::Error::Avatar(domain::identity::avatar::Error::Mismatch),
                         ))) => {},
                         ("access", process::Error::Services(domain::startup::Error::Role(domain::kernel::Error::Corrupt(fault)))) => {
                             assert_eq!(fault.stage(), domain::kernel::Stage::Command);
@@ -3985,14 +3984,7 @@ mod tests {
                 let startup = Box::pin(Application::start(
                     startup_connections,
                     keys(0),
-                    Settings::new(
-                        2,
-                        domain::identity::message::Limits::default(),
-                        session_settings(),
-                        domain::registration::Limits::default(),
-                        avatar_settings(),
-                    )
-                    .expect("settings"),
+                    services(2),
                     process::Settings::new(Duration::from_secs(30)).expect("process settings"),
                     supplier.client(),
                     message().await,
@@ -4108,14 +4100,7 @@ mod tests {
                 let startup = Application::start(
                     connections(&server, &name, "clerk"),
                     keys(0),
-                    Settings::new(
-                        2,
-                        domain::identity::message::Limits::default(),
-                        session_settings(),
-                        domain::registration::Limits::default(),
-                        avatar_settings(),
-                    )
-                    .expect("settings"),
+                    services(2),
                     process::Settings::new(Duration::from_secs(30)).expect("process settings"),
                     supplier.client(),
                     message().await,
@@ -4259,14 +4244,7 @@ mod tests {
             let startup = Application::start(
                 proxy_connections(&name, &proxy),
                 keys(0),
-                Settings::new(
-                    2,
-                    domain::identity::message::Limits::default(),
-                    session_settings(),
-                    domain::registration::Limits::default(),
-                    avatar_settings(),
-                )
-                .expect("settings"),
+                services(2),
                 process::Settings::new(Duration::from_secs(30)).expect("process settings"),
                 supplier.client(),
                 message().await,
@@ -4616,14 +4594,7 @@ mod tests {
                 let error = Application::start(
                     connections(&server, &name, "clerk"),
                     keys(0),
-                    Settings::new(
-                        2,
-                        domain::identity::message::Limits::default(),
-                        session_settings(),
-                        domain::registration::Limits::default(),
-                        avatar_settings(),
-                    )
-                    .expect("settings"),
+                    services(2),
                     process::Settings::new(Duration::from_secs(30)).expect("stop settings"),
                     supplier.client(),
                     message().await,
@@ -4678,7 +4649,7 @@ mod tests {
                 owner.client().batch_execute(corruption).await.expect("invalid retained-history fixture");
                 owner.client().batch_execute("ALTER TABLE identity.challenges ENABLE TRIGGER challenges_transition_check").await.expect("restore guard");
                 owner.terminate().await.expect("end owner");
-                let error = Application::start(connections(&server, &name, "clerk"), keys(0), Settings::new(2, domain::identity::message::Limits::default(), session_settings(), domain::registration::Limits::default(), avatar_settings()).expect("settings"), process::Settings::new(Duration::from_secs(30)).expect("process settings"),
+                let error = Application::start(connections(&server, &name, "clerk"), keys(0), services(2), process::Settings::new(Duration::from_secs(30)).expect("process settings"),
                     supplier.client(), message().await).await.err().expect("startup fails closed");
                 assert!(matches!(error, process::Error::Services(domain::startup::Error::Runtime(domain::runtime::Error::ClockInvalid) | domain::startup::Error::Authentication(Error::Mobile(_) | Error::Facts { .. } | Error::Time { .. }))), "{error:?}");
                 if index == 0 {
@@ -4816,7 +4787,7 @@ mod tests {
                 ("GRANT DELETE ON identity.cancellations TO clerk", "REVOKE DELETE ON identity.cancellations FROM clerk"),
             ] {
                 owner.client().batch_execute(grant).await.expect("excess grant");
-                let error = Application::start(connections(&server, &name, "clerk"), keys(0), Settings::new(2, domain::identity::message::Limits::default(), session_settings(), domain::registration::Limits::default(), avatar_settings()).expect("settings"), process::Settings::new(Duration::from_secs(30)).expect("process settings"),
+                let error = Application::start(connections(&server, &name, "clerk"), keys(0), services(2), process::Settings::new(Duration::from_secs(30)).expect("process settings"),
                     supplier.client(), message().await).await.err().expect("excess privilege blocks start");
                 assert!(matches!(error, process::Error::Database(domain::database::Error::Permissions)));
                 owner.client().batch_execute(revoke).await.expect("remove excess grant");
@@ -4829,7 +4800,7 @@ mod tests {
                 ("ALTER SCHEMA auxiliary OWNER TO clerk", "ALTER SCHEMA auxiliary OWNER TO postgres; REVOKE ALL ON SCHEMA auxiliary FROM clerk"),
             ] {
                 admin.client().batch_execute(grant).await.expect("excess permission in unrelated schema");
-                let error = Application::start(connections(&server, &name, "clerk"), keys(0), Settings::new(2, domain::identity::message::Limits::default(), session_settings(), domain::registration::Limits::default(), avatar_settings()).expect("settings"), process::Settings::new(Duration::from_secs(30)).expect("process settings"),
+                let error = Application::start(connections(&server, &name, "clerk"), keys(0), services(2), process::Settings::new(Duration::from_secs(30)).expect("process settings"),
                     supplier.client(), message().await).await.err().expect("every schema is checked");
                 assert!(matches!(error, process::Error::Database(domain::database::Error::Permissions)));
                 admin.client().batch_execute(revoke).await.expect("remove unrelated schema permission");
@@ -4842,7 +4813,7 @@ mod tests {
                 (format!("ALTER SCHEMA auxiliary OWNER TO {role}"), format!("ALTER SCHEMA auxiliary OWNER TO postgres; REVOKE ALL ON SCHEMA auxiliary FROM {role}")),
             ] {
                 admin.client().batch_execute(&grant).await.expect("set-role-only excess");
-                let error = Application::start(connections(&server, &name, "clerk"), keys(0), Settings::new(2, domain::identity::message::Limits::default(), session_settings(), domain::registration::Limits::default(), avatar_settings()).expect("settings"), process::Settings::new(Duration::from_secs(30)).expect("process settings"),
+                let error = Application::start(connections(&server, &name, "clerk"), keys(0), services(2), process::Settings::new(Duration::from_secs(30)).expect("process settings"),
                     supplier.client(), message().await).await.err().expect("SET ROLE excess blocks start");
                 assert!(matches!(error, process::Error::Database(domain::database::Error::Permissions)));
                 admin.client().batch_execute(&revoke).await.expect("remove role permission");
@@ -4888,14 +4859,7 @@ mod tests {
             let service = Application::start(
                 connections,
                 keys(0),
-                Settings::new(
-                    2,
-                    domain::identity::message::Limits::default(),
-                    session_settings(),
-                    domain::registration::Limits::default(),
-                    avatar_settings(),
-                )
-                .expect("settings"),
+                child_services(2),
                 process::Settings::new(Duration::from_secs(30)).expect("process settings"),
                 supplier.client(),
                 message().await,
@@ -4918,6 +4882,7 @@ mod tests {
         let runtime = Runtime::new().expect("runtime");
         let name = runtime.block_on(database(&server));
         let mut original = None;
+        let (storage_root, storage_mount, storage_device) = server.files();
         for _ in 0..2 {
             let mut child =
                 std::process::Command::new(std::env::current_exe().expect("test executable"))
@@ -4925,6 +4890,9 @@ mod tests {
                     .env("NUCLEUS_ACCEPTANCE_TEST_DATABASE", &name)
                     .env("NUCLEUS_ACCEPTANCE_TEST_PORT", server.port().to_string())
                     .env("NUCLEUS_ACCEPTANCE_TEST_AUTHORITY", server.authority())
+                    .env("NUCLEUS_STORAGE__ROOT", &storage_root)
+                    .env("NUCLEUS_STORAGE__MOUNT", &storage_mount)
+                    .env("NUCLEUS_STORAGE__DEVICE", storage_device.to_string())
                     .spawn()
                     .expect("isolated application process");
             let deadline = std::time::Instant::now() + Duration::from_secs(20);

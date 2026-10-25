@@ -51,6 +51,10 @@ impl State {
         self.revision_id
     }
 
+    pub(crate) fn account_state(&self) -> &Verified<account::state::State> {
+        &self.account
+    }
+
     pub(crate) fn observed_at(&self) -> DateTime<Utc> {
         self.observed_at
     }
@@ -155,17 +159,18 @@ pub(super) async fn deliver(
     client: &Client,
     state: &State,
     keys: &Keys,
-    history: history::Keys<'_>,
+    app: &App,
     avatar: &avatar::Service,
-    now: DateTime<Utc>,
 ) -> Result<Account, Error> {
-    let profile = profile(client, state, keys, history).await?;
+    let profile = profile(client, state, keys, app.keys()).await?;
     let (_, name, id_number) = profile.into_values();
-    let snapshot = avatar::find_by_account(client, &state.account)
+    let snapshot = avatar
+        .find_by_account(client, &state.account)
         .await?
         .ok_or(Error::Facts {
             rule: "a current account has its current avatar",
         })?;
+    let now = app.context().now(client).await?;
     Ok(Account {
         id: state.account.id(),
         person_id: state.person_id,
