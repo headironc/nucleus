@@ -1661,6 +1661,10 @@ test("long names and both binding statuses fit every width and keep keyboard acc
   ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(
+    page.getByRole("link", { name: "更换手机号", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(
     page.getByRole("link", { name: "退出全部设备", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Tab");

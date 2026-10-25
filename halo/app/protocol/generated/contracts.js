@@ -917,5 +917,375 @@ export default {
         "dependency_unavailable"
       ]
     }
+  },
+  "POST /api/v1/accounts/current/codes": {
+    "200": {
+      "validator": "sendCurrentMobileCode_200",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "sendCurrentMobileCode_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "sendCurrentMobileCode_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "sendCurrentMobileCode_403",
+      "codes": [
+        "verification_invalid",
+        "permission_denied"
+      ]
+    },
+    "409": {
+      "validator": "sendCurrentMobileCode_409",
+      "codes": [
+        "request_mismatch",
+        "target_changed"
+      ]
+    },
+    "410": {
+      "validator": "sendCurrentMobileCode_410",
+      "codes": [
+        "verification_required"
+      ]
+    },
+    "413": {
+      "validator": "sendCurrentMobileCode_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "415": {
+      "validator": "sendCurrentMobileCode_415",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "422": {
+      "validator": "sendCurrentMobileCode_422",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "429": {
+      "validator": "sendCurrentMobileCode_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "sendCurrentMobileCode_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "sendCurrentMobileCode_503",
+      "codes": [
+        "dependency_unavailable",
+        "outcome_unknown"
+      ]
+    }
+  },
+  "POST /api/v1/mobile-changes": {
+    "201": {
+      "validator": "createMobileTransfer_201",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "createMobileTransfer_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "createMobileTransfer_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "createMobileTransfer_403",
+      "codes": [
+        "verification_invalid",
+        "permission_denied"
+      ]
+    },
+    "409": {
+      "validator": "createMobileTransfer_409",
+      "codes": [
+        "request_mismatch"
+      ]
+    },
+    "410": {
+      "validator": "createMobileTransfer_410",
+      "codes": [
+        "verification_required"
+      ]
+    },
+    "413": {
+      "validator": "createMobileTransfer_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "415": {
+      "validator": "createMobileTransfer_415",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "422": {
+      "validator": "createMobileTransfer_422",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "429": {
+      "validator": "createMobileTransfer_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "createMobileTransfer_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "createMobileTransfer_503",
+      "codes": [
+        "dependency_unavailable",
+        "outcome_unknown"
+      ]
+    }
+  },
+  "POST /api/v1/mobile-changes/{id}/codes": {
+    "200": {
+      "validator": "sendNewMobileCode_200",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "sendNewMobileCode_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "sendNewMobileCode_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "sendNewMobileCode_403",
+      "codes": [
+        "verification_invalid",
+        "permission_denied"
+      ]
+    },
+    "404": {
+      "validator": "sendNewMobileCode_404",
+      "codes": [
+        "target_unavailable"
+      ]
+    },
+    "409": {
+      "validator": "sendNewMobileCode_409",
+      "codes": [
+        "request_mismatch",
+        "state_conflict"
+      ]
+    },
+    "410": {
+      "validator": "sendNewMobileCode_410",
+      "codes": [
+        "verification_required"
+      ]
+    },
+    "413": {
+      "validator": "sendNewMobileCode_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "415": {
+      "validator": "sendNewMobileCode_415",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "422": {
+      "validator": "sendNewMobileCode_422",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "429": {
+      "validator": "sendNewMobileCode_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "sendNewMobileCode_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "sendNewMobileCode_503",
+      "codes": [
+        "dependency_unavailable",
+        "outcome_unknown"
+      ]
+    }
+  },
+  "PUT /api/v1/accounts/current/mobile": {
+    "200": {
+      "validator": "completeMobileTransfer_200",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "completeMobileTransfer_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "completeMobileTransfer_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "completeMobileTransfer_403",
+      "codes": [
+        "verification_invalid",
+        "permission_denied"
+      ]
+    },
+    "409": {
+      "validator": "completeMobileTransfer_409",
+      "codes": [
+        "request_mismatch",
+        "state_conflict",
+        "mobile_taken"
+      ]
+    },
+    "410": {
+      "validator": "completeMobileTransfer_410",
+      "codes": [
+        "verification_required"
+      ]
+    },
+    "413": {
+      "validator": "completeMobileTransfer_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "415": {
+      "validator": "completeMobileTransfer_415",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "422": {
+      "validator": "completeMobileTransfer_422",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "429": {
+      "validator": "completeMobileTransfer_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "completeMobileTransfer_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "completeMobileTransfer_503",
+      "codes": [
+        "dependency_unavailable",
+        "outcome_unknown"
+      ]
+    }
+  },
+  "GET /api/v1/mobile-changes/{id}": {
+    "200": {
+      "validator": "readMobileTransfer_200",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "readMobileTransfer_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "readMobileTransfer_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "readMobileTransfer_403",
+      "codes": [
+        "permission_denied"
+      ]
+    },
+    "404": {
+      "validator": "readMobileTransfer_404",
+      "codes": [
+        "target_unavailable"
+      ]
+    },
+    "413": {
+      "validator": "readMobileTransfer_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "429": {
+      "validator": "readMobileTransfer_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "readMobileTransfer_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "readMobileTransfer_503",
+      "codes": [
+        "dependency_unavailable"
+      ]
+    }
   }
 };

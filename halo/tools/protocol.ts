@@ -27,6 +27,11 @@ const endpoints: Record<string, readonly Method[]> = {
   "/api/v1/workforce/grants/{id}/terminations": ["post"],
   "/api/v1/sessions/current": ["delete"],
   "/api/v1/revocations": ["get"],
+  "/api/v1/accounts/current/codes": ["post"],
+  "/api/v1/mobile-changes": ["post"],
+  "/api/v1/mobile-changes/{id}/codes": ["post"],
+  "/api/v1/accounts/current/mobile": ["put"],
+  "/api/v1/mobile-changes/{id}": ["get"],
 };
 
 export function selectDocument(document: OpenAPI3) {
@@ -95,8 +100,10 @@ export function compile(document: ReturnType<typeof selectDocument>) {
   for (const [name, source] of Object.entries({
     accountId: "account.Id",
     grantId: "grant.Id",
+    messageId: "message.Id",
     personId: "person.Id",
     sessionId: "session.Id",
+    transferId: "transfer.Id",
   })) {
     const schema = document.components.schemas[source];
     if (!schema) throw new Error(`Missing retained identity schema: ${source}`);

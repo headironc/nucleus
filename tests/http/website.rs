@@ -12,6 +12,7 @@ use tokio::{runtime::Runtime, time::timeout};
 use crate::{application::*, database::*, supplier::*};
 
 mod cancellation;
+mod mobile;
 mod termination;
 
 /// A browser run's evidence binding. Standalone runs leave it absent; partial
@@ -222,8 +223,8 @@ fn browser_c1_preserves_original_send() {
     let mut logs = BrowserEvidence::from_environment().expect("browser evidence configuration");
     let server = server();
     Runtime::new().expect("runtime").block_on(async {
-        // Keep 120 seconds beyond the browser's 660-second execution budget.
-        timeout(Duration::from_secs(780), async {
+        // Keep 120 seconds beyond the browser's budget, including real SMS intervals.
+        timeout(Duration::from_secs(1020), async {
             // Hold both reservations together: an ephemeral port must not be
             // chosen twice, and the media origin must not become the site origin.
             let site_reservation = std::net::TcpListener::bind("127.0.0.1:0")
@@ -270,6 +271,9 @@ fn browser_c1_preserves_original_send() {
             let termination_observer = connections(&server, &name, "clerk").recover().await.expect("termination read observer");
             let mut termination_tick = tokio::time::interval(Duration::from_millis(100));
             let mut termination = termination::Observer::default();
+            let mobile_observer = connections(&server, &name, "clerk").recover().await.expect("mobile change observer");
+            let mut mobile_tick = tokio::time::interval(Duration::from_millis(100));
+            let mut mobile_change = mobile::Observer::default();
             let cancellation_observer = connections(&server, &name, "clerk").recover().await.expect("cancellation read observer");
             let mut cancellation_tick = tokio::time::interval(Duration::from_millis(100));
             let mut cancellation = cancellation::Observer::default();
@@ -294,6 +298,9 @@ fn browser_c1_preserves_original_send() {
                 tokio::select! {
                     // Observe queued calls before accepting the backend's completed drain.
                     biased;
+                    _ = mobile_tick.tick(), if !mobile_change.complete() => {
+                        mobile_change.observe(mobile_observer.client(), material.path()).await;
+                    }
                     _ = cancellation_tick.tick(), if !cancellation.complete() => {
                         cancellation.observe(cancellation_observer.client(), material.path()).await;
                     }
@@ -545,6 +552,13 @@ fn browser_c1_preserves_original_send() {
                         std::fs::write(&pending, code).expect("fictional code for browser test process");
                         std::fs::rename(pending, material.path().join(format!("{message}.code"))).expect("complete fictional code");
                         *counts.entry(mobile.clone()).or_default() += 1;
+                        let template_code = url.query_pairs().find(|(name, _)| name == "TemplateCode").expect("template code").1.into_owned();
+                        let expected_template = match (mobile.as_str(), counts[&mobile]) {
+                            ("13900000040", 3) => "change",
+                            ("13900000041", 1) => "bind",
+                            _ => "auth",
+                        };
+                        assert_eq!(template_code, expected_template, "each actual PNVS call uses its own purpose");
                         match mobile.as_str() {
                             "13900000003" => {
                                 let body = r#"{"Code":"isv.BUSINESS_LIMIT_CONTROL","Success":false}"#;
@@ -679,6 +693,8 @@ fn browser_c1_preserves_original_send() {
             workforce_observer.terminate().await.expect("end Workforce observer");
             assert!(termination.complete(), "original termination and new-Session replay have independent durable evidence");
             termination_observer.terminate().await.expect("end termination observer");
+            assert!(mobile_change.complete(), "mobile completion and original-result reads have independent durable evidence");
+            mobile_observer.terminate().await.expect("end mobile observer");
             assert!(cancellation.complete(), "normal and lost-response cancellations have independent durable evidence before later registration");
             cancellation_observer.terminate().await.expect("end cancellation observer");
             assert_eq!(number_checked.len(), 5, "all number read windows have independent no-write evidence");
@@ -692,8 +708,10 @@ fn browser_c1_preserves_original_send() {
                     else { 1 };
                 assert_eq!(counts.get(mobile), Some(&expected), "each explicit original send reaches PNVS once");
             }
-            assert_eq!(counts.len(), 17, "only explicit logins, re-registration and the separate number beneficiary setup send SMS");
-            assert!(supplier.calls.load(Ordering::SeqCst) >= 22);
+            assert_eq!(counts.get("13900000040"), Some(&3), "registration, second login and original-mobile verification each send once");
+            assert_eq!(counts.get("13900000041"), Some(&2), "new-mobile verification and later login each send once");
+            assert_eq!(counts.len(), 19, "only explicit identity flows, re-registration and the separate number beneficiary setup send SMS");
+            assert!(supplier.calls.load(Ordering::SeqCst) >= 27);
             let login: serde_json::Value = serde_json::from_slice(
                 &std::fs::read(material.path().join("login.json")).expect("browser login evidence"),
             ).expect("non-secret login evidence");
@@ -766,7 +784,7 @@ fn browser_c1_preserves_original_send() {
                     revocation.operation_id=logout.id AND revocation.revoked_at=logout.revoked_at AS revoked,
                     NOT EXISTS(SELECT 1 FROM identity.handoffs WHERE id=logout.initiator_id) AS removed,
                     (SELECT count(*) FROM identity.logouts) AS logouts,
-                    (SELECT count(*) FROM identity.revocations) AS revocations
+                    (SELECT count(*) FROM identity.revocations WHERE mode='logout') AS revocations
                 FROM identity.logouts logout
                 JOIN identity.revocations revocation ON revocation.id=logout.initiator_id
                 WHERE logout.id=$1::text::uuid"#,
@@ -862,7 +880,7 @@ fn browser_c1_preserves_original_send() {
                 serde_json::json!({ "outcome": "completed" }),
             );
             logs.finish().expect("browser evidence writes");
-            println!("Identity evidence: 22 explicit sends for 17 mobiles, including separate number recovery setup; original login and registration retain their Sessions and expiry; registration retains one Account and Person with later explicit Workforce admission and rejoining; current logout preserves its original singleton; all logout freezes two sessions and separately accepts one; pre-classification navigation and classification-save failure both recover after login; both later logins survive original-result reads; normal and lost-response cancellations retain independent Account, Person, Holder, Grant, Session, R2 and avatar evidence, while a same-number re-registration is distinct; delayed avatar expiry and five current-number windows preserve independently observed business facts, Cookies and expiry");
+            println!("Identity evidence: 27 explicit sends for 19 mobiles, including separate number recovery and mobile-change accounts; original login and registration retain their Sessions and expiry; registration retains one Account and Person with later explicit Workforce admission and rejoining; current logout preserves its original singleton; all logout freezes two sessions and separately accepts one; pre-classification navigation and classification-save failure both recover after login; both later logins survive original-result reads; normal and lost-response cancellations retain independent Account, Person, Holder, Grant, Session, R2 and avatar evidence, while a same-number re-registration is distinct; delayed avatar expiry and five current-number windows preserve independently observed business facts, Cookies and expiry; mobile replacement revokes both originals and removes their Handoffs, while the later new-number login survives reading the original completion");
         }).await.expect("bounded website acceptance");
     });
 }

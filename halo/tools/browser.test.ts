@@ -127,7 +127,7 @@ function fixture(deadlineMs: number): {
   ])
     copy(root, module);
   const source = readFileSync(production, "utf8");
-  const marker = "const EXECUTION_DEADLINE_MS = 660_000;";
+  const marker = "const EXECUTION_DEADLINE_MS = 900_000;";
   if (source.split(marker).length !== 2)
     throw new Error("The production execution deadline constant changed");
   writeFileSync(
