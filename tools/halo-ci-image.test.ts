@@ -2,7 +2,16 @@ import { expect, test } from "bun:test";
 import { data, Evaluator, Lexer, Parser } from "@actions/expressions";
 import { truthy } from "@actions/expressions/result";
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { imageInputs } from "./halo-ci-image";
 
 const read = (path: string) =>
@@ -60,9 +69,11 @@ test("image publishing isolates source execution from package credentials", () =
   expect(workflow.on).not.toHaveProperty("pull_request");
   expect(workflow.on).not.toHaveProperty("merge_group");
   expect(workflow.permissions).toEqual({ contents: "read" });
-  expect(workflow.jobs.build.if).toBe(workflow.jobs.publish.if);
+  expect(workflow.jobs.publish).not.toHaveProperty("needs");
+  expect(workflow.jobs.build).not.toHaveProperty("permissions");
   expect(workflow.jobs.publish.permissions).toEqual({
     contents: "read",
+    actions: "read",
     packages: "write",
   });
   const publishing = workflow.jobs.publish.steps
@@ -82,42 +93,42 @@ test("image publishing isolates source execution from package credentials", () =
   expect(final).not.toContain("fixture/postgresql.ts");
 });
 
-test("image publication requires a dev dispatch and an exact source revision", () => {
+test("build and publication require separate dev dispatches in the exact repository", () => {
   const workflow = Bun.YAML.parse(
     read(".github/workflows/halo-image.yml"),
   ) as any;
-  const expression = workflow.jobs.publish.if.slice(3, -2);
-  const tokens = new Lexer(expression).lex().tokens;
-  const parsed = new Parser(tokens, ["github"], []).parse();
   const bootstrap = {
-    event_name: "push",
-    ref: "refs/heads/codex/halo-ci-image",
-    actor: "headironc",
-    run_attempt: "1",
-    event: { created: true },
+    event_name: "workflow_dispatch",
+    ref: "refs/heads/dev",
+    repository_id: "1432619931",
   };
-  for (const [change, expected] of [
-    [{}, false],
-    [{ event: { created: false } }, false],
-    [{ event: {} }, false],
-    [{ actor: "another-user" }, false],
-    [{ ref: "refs/heads/codex/halo-ci-image-copy" }, false],
-    [{ ref: "refs/heads/dev" }, false],
-    [{ run_attempt: "2" }, false],
-    [{ event_name: "pull_request" }, false],
-    [{ event_name: "merge_group" }, false],
-    [{ event_name: "workflow_dispatch", ref: "refs/heads/dev" }, true],
-    [{ event_name: "workflow_dispatch" }, false],
-    [{ event_name: "workflow_dispatch", ref: "refs/heads/main" }, false],
-  ] as const) {
-    const context = JSON.parse(
-      JSON.stringify({ github: { ...bootstrap, ...change } }),
-      data.reviver,
-    ) as data.Dictionary;
-    expect(
-      truthy(new Evaluator(parsed, context).evaluate()),
-      JSON.stringify(change),
-    ).toBe(expected);
+  for (const job of ["build", "publish"]) {
+    const tokens = new Lexer(workflow.jobs[job].if.slice(3, -2)).lex().tokens;
+    const parsed = new Parser(tokens, ["github", "inputs"], []).parse();
+    for (const [change, allowed] of [
+      [{}, true],
+      [{ event_name: "push" }, false],
+      [{ event_name: "pull_request" }, false],
+      [{ event_name: "merge_group" }, false],
+      [{ ref: "refs/heads/main" }, false],
+      [{ ref: "refs/heads/codex/image" }, false],
+      [{ repository_id: "1185290396" }, false],
+      [{ repository_id: "" }, false],
+    ] as const) {
+      for (const operation of ["build", "publish", "", "unknown"]) {
+        const context = JSON.parse(
+          JSON.stringify({
+            github: { ...bootstrap, ...change },
+            inputs: { operation },
+          }),
+          data.reviver,
+        ) as data.Dictionary;
+        expect(
+          truthy(new Evaluator(parsed, context).evaluate()),
+          JSON.stringify({ job, change, operation }),
+        ).toBe(allowed && operation === job);
+      }
+    }
   }
   const requirement = workflow.jobs.build.steps[0];
   const checkout = workflow.jobs.build.steps.find((step: any) =>
@@ -140,25 +151,242 @@ test("image publication requires a dev dispatch and an exact source revision", (
   }
 });
 
-test("private package validation accepts absent source-page metadata without accepting a different repository", () => {
+test("published package must belong to the exact new repository and expected visibility", () => {
   const workflow = Bun.YAML.parse(
     read(".github/workflows/halo-image.yml"),
   ) as any;
   const step = workflow.jobs.publish.steps.find(
-    (step: any) => step.name === "Verify private package metadata",
+    (step: any) => step.name === "Verify package identity and visibility",
   );
-  const condition = step.run.match(/jq --exit-status '([^']+)'/)[1];
-  for (const [value, accepted] of [
-    [{ visibility: "private", repository: "silence-force/nucleus" }, true],
-    [{ visibility: "private", repository: null }, true],
-    [{ visibility: "public", repository: null }, false],
-    [{ visibility: "private", repository: "another/repository" }, false],
-    [{ repository: null }, false],
+  const condition = step.run.match(/'(.name ==[^']+)'/)[1];
+  const base = {
+    name: "nucleus-ci",
+    visibility: "private",
+    repository_id: 1432619931,
+    repository: "silence-force/nucleus",
+  };
+  for (const [change, visibility, accepted] of [
+    [{}, "private", true],
+    [{ visibility: "public" }, "public", true],
+    [{ visibility: "public" }, "private", false],
+    [{}, "public", false],
+    [{ repository_id: 1185290396 }, "private", false],
+    [{ repository: null, repository_id: null }, "private", false],
+    [{ repository: "another/repository" }, "private", false],
+    [{ name: "nucleus-halo-ci" }, "private", false],
   ] as const) {
-    const result = spawnSync("jq", ["--exit-status", condition], {
-      input: JSON.stringify(value),
-    });
+    const result = spawnSync(
+      "jq",
+      ["--exit-status", "--arg", "visibility", visibility, condition],
+      {
+        input: JSON.stringify({ ...base, ...change }),
+      },
+    );
     expect(result.error).toBeUndefined();
-    expect(result.status === 0, JSON.stringify(value)).toBe(accepted);
+    expect(result.status === 0, JSON.stringify(change)).toBe(accepted);
+  }
+});
+
+test("publication rejects invalid inputs and artifacts outside a successful same-repository build", () => {
+  const workflow = Bun.YAML.parse(
+    read(".github/workflows/halo-image.yml"),
+  ) as any;
+  const step = workflow.jobs.publish.steps[0];
+  const run = {
+    id: 123,
+    repository: { id: 1432619931 },
+    head_repository: { id: 1432619931 },
+    head_branch: "dev",
+    path: ".github/workflows/halo-image.yml",
+    event: "workflow_dispatch",
+    status: "completed",
+    conclusion: "success",
+  };
+  const artifact = {
+    id: 456,
+    name: "nucleus-ci-image",
+    expired: false,
+    workflow_run: {
+      id: 123,
+      repository_id: 1432619931,
+      head_repository_id: 1432619931,
+      head_branch: "dev",
+    },
+  };
+  const directory = mkdtempSync(join(tmpdir(), "nucleus-image-publication-"));
+  const environment = {
+    ...process.env,
+    RUNNER_TEMP: directory,
+    REVISION: "a".repeat(40),
+    BUILD_RUN: "123",
+    ARTIFACT_ID: "456",
+    IMAGE_SHA256: "b".repeat(64),
+    VISIBILITY: "private",
+  };
+  const mock = `gh() {
+    case "$4" in
+      repos/silence-force/nucleus/actions/runs/123) cat "$RUNNER_TEMP/run-response.json" ;;
+      repos/silence-force/nucleus/actions/artifacts/456) cat "$RUNNER_TEMP/artifact-response.json" ;;
+      *) return 99 ;;
+    esac
+  }\n`;
+  try {
+    for (const [runValue, artifactValue, accepted] of [
+      [run, artifact, true],
+      [{ ...run, conclusion: "failure" }, artifact, false],
+      [{ ...run, status: "in_progress" }, artifact, false],
+      [{ ...run, event: "pull_request" }, artifact, false],
+      [{ ...run, path: ".github/workflows/another.yml" }, artifact, false],
+      [{ ...run, repository: { id: 1185290396 } }, artifact, false],
+      [{ ...run, head_repository: { id: 1185290396 } }, artifact, false],
+      [{ ...run, head_branch: "main" }, artifact, false],
+      [run, { ...artifact, expired: true }, false],
+      [run, { ...artifact, id: 999 }, false],
+      [run, { ...artifact, name: "another-image" }, false],
+      [
+        run,
+        { ...artifact, workflow_run: { ...artifact.workflow_run, id: 999 } },
+        false,
+      ],
+      [
+        run,
+        {
+          ...artifact,
+          workflow_run: { ...artifact.workflow_run, repository_id: 1185290396 },
+        },
+        false,
+      ],
+      [run, { ...artifact, workflow_run: null }, false],
+    ] as const) {
+      writeFileSync(
+        join(directory, "run-response.json"),
+        JSON.stringify(runValue),
+      );
+      writeFileSync(
+        join(directory, "artifact-response.json"),
+        JSON.stringify(artifactValue),
+      );
+      const result = spawnSync("bash", ["-c", mock + step.run], {
+        env: environment,
+        encoding: "utf8",
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status === 0, result.stderr).toBe(accepted);
+    }
+    for (const change of [
+      { REVISION: "dev" },
+      { BUILD_RUN: "123; exit 0" },
+      { ARTIFACT_ID: "456,789" },
+      { IMAGE_SHA256: "b".repeat(63) },
+      { VISIBILITY: "internal" },
+    ]) {
+      const result = spawnSync(
+        "bash",
+        ["-c", "gh() { echo UNEXPECTED_API; return 99; }\n" + step.run],
+        { env: { ...environment, ...change }, encoding: "utf8" },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status).not.toBe(0);
+      expect(result.stdout).not.toContain("UNEXPECTED_API");
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("publication verifies the inspected archive and provenance before Docker receives it", () => {
+  const workflow = Bun.YAML.parse(
+    read(".github/workflows/halo-image.yml"),
+  ) as any;
+  const steps = workflow.jobs.publish.steps;
+  const verify = steps.findIndex(
+    (step: any) => step.name === "Verify the inspected bytes before loading",
+  );
+  expect(verify).toBeLessThan(
+    steps.findIndex((step: any) => step.run?.includes("docker load")),
+  );
+  const download = steps.find((step: any) =>
+    step.uses?.startsWith("actions/download-artifact@"),
+  );
+  expect(download.with["artifact-ids"]).toBe("${{ inputs.artifact-id }}");
+  expect(download.with["run-id"]).toBe("${{ inputs.build-run }}");
+  expect(download.with.repository).toBe("silence-force/nucleus");
+  const directory = mkdtempSync(join(tmpdir(), "nucleus-image-bytes-"));
+  const artifact = join(directory, "nucleus-ci");
+  mkdirSync(artifact);
+  const bytes = "synthetic image archive";
+  const sha = createHash("sha256").update(bytes).digest("hex");
+  const provenance = {
+    revision: "a".repeat(40),
+    run: "123",
+    image_sha256: sha,
+  };
+  try {
+    for (const [image, source, accepted] of [
+      [bytes, provenance, true],
+      [bytes + "changed", provenance, false],
+      [bytes, { ...provenance, revision: "b".repeat(40) }, false],
+      [bytes, { ...provenance, run: "124" }, false],
+      [bytes, { ...provenance, image_sha256: "c".repeat(64) }, false],
+    ] as const) {
+      writeFileSync(join(artifact, "nucleus-ci.tar"), image);
+      writeFileSync(join(artifact, "provenance.json"), JSON.stringify(source));
+      const result = spawnSync("bash", ["-c", steps[verify].run], {
+        env: {
+          ...process.env,
+          RUNNER_TEMP: directory,
+          REVISION: provenance.revision,
+          BUILD_RUN: "123",
+          IMAGE_SHA256: sha,
+        },
+        encoding: "utf8",
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.status === 0, result.stderr).toBe(accepted);
+    }
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("published manifest must retain the inspected image configuration", () => {
+  const workflow = Bun.YAML.parse(
+    read(".github/workflows/halo-image.yml"),
+  ) as any;
+  const step = workflow.jobs.publish.steps.find(
+    (step: any) => step.name === "Publish the reviewed dependency image",
+  );
+  const condition = step.run.match(/'(select\(\(.SchemaV2Manifest[^']+)'/)[1];
+  const imageId = `sha256:${"a".repeat(64)}`;
+  const manifestDigest = `sha256:${"b".repeat(64)}`;
+  for (const [format, configuration, digest, accepted] of [
+    ["SchemaV2Manifest", imageId, manifestDigest, true],
+    ["OCIManifest", imageId, manifestDigest, true],
+    ["SchemaV2Manifest", `sha256:${"c".repeat(64)}`, manifestDigest, false],
+    ["OCIManifest", `sha256:${"c".repeat(64)}`, manifestDigest, false],
+    ["SchemaV2Manifest", null, manifestDigest, false],
+    ["SchemaV2Manifest", imageId, "latest", false],
+  ] as const) {
+    const result = spawnSync(
+      "jq",
+      [
+        "--exit-status",
+        "--raw-output",
+        "--arg",
+        "image_id",
+        imageId,
+        condition,
+      ],
+      {
+        input: JSON.stringify({
+          [format]: { config: { digest: configuration } },
+          Descriptor: { digest },
+        }),
+        encoding: "utf8",
+      },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status === 0).toBe(accepted);
+    if (accepted) expect(result.stdout.trim()).toBe(manifestDigest);
   }
 });
