@@ -25,6 +25,7 @@ use crate::{
 };
 
 pub(crate) const CENTER: &str = "center.completions";
+pub(crate) const CONTENT: &str = "content.completions";
 pub(crate) const ACCESS: &str = "access.completions";
 pub(crate) const WORKFORCE: &str = "workforce.completions";
 pub(crate) const IDENTITY: &str = "identity.completions";
@@ -60,7 +61,8 @@ impl Template {
 
     pub(crate) fn expires(self, created_at: DateTime<Utc>) -> Option<DateTime<Utc>> {
         match self.family {
-            Family::CenterAffiliation
+            Family::ContentColumn
+            | Family::CenterAffiliation
             | Family::InstitutionRole
             | Family::WorkforceRole
             | Family::InstitutionAppointment

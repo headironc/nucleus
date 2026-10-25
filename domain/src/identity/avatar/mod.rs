@@ -87,16 +87,22 @@ impl Current {
     }
 }
 
+pub(crate) async fn verify(
+    client: &tokio_postgres::Client,
+    app: &crate::kernel::App,
+    now: DateTime<Utc>,
+) -> Result<(), KernelError<std::convert::Infallible>> {
+    upload::verify(client, app, now)
+        .await
+        .map_err(retention::cleanup_error)?;
+    retention::verify(client, app, now).await
+}
+
 impl Service {
-    pub(crate) async fn verify(
+    pub(crate) async fn verify_files(
         &self,
         client: &tokio_postgres::Client,
-        now: DateTime<Utc>,
     ) -> Result<(), KernelError<std::convert::Infallible>> {
-        upload::verify(client, &self.0.app, now)
-            .await
-            .map_err(retention::cleanup_error)?;
-        retention::verify(client, &self.0.app, now).await?;
         let mut cursor: Option<Id> = None;
         loop {
             let complete = verify_batch(async {

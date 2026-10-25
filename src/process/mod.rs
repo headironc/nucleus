@@ -1942,6 +1942,16 @@ mod tests {
                 ));
                 assert_eq!(process::RunError::Application(second).stage(), "instance_lock");
 
+                // Keep retention pending until HTTP rejection is observed; its fatal
+                // closed-admission result may otherwise stop the listener first.
+                let blocker = connections(&server, &name, "postgres")
+                    .recover()
+                    .await
+                    .expect("retention blocker");
+                blocker.client().batch_execute("BEGIN; LOCK TABLE identity.transfers IN ACCESS EXCLUSIVE MODE")
+                    .await.expect("hold initial retention scan");
+                let blocker_pid: i32 = blocker.client().query_one("SELECT pg_backend_pid()", &[])
+                    .await.expect("blocker identity").get(0);
                 let (base, stop, task) = running(application).await;
                 let ready = || {
                     http_client()
@@ -1954,6 +1964,14 @@ mod tests {
                     .recover()
                     .await
                     .expect("fixture admin");
+                timeout(Duration::from_secs(5), async {
+                    loop {
+                        let waiting: bool = admin.client().query_one("SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_catalog.pg_blocking_pids(pid)))", &[&blocker_pid])
+                            .await.expect("exact retention waiter").get(0);
+                        if waiting { break; }
+                        tokio::task::yield_now().await;
+                    }
+                }).await.expect("retention reaches the held lock");
                 let terminated: bool = admin
                     .client()
                     .query_one(
@@ -1982,6 +2000,8 @@ mod tests {
                 assert_eq!(supplier.calls.load(std::sync::atomic::Ordering::SeqCst), 0);
                 assert_eq!(ready().await.expect("readiness").status(), 503, "nothing reopens it");
                 stop.send(()).expect("stop");
+                blocker.client().batch_execute("COMMIT").await.expect("release retention scan");
+                blocker.terminate().await.expect("blocker ended");
                 let (application, _) = timeout(Duration::from_secs(10), task)
                     .await
                     .expect("bounded drain")

@@ -89,6 +89,20 @@ bun run test:browser -- tests/mobile-change.spec.ts
 
 完整组合验收使用真实 Nginx、Cookie、后端及隔离的 fake Siteverify/PNVS。场景先建立两条原 Session，在真实短信冷却内发码取得 429，等待后以相同操作、证明和输入重试。完成换号后丢失 PUT 回执，再以新号登录并显式 GET 原结果。Rust 在提交前后独立核对手机号归属、原会话撤销、Handoff 删除及永久完成事实；查询前后核对业务事实、后来会话与期限保持不变。具体运行结果归 PR 验收证据，受控响应不替代真实事务验收。
 
+## 头像本地选择与预览
+
+`app/avatar/candidate.ts` 读取本地文件，核对大小、实际格式、动画和正方形尺寸后解码预览。`format.ts` 检查图片容器，并仅为预览去除方向元数据。候选保留原 `File`，不会裁剪、缩放或改写待提交字节。重新选择、取消和关闭时释放旧解码资源；迟到的解码结果不能覆盖后来选择。
+
+`app/avatar/panel.tsx` 展示当前头像与本地候选，提供格式提示、错误说明和取消选择。父消费者拥有确认及提交动作；该组件不读取账户、不上传文件，也不保存恢复材料。图片限制沿用[头像契约](../docs/identity/avatar.md)，浏览器检查不替代服务端验证。
+
+```bash
+cd halo
+bun run test -- app/avatar/format.test.ts app/avatar/candidate.test.ts
+bun run test:browser -- tests/avatar-selection.spec.ts
+```
+
+浏览器测试使用真实图片解码、选择组件和 React 面板，检查像素、方向、格式拒绝、资源释放及窄屏布局。测试请求由本地夹具提供，不依赖账户、上传接口或真实供应商；不能据此宣称头像更换流程已完成。
+
 ## 浏览器隔离验收
 
 `app/authentication/current.ts` 拥有可信本人读取状态。它只在原 Session ID 与本地选择修订仍匹配时接纳资料。重新检查、离页及响应失信时遮蔽旧资料。401 仅比较清除原选择，403 和网络失败保留选择。直接验证运行 `bun run test -- app/authentication/current.test.ts`。本人页面接入选择通知、可见性与离页检查；页面及真实 Cookie 交接按下述集成验收验证。

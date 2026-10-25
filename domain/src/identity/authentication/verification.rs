@@ -1091,7 +1091,13 @@ pub(super) mod tests {
                 .expect("directory migration");
             transaction
                 .batch_execute(include_str!(
-                    "../../../../deployment/migrations/V13__avatar_uploads.sql"
+                    "../../../../deployment/migrations/V13__columns.sql"
+                ))
+                .await
+                .expect("column migration");
+            transaction
+                .batch_execute(include_str!(
+                    "../../../../deployment/migrations/V14__avatar_uploads.sql"
                 ))
                 .await
                 .expect("avatar upload migration");

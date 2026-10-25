@@ -10,7 +10,14 @@ use super::{
 };
 
 pub(super) const MANIFEST: Manifest = Manifest {
-    schemas: &["security", "identity", "access", "center", "workforce"],
+    schemas: &[
+        "security",
+        "identity",
+        "access",
+        "center",
+        "workforce",
+        "content",
+    ],
     types: &[
         "identity.sealed",
         "identity.digest",
@@ -53,6 +60,26 @@ pub(super) const MANIFEST: Manifest = Manifest {
 };
 
 const TABLES: &[Table] = &[
+    table(
+        crate::content::column::COLUMNS,
+        &[Select, Insert],
+        "",
+        "seal",
+    ),
+    table(crate::content::column::CHANGES, &[Select, Insert], "", ""),
+    table(
+        crate::content::column::NAVIGATIONS,
+        &[Select, Insert, Update],
+        "",
+        "",
+    ),
+    table(crate::content::column::APPENDS, &[Select, Insert], "", ""),
+    table(
+        crate::kernel::completion::CONTENT,
+        &[Select, Insert],
+        "",
+        "",
+    ),
     table(
         crate::kernel::completion::IDENTITY,
         &[Select, Insert, Delete],

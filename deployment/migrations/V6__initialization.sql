@@ -30,7 +30,7 @@ INSERT INTO access.capabilities (id, scope) VALUES
     ('institution.roles', 'institution'), ('institution.assignments', 'institution'),
     ('institution.workforce', 'institution'), ('institution.accounts', 'institution'),
     ('institution.corrections', 'institution'), ('institution.affiliations.read', 'institution'),
-    ('institution.affiliations.correct', 'institution'),
+    ('institution.affiliations.correct', 'institution'), ('institution.articles', 'institution'),
     ('workforce.roles', 'workforce'), ('workforce.assignments', 'workforce'),
     ('workforce.admission', 'workforce'), ('workforce.suspension', 'workforce'),
     ('workforce.termination', 'workforce'), ('workforce.numbers', 'workforce'),

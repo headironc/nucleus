@@ -466,6 +466,14 @@ impl Retention {
                 "avatar release matches its permanent account record",
             ));
         }
+        if candidate.family == Family::Avatar
+            && !matches!(record.event(), account::record::Event::Avatar { previous, .. }
+                if *previous == locked.revision())
+        {
+            return Err(Error::corrupt(
+                "replacement releases the exact previous avatar revision",
+            ));
+        }
         if !self.settings.expired(released, now) {
             return Ok(false);
         }

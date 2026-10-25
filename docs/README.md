@@ -23,6 +23,7 @@
 | 注销后默认头像元数据清理                  | 已交付 | [头像](identity/avatar.md#工作事务与故障恢复)                                                                                                        |
 | 网站本人头像上传、更换及原结果后端        | 已交付 | [头像](identity/avatar.md)                                                                                                                           |
 | 头像更换页面与小程序接入                  | 目标   | [头像](identity/avatar.md)                                                                                                                           |
+| 私人文件持久发布、读取句柄与幂等删除组件  | 已交付 | [本地文件](storage/files.md)                                                                                                                         |
 | 网站当前及全部退出                        | 已交付 | [退出](identity/revocation.md)                                                                                                                       |
 | 账户暂停恢复及状态历史                    | 已交付 | [暂停恢复](identity/suspension.md)                                                                                                                   |
 | 实名更正及系统管理员停机更正              | 已交付 | [实名更正](identity/correction.md)                                                                                                                   |
@@ -44,7 +45,9 @@
 | 工号生命周期与封印状态                    | 已交付 | [工号](workforce/numbers.md)                                                                                                                         |
 | Workforce 目录、分类规则与配置完成        | 已交付 | [目录](workforce/directories.md)、[配置完成](workforce/completions.md)                                                                               |
 | 工牌模板、照片、申请、成品与发放          | 目标   | [模板与照片](workforce/media.md)、[申请](workforce/applications.md)、[成品与发放](workforce/fulfillment.md)                                          |
-| 网站公开内容                              | 目标   | [草稿、版本与上线](content/publication.md)                                                                                                           |
+| 栏目创建领域组件                          | 已交付 | [栏目](content/columns.md)；含永久原结果、导航顺序与封印核验；尚未装配栏目 HTTP 入口                                                                 |
+| 栏目 HTTP 接入、管理列表与历史查询        | 目标   | [栏目](content/columns.md)、[内容 HTTP](content/http.md)                                                                                             |
+| 栏目修改、排序、删除与其余网站公开内容    | 目标   | [栏目](content/columns.md)、[草稿、版本与上线](content/publication.md)                                                                               |
 | 健康检查与 OpenAPI                        | 已交付 | [HTTP 入口](http/api.md)                                                                                                                             |
 | 事务可信时间与后台高水位                  | 已交付 | [时间与个人顺序](architecture.md#时间与个人顺序)、[数据库](database.md#c1-接纳与可信时间)                                                            |
 | 换钥与退役                                | 目标   | [密钥维护](operations/keys.md)                                                                                                                       |

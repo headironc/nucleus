@@ -2065,6 +2065,156 @@ mod tests {
     }
 
     #[test]
+    fn retention_rejects_an_authentic_release_transplanted_to_another_revision() {
+        let server = server();
+        Runtime::new().expect("runtime").block_on(Box::pin(async {
+            timeout(Duration::from_secs(40), Box::pin(async {
+                let database = Database::initialized(server).await;
+                let mut supplier = Supplier::new().await;
+                let (context, services) = start(database.connections(&database.user), &supplier).await;
+                let actor = Box::pin(actor(&database, &services, &mut supplier)).await;
+                let before = services.current().read(&actor).await.expect("current owner");
+                let first = replace(&services, &actor, operation::Id::allocate(), before.avatar().revision(), "image/png", &png(&[71; 16])).await.expect("first private avatar");
+                let old_operation = operation::Id::allocate();
+                let second = replace(&services, &actor, old_operation, first.avatar().revision(), "image/png", &png(&[72; 16])).await.expect("second private avatar");
+                let owner = database.connections(&database.owner).recover().await.expect("fixture owner");
+                let deadline = second.completion().completed_at() + TimeDelta::seconds(1);
+                owner.client().query_one("SELECT pg_sleep(GREATEST(0, EXTRACT(EPOCH FROM ($1::timestamptz-clock_timestamp()))))", &[&deadline]).await.expect("older authentic release expires");
+                replace(&services, &actor, operation::Id::allocate(), second.avatar().revision(), "image/png", &png(&[73; 16])).await.expect("third private avatar");
+                let row = owner.client().query_one("SELECT id, size FROM identity.avatars WHERE account_id=$1 AND revision=$2", &[&before.id(), &second.avatar().revision()]).await.expect("newer released avatar");
+                let id: avatar::Id = row.get(0);
+                let size = u64::try_from(row.get::<_, i64>(1)).expect("file size");
+                let bytes = services.avatar().0.storage.read(id, size).expect("newer private file");
+                owner.client().batch_execute("ALTER TABLE identity.avatars DISABLE TRIGGER avatars_transition_check").await.expect("inject release metadata corruption");
+                assert_eq!(owner.client().execute("UPDATE identity.avatars SET release_operation_id=$2, released_at=$3 WHERE id=$1", &[&id, &old_operation, &second.completion().completed_at()]).await.expect("transplant authentic operation and time"), 1);
+                owner.client().batch_execute("ALTER TABLE identity.avatars ENABLE TRIGGER avatars_transition_check").await.expect("restore guard");
+                let mut retention = avatar::retention::Retention::new(services.app().clone(), services.avatar().clone(), avatar::retention::Settings::new(1).expect("short grace"));
+                assert!(retention.run().await.expect_err("another revision's authentic release is rejected").is_corrupt());
+                assert!(!services.admitted());
+                let row = owner.client().query_one("SELECT (SELECT count(*) FROM identity.avatars WHERE id=$1), (SELECT count(*) FROM identity.deletions WHERE id=$1)", &[&id]).await.expect("retained metadata and absent deletion intent");
+                assert_eq!((row.get::<_, i64>(0), row.get::<_, i64>(1)), (1, 0));
+                assert_eq!(services.avatar().0.storage.read(id, size).expect("file remains intact"), bytes);
+                services.drain().await.expect("drained");
+                context.stop().await.expect("stopped");
+                owner.terminate().await.expect("owner ended");
+                supplier.stop().await;
+            })).await.expect("bounded transplanted release acceptance");
+        }));
+    }
+
+    #[test]
+    fn maintenance_startup_authenticates_retained_avatar_facts_without_file_services() {
+        use crate::{database::Barrier, runtime::Context, startup::Administration};
+
+        let server = server();
+        Runtime::new().expect("runtime").block_on(Box::pin(async {
+            timeout(
+                Duration::from_secs(40),
+                Box::pin(async {
+                    let database = Database::initialized(server).await;
+                    let mut supplier = Supplier::new().await;
+                    let (context, services) =
+                        start(database.connections(&database.user), &supplier).await;
+                    let actor = Box::pin(actor(&database, &services, &mut supplier)).await;
+                    let before = services
+                        .current()
+                        .read(&actor)
+                        .await
+                        .expect("current owner");
+                    let operation = operation::Id::allocate();
+                    replace(
+                        &services,
+                        &actor,
+                        operation,
+                        before.avatar().revision(),
+                        "image/png",
+                        &png(&[74; 16]),
+                    )
+                    .await
+                    .expect("retained upload");
+                    settle(services.app(), &services.avatar().0.storage, operation)
+                        .await
+                        .expect("settled publication");
+                    services.close();
+                    services.drain().await.expect("online services drained");
+                    context.stop().await.expect("online clock stopped");
+                    let context = Context::new(database.connections(&database.user))
+                        .await
+                        .expect("maintenance context");
+                    let administration = Administration::start(
+                        Barrier::begin(context.clone())
+                            .await
+                            .expect("maintenance barrier"),
+                        authentication::inventory(authentication::keys()),
+                        authentication::session_settings().app_id().clone(),
+                    )
+                    .await
+                    .expect("valid retained upload permits maintenance without storage settings");
+                    administration.close();
+                    administration.drain().await.expect("maintenance drained");
+                    context.stop().await.expect("maintenance clock stopped");
+                    let owner = database
+                        .connections(&database.owner)
+                        .recover()
+                        .await
+                        .expect("fixture owner");
+                    owner
+                        .client()
+                        .batch_execute(
+                            "ALTER TABLE identity.uploads DISABLE TRIGGER uploads_immutable_check",
+                        )
+                        .await
+                        .expect("inject retained fact corruption");
+                    assert_eq!(
+                        owner
+                            .client()
+                            .execute(
+                                "UPDATE identity.uploads SET seal=$2 WHERE operation_id=$1",
+                                &[&operation, &vec![0_u8; 32]]
+                            )
+                            .await
+                            .expect("damage upload authentication"),
+                        1
+                    );
+                    owner
+                        .client()
+                        .batch_execute(
+                            "ALTER TABLE identity.uploads ENABLE TRIGGER uploads_immutable_check",
+                        )
+                        .await
+                        .expect("restore guard");
+                    let context = Context::new(database.connections(&database.user))
+                        .await
+                        .expect("new maintenance context");
+                    let result = Administration::start(
+                        Barrier::begin(context.clone())
+                            .await
+                            .expect("new maintenance barrier"),
+                        authentication::inventory(authentication::keys()),
+                        authentication::session_settings().app_id().clone(),
+                    )
+                    .await;
+                    assert!(
+                        matches!(
+                            result,
+                            Err(crate::startup::Error::AvatarFacts(Error::Corrupt(_)))
+                        ),
+                        "maintenance refuses corrupt upload facts before exposing commands"
+                    );
+                    context
+                        .stop()
+                        .await
+                        .expect("failed maintenance clock stopped");
+                    owner.terminate().await.expect("owner ended");
+                    supplier.stop().await;
+                }),
+            )
+            .await
+            .expect("bounded maintenance startup acceptance");
+        }));
+    }
+
+    #[test]
     fn startup_rejects_an_avatar_completion_after_its_upload_result_is_deleted() {
         let server = server();
         Runtime::new().expect("runtime").block_on(Box::pin(async {
@@ -2101,8 +2251,7 @@ mod tests {
                         .recover()
                         .await
                         .expect("fixture owner");
-                    avatar
-                        .verify(owner.client(), Utc::now())
+                    avatar::verify(owner.client(), services.app(), Utc::now())
                         .await
                         .expect("valid retained completion and upload");
                     assert!(
@@ -2149,7 +2298,7 @@ mod tests {
                     );
                     assert!(
                         matches!(
-                            avatar.verify(owner.client(), Utc::now()).await,
+                            avatar::verify(owner.client(), services.app(), Utc::now()).await,
                             Err(Error::Corrupt(_))
                         ),
                         "startup rejects partial deletion even without a publication intent"
@@ -2294,9 +2443,8 @@ mod tests {
                 services.current().read(&actor).await.expect("restarted service admits requests");
                 let observer = authentication::proxied(&database, &proxy).recover().await.expect("verification observer");
                 proxy.arm(ProxyFault::StalledAvatarUploads);
-                let avatar = services.avatar();
                 let (result, intercepted) = tokio::join!(
-                    timeout(Duration::from_secs(12), avatar.verify(observer.client(), Utc::now())),
+                    timeout(Duration::from_secs(12), avatar::verify(observer.client(), services.app(), Utc::now())),
                     timeout(Duration::from_secs(3), proxy.intercepted())
                 );
                 proxy.release();

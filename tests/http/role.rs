@@ -213,7 +213,7 @@ fn institutional_role_operations_use_real_credentials_and_permanent_original_def
             assert_eq!(permissions["uniqueItems"],true);
             let mut codes:Vec<_>=permissions["items"]["enum"].as_array().expect("institutional input codes").iter().map(|code|code.as_str().expect("code")).collect();
             codes.sort_unstable();
-            assert_eq!(codes,["institution.accounts","institution.affiliations.correct","institution.affiliations.read","institution.assignments","institution.corrections","institution.roles","institution.workforce"]);
+            assert_eq!(codes,["institution.accounts","institution.affiliations.correct","institution.affiliations.read","institution.articles","institution.assignments","institution.corrections","institution.roles","institution.workforce"]);
             stop.send(()).expect("stop"); let (mut application,result)=task.await.expect("listener ended"); result.expect("normal serve"); application.stop().await.expect("accepted work drains"); drop(application);
             assert!(!replay_initialization(&server,&name,"13900000000",&plan).await,"online UUID does not disturb initialization replay");
             let owner=connections(&server,&name,"postgres").recover().await.expect("isolated damaged history owner");
@@ -530,7 +530,7 @@ fn institutional_roles_read_real_accounts_and_report_safe_query_failures() {
                 assert_eq!(observer.client().query_one("SELECT observed_at FROM security.clocks WHERE id", &[]).await.expect("unsupported methods do not authenticate").get::<_,chrono::DateTime<chrono::Utc>>(0),observed_at);
                 assert_eq!(client.post(format!("{base}/api/v1/accounts/current/role")).send().await.expect("global request identity still applies").status(),400);
                 for ((id, cookie), kind, level, expected_name, permissions) in [
-                    (&administrator, "full", 1000, "系统管理员", vec!["institution.accounts", "institution.affiliations.correct", "institution.affiliations.read", "institution.assignments", "institution.corrections", "institution.roles", "institution.workforce"]),
+                    (&administrator, "full", 1000, "系统管理员", vec!["institution.accounts", "institution.affiliations.correct", "institution.affiliations.read", "institution.articles", "institution.assignments", "institution.corrections", "institution.roles", "institution.workforce"]),
                     (&ordinary, "default", 1, "普通账户", vec![]),
                 ] {
                     let facts = observer.client().query_one("SELECT holder.role_id::text,role.change_id::text,ARRAY(SELECT capability_id FROM access.permissions WHERE role_id=role.id ORDER BY capability_id COLLATE \"C\") AS permissions FROM identity.sessions session JOIN identity.accounts account ON account.id=session.account_id JOIN access.holders holder ON holder.id=account.id JOIN access.appointments appointment ON appointment.id=holder.assignment_id AND appointment.person_id=holder.person_id AND appointment.role_id=holder.role_id JOIN access.roles role ON role.id=holder.role_id WHERE session.id=$1::text::uuid", &[id]).await.expect("independent role facts before HTTP read");
