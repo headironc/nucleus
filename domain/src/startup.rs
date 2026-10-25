@@ -8,6 +8,7 @@ use crate::{
     access::{appoint, appointment, assignment, grant, initialize, role},
     account, cancellation,
     center::affiliation,
+    content::column,
     correction,
     database::{Barrier, verification},
     identity::{
@@ -39,6 +40,7 @@ pub struct Services {
     cancellation: cancellation::Service,
     avatar: avatar::Service,
     affiliation: affiliation::Service,
+    column: column::Service,
     directory: directory::Service,
     number: number::Service,
     context: Context,
@@ -261,6 +263,9 @@ async fn verify(
     transfer::verify(client, app, keys, now).await?;
     suspension::verify(client, app, now).await?;
     affiliation::verify(client, app, now).await?;
+    verification::Stage::HistoryRecords
+        .query(Duration::from_secs(10), column::verify(client, app, now))
+        .await??;
     verification::Stage::Directories
         .batch(
             Duration::from_secs(10),
@@ -341,6 +346,7 @@ impl Services {
             let affiliation =
                 affiliation::Service::prepare(app.clone(), current.clone(), Arc::clone(&keys));
             let directory = directory::Service::prepare(app.clone(), current.clone());
+            let column = column::Service::prepare(app.clone(), current.clone());
             let number = number::Service::prepare(app.clone(), current.clone(), Arc::clone(&keys));
             let appointment =
                 appointment::Service::prepare(app.clone(), current.clone(), Arc::clone(&keys));
@@ -379,6 +385,7 @@ impl Services {
                 cancellation,
                 transfer,
                 affiliation,
+                column,
                 directory,
                 number,
             ))
@@ -401,6 +408,7 @@ impl Services {
                 cancellation,
                 transfer,
                 affiliation,
+                column,
                 directory,
                 number,
             )) => {
@@ -421,6 +429,7 @@ impl Services {
                     transfer,
                     avatar,
                     affiliation,
+                    column,
                     directory,
                     number,
                     context,
@@ -498,6 +507,10 @@ impl Services {
         &self.directory
     }
 
+    pub fn column(&self) -> &column::Service {
+        &self.column
+    }
+
     pub fn number(&self) -> &number::Service {
         &self.number
     }
@@ -549,6 +562,8 @@ pub enum Error {
     Role(#[from] role::CommandError),
     #[error("{0}")]
     Affiliation(#[from] affiliation::Error),
+    #[error("column verification failed")]
+    Column(#[from] column::Error),
     #[error("{0}")]
     Directory(#[from] directory::Error),
     #[error("{0}")]

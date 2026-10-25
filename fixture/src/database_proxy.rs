@@ -795,6 +795,9 @@ async fn relay(
                         .windows(b"INSERT INTO workforce.completions".len())
                         .any(|bytes| bytes == b"INSERT INTO workforce.completions")
                     || message
+                        .windows(b"INSERT INTO content.completions".len())
+                        .any(|bytes| bytes == b"INSERT INTO content.completions")
+                    || message
                         .windows(b"INSERT INTO testing.completions".len())
                         .any(|bytes| bytes == b"INSERT INTO testing.completions")
                     || message

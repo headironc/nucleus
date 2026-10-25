@@ -41,6 +41,8 @@ impl<'a> FromSql<'a> for Scope {
     VariantArray,
 )]
 pub enum Code {
+    #[strum(serialize = "institution.articles")]
+    InstitutionArticles,
     #[strum(serialize = "institution.roles")]
     InstitutionRoles,
     #[strum(serialize = "institution.assignments")]
@@ -101,7 +103,8 @@ impl Code {
 
     pub(crate) fn scope(self) -> Scope {
         match self {
-            Self::InstitutionRoles
+            Self::InstitutionArticles
+            | Self::InstitutionRoles
             | Self::InstitutionAssignments
             | Self::InstitutionWorkforce
             | Self::InstitutionAccounts

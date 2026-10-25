@@ -684,10 +684,11 @@ pub(crate) mod tests {
         startup::{Services, Settings},
     };
 
-    const PERMISSIONS: [&str; 7] = [
+    const PERMISSIONS: [&str; 8] = [
         "institution.accounts",
         "institution.affiliations.correct",
         "institution.affiliations.read",
+        "institution.articles",
         "institution.assignments",
         "institution.corrections",
         "institution.roles",

@@ -8,7 +8,15 @@ use syn::{
     parse::{ParseStream, Parser},
 };
 
-const PROTECTED_TABLES: [(&str, &[&str]); 46] = [
+const PROTECTED_TABLES: [(&str, &[&str]); 51] = [
+    ("content.columns", &["content/column/state.rs"]),
+    (
+        "content.changes",
+        &["content/column/change.rs", "content/column/navigation.rs"],
+    ),
+    ("content.navigations", &["content/column/navigation.rs"]),
+    ("content.appends", &["content/column/navigation.rs"]),
+    ("content.completions", &["kernel/completion.rs"]),
     ("identity.revisions", &["identity/person/revision.rs"]),
     ("identity.persons", &["identity/person/state.rs"]),
     ("identity.origins", &["identity/person/record.rs"]),
