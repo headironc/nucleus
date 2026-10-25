@@ -48,10 +48,11 @@ pub(super) async fn verify(
 ) -> Result<(), Error<Rejection>> {
     let mut cursor: Option<operation::Id> = None;
     loop {
+        let complete = super::verify_batch(async {
         let rows = client.query("SELECT operation_id, account_id, changed, revision, completed_at, seal, seal_key_id, seal_version FROM identity.uploads WHERE $1::uuid IS NULL OR operation_id>$1 ORDER BY operation_id LIMIT 128", &[&cursor])
             .await.map_err(Error::query)?;
         if rows.is_empty() {
-            break;
+            return Ok(true);
         }
         for row in rows {
             let original = Original::decode(&row, app.keys())?;
@@ -82,13 +83,19 @@ pub(super) async fn verify(
             }
             cursor = Some(original.operation);
         }
+        Ok(false)
+        }).await?;
+        if complete {
+            break;
+        }
     }
     cursor = None;
     loop {
+        let complete = super::verify_batch(async {
         let rows = client.query("SELECT operation_id FROM identity.publications WHERE $1::uuid IS NULL OR operation_id>$1 ORDER BY operation_id LIMIT 128", &[&cursor])
             .await.map_err(Error::query)?;
         if rows.is_empty() {
-            break;
+            return Ok(true);
         }
         for row in rows {
             let operation = row.try_get("operation_id").map_err(Error::decode)?;
@@ -137,6 +144,11 @@ pub(super) async fn verify(
                 }
             }
             cursor = Some(operation);
+        }
+        Ok(false)
+        }).await?;
+        if complete {
+            break;
         }
     }
     Ok(())
@@ -1996,7 +2008,7 @@ mod tests {
     use super::*;
     use crate::{
         access::role::tests::{actor, start},
-        identity::authentication::{Database, Supplier, server},
+        identity::authentication::{self, Database, Supplier, server},
     };
 
     fn png(rgba: &[u8; 16]) -> Vec<u8> {
@@ -2028,6 +2040,96 @@ mod tests {
                 Instant::now() + Duration::from_secs(30),
             )
             .await
+    }
+
+    #[test]
+    fn retained_upload_verification_renews_each_batch_budget_and_bounds_a_stalled_batch() {
+        async fn start_retained(
+            database: &Database,
+            proxy: &Proxy,
+            supplier: &Supplier,
+            storage: &avatar::storage::Settings,
+        ) -> (crate::runtime::Context, crate::startup::Services) {
+            let context = crate::runtime::Context::new(authentication::proxied(database, proxy))
+                .await
+                .expect("retained context");
+            let settings = crate::startup::Settings::new(
+                4,
+                crate::identity::message::Limits::default(),
+                authentication::session_settings(),
+                crate::registration::Limits::default(),
+                authentication::avatar_settings(),
+            )
+            .expect("settings")
+            .with_avatar_storage(Some(storage.clone()));
+            let services = Box::pin(crate::startup::Services::start(
+                crate::database::Barrier::begin(context.clone())
+                    .await
+                    .expect("barrier"),
+                authentication::inventory(authentication::keys()),
+                settings,
+                supplier.client(),
+                authentication::unused_client().await,
+            ))
+            .await
+            .expect("verified retained services");
+            (context, services)
+        }
+
+        let server = server();
+        Runtime::new().expect("runtime").block_on(Box::pin(async {
+            timeout(Duration::from_secs(70), Box::pin(async {
+                let database = Database::initialized(Arc::clone(&server)).await;
+                let proxy = Proxy::start(&server).await;
+                let mut supplier = Supplier::new().await;
+                let (root, mount, device) = server.files();
+                let storage = avatar::storage::Settings::new(root, mount, device).expect("retained storage");
+                let (context, services) = start_retained(&database, &proxy, &supplier, &storage).await;
+                let actor = Box::pin(actor(&database, &services, &mut supplier)).await;
+                let before = services.current().read(&actor).await.expect("current owner");
+                let bytes = png(&[71; 16]);
+                let first = replace(&services, &actor, operation::Id::allocate(), before.avatar().revision(), "image/png", &bytes)
+                    .await.expect("first private upload");
+                for _ in 0..128 {
+                    let result = replace(&services, &actor, operation::Id::allocate(), first.completion().revision(), "image/png", &bytes)
+                        .await.expect("retained unchanged upload");
+                    assert!(!result.completion().changed());
+                }
+                services.close(); services.drain().await.expect("original drained"); context.stop().await.expect("original stopped");
+                proxy.arm(ProxyFault::StalledAvatarUploads);
+                let delays = async {
+                    timeout(Duration::from_secs(10), proxy.intercepted()).await.expect("first upload batch reached");
+                    tokio::time::sleep(Duration::from_secs(6)).await;
+                    proxy.arm(ProxyFault::StalledAvatarUploads);
+                    proxy.release();
+                    timeout(Duration::from_secs(5), proxy.intercepted()).await.expect("second upload batch reached");
+                    tokio::time::sleep(Duration::from_secs(6)).await;
+                    proxy.release();
+                };
+                let started = Instant::now();
+                let ((context, services), ()) = timeout(Duration::from_secs(30), async {
+                    tokio::join!(start_retained(&database, &proxy, &supplier, &storage), delays)
+                }).await.expect("healthy startup spans more than one batch budget");
+                assert!(started.elapsed() >= Duration::from_secs(12));
+                services.current().read(&actor).await.expect("restarted service admits requests");
+                let observer = authentication::proxied(&database, &proxy).recover().await.expect("verification observer");
+                proxy.arm(ProxyFault::StalledAvatarUploads);
+                let avatar = services.avatar();
+                let (result, intercepted) = tokio::join!(
+                    timeout(Duration::from_secs(12), avatar.verify(observer.client(), Utc::now())),
+                    timeout(Duration::from_secs(3), proxy.intercepted())
+                );
+                proxy.release();
+                intercepted.expect("stalled verification batch reached");
+                let failure = result.expect("one stalled batch is bounded").expect_err("stalled batch fails verification");
+                assert!(matches!(failure, Error::Unavailable(ref fault)
+                    if matches!(fault.kind(), FaultKind::Avatar(avatar::Error::Verification(timeout))
+                        if matches!(timeout.stage(), crate::database::verification::Stage::Avatars))));
+                observer.terminate().await.expect("observer ended");
+                services.close(); services.drain().await.expect("restart drained"); context.stop().await.expect("restart stopped");
+                proxy.stop().await; supplier.stop().await;
+            })).await.expect("bounded retained upload startup acceptance");
+        }));
     }
 
     #[test]

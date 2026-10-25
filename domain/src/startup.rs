@@ -331,12 +331,9 @@ impl Services {
                 settings.avatar_limits,
             )?;
             let now = verify(&barrier, &app, &metadata, &keys, &invitations, &app_id).await?;
-            verification::Stage::Avatars
-                .batch(
-                    Duration::from_secs(10),
-                    avatar.verify(barrier.client(), now),
-                )
-                .await?
+            avatar
+                .verify(barrier.client(), now)
+                .await
                 .map_err(Error::AvatarFacts)?;
             registration::ready(barrier.client(), &app, now).await?;
             verification::Stage::BarrierConfirmation

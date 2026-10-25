@@ -101,7 +101,7 @@ impl Retention {
     /// intentions have crossed their original lock and reached a confirmed outcome.
     pub(crate) async fn restore(&mut self) -> Result<(), Error<Infallible>> {
         loop {
-            Box::pin(self.recover_files(true)).await?;
+            Box::pin(self.recover_files()).await?;
             if self.publication_cursor.is_none() && self.deletion_cursor.is_none() {
                 return Ok(());
             }
@@ -110,7 +110,9 @@ impl Retention {
 
     /// The process owns this round through cancellation, recovery and connection termination.
     pub async fn run(&mut self) -> Result<(), Error<Infallible>> {
-        Box::pin(self.recover_files(false)).await?;
+        if let Err(error) = Box::pin(self.recover_files()).await {
+            return self.handle(error, "avatar_file_recovery");
+        }
         let registry = self.app.registry();
         registry.ready()?;
         let rows = match self.candidates().await {
@@ -151,7 +153,7 @@ impl Retention {
         Ok(())
     }
 
-    async fn recover_files(&mut self, restoring: bool) -> Result<(), Error<Infallible>> {
+    async fn recover_files(&mut self) -> Result<(), Error<Infallible>> {
         let lease = self
             .app
             .context()
@@ -197,12 +199,7 @@ impl Retention {
             let result = super::upload::settle(&self.app, &self.avatar.0.storage, operation).await;
             scopeguard::ScopeGuard::into_inner(guard);
             permit.finish();
-            if let Err(error) = result {
-                if restoring {
-                    return Err(cleanup_error(error));
-                }
-                self.handle(cleanup_error(error), "avatar_publication_cleanup")?;
-            }
+            result.map_err(cleanup_error)?;
         }
         if publications_complete {
             self.publication_cursor = None;
@@ -235,12 +232,7 @@ impl Retention {
             let result = self.finish_deletion(&candidate).await;
             scopeguard::ScopeGuard::into_inner(guard);
             permit.finish();
-            if let Err(error) = result {
-                if restoring {
-                    return Err(error);
-                }
-                self.handle(error, "avatar_deletion_cleanup")?;
-            }
+            result?;
         }
         if deletions_complete {
             self.deletion_cursor = None;
@@ -673,10 +665,11 @@ pub(super) async fn verify(
 ) -> Result<(), Error<Infallible>> {
     let mut cursor: Option<Id> = None;
     loop {
+        let complete = super::verify_batch(async {
         let rows = client.query("SELECT id FROM identity.deletions WHERE $1::uuid IS NULL OR id>$1 ORDER BY id LIMIT 128", &[&cursor])
             .await.map_err(Error::query)?;
         if rows.is_empty() {
-            break;
+            return Ok(true);
         }
         for row in rows {
             let id = row.try_get("id").map_err(Error::decode)?;
@@ -704,6 +697,11 @@ pub(super) async fn verify(
                 ));
             }
             cursor = Some(id);
+        }
+        Ok(false)
+        }).await?;
+        if complete {
+            break;
         }
     }
     Ok(())
@@ -1114,6 +1112,66 @@ mod tests {
                 })).await.expect("bounded cancellation and avatar lifecycle");
             }
         }));
+    }
+
+    #[test]
+    fn file_discovery_dependency_failure_retries_at_runtime_but_fails_startup() {
+        let server = server();
+        Runtime::new().expect("runtime").block_on(async {
+            timeout(Duration::from_secs(45), async {
+                let database = Database::initialized(server).await;
+                let mut supplier = Supplier::new().await;
+                let (context, services) =
+                    start(database.connections(&database.user), &supplier).await;
+                let actor = Box::pin(actor(&database, &services, &mut supplier)).await;
+                let owner = database
+                    .connections(&database.owner)
+                    .recover()
+                    .await
+                    .expect("fixture owner");
+                owner
+                    .client()
+                    .batch_execute(
+                        "BEGIN; LOCK TABLE identity.publications IN ACCESS EXCLUSIVE MODE",
+                    )
+                    .await
+                    .expect("hold file discovery independently of business reads");
+                let mut retention = services.avatar_retention();
+                retention
+                    .run()
+                    .await
+                    .expect("runtime defers ordinary discovery failure");
+                services
+                    .current()
+                    .read(&actor)
+                    .await
+                    .expect("unrelated requests remain admitted");
+                assert!(
+                    matches!(
+                        retention.restore().await,
+                        Err(crate::kernel::Error::Unavailable(_))
+                    ),
+                    "startup cannot expose services before recovery discovery succeeds"
+                );
+                owner
+                    .client()
+                    .batch_execute("ROLLBACK")
+                    .await
+                    .expect("restore discovery dependency");
+                retention.run().await.expect("next runtime round succeeds");
+                retention
+                    .restore()
+                    .await
+                    .expect("startup succeeds after dependency recovery");
+                services.close();
+                services.drain().await.expect("drained");
+                context.stop().await.expect("stopped");
+                owner.terminate().await.expect("owner ended");
+                supplier.stop().await;
+            })
+            .await
+            .expect("bounded runtime and startup discovery failures");
+        });
     }
 
     #[test]

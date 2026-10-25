@@ -99,10 +99,11 @@ impl Service {
         retention::verify(client, &self.0.app, now).await?;
         let mut cursor: Option<Id> = None;
         loop {
+            let complete = verify_batch(async {
             let rows = client.query("SELECT id, revision AS avatar, account_id, digest, size, width, height, content_seal, content_seal_key_id, content_seal_version FROM identity.avatars WHERE $1::uuid IS NULL OR id>$1 ORDER BY id LIMIT 128", &[&cursor])
                 .await.map_err(KernelError::query)?;
             if rows.is_empty() {
-                break;
+                return Ok(true);
             }
             for row in rows {
                 let snapshot = self.snapshot(&row).map_err(retention::avatar_error)?;
@@ -122,6 +123,11 @@ impl Service {
                     }
                 }
                 cursor = Some(snapshot.id());
+            }
+            Ok(false)
+            }).await?;
+            if complete {
+                break;
             }
         }
         Ok(())
@@ -583,6 +589,22 @@ impl Content {
     }
 }
 
+async fn verify_batch<T, R>(
+    batch: impl std::future::Future<Output = Result<T, KernelError<R>>>,
+) -> Result<T, KernelError<R>> {
+    use crate::kernel::error::{Fault, FaultKind, Stage};
+
+    crate::database::verification::Stage::Avatars
+        .batch(Duration::from_secs(10), batch)
+        .await
+        .map_err(|error| {
+            KernelError::Unavailable(Fault::new(
+                Stage::Command,
+                FaultKind::Avatar(Error::Verification(error)),
+            ))
+        })?
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("avatar content does not exist")]
@@ -617,6 +639,8 @@ pub enum Error {
     Connection(#[from] platform::database::Error),
     #[error("avatar read budget expired")]
     Timeout(tokio::time::error::Elapsed),
+    #[error("{0}")]
+    Verification(#[source] crate::database::verification::Timeout),
 }
 
 impl From<tokio_postgres::Error> for Error {
