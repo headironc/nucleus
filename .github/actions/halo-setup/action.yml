@@ -16,7 +16,7 @@ runs:
       shell: bash
       run: |
         set -euo pipefail
-        [[ "$HALO_CI_IMAGE" =~ ^ghcr.io/silence-force/nucleus-halo-ci@sha256:[0-9a-f]{64}$ ]]
+        [[ "$HALO_CI_IMAGE" =~ ^ghcr.io/silence-force/nucleus-ci@sha256:[0-9a-f]{64}$ ]]
         bun tools/halo-ci-image.ts verify
         printf 'key=%s\n' "${HALO_CI_IMAGE##*@}" >> "$GITHUB_OUTPUT"
     - name: Install website dependencies

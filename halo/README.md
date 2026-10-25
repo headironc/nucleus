@@ -240,7 +240,7 @@ bun tools/halo-ci-image.ts build nucleus-halo-ci:local
 
 首次发布选择预期 `private`；包公开后的更新选择 `public`。这个输入只核对结果，不改变可见性。发布后核对包名、预期可见性、仓库 ID 和完整仓库名；缺失或不同的关联都使验证失败。首次公开另行执行，只公开已检查的新包全部版本，并验证准确 digest 的匿名拉取。[公开 package 不能改回 private](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility#configuring-visibility-of-packages-for-an-organization)。发布报错或结果未知时先回读原 run 和准确 tag，确认实际结果后再决定修复，不直接重复触发推送。
 
-当前消费者仍固定旧私有包 `nucleus-halo-ci`，保留已有只读拉取权限。新包通过产物检查并可匿名拉取后，再将所有消费者切换到真实新 digest，移除消费者的包凭据，并执行 PR、队列和缓存验收。旧包保持私有；旧包对新仓库的 Actions Read 单独撤销并读回后，才完成访问隔离。镜像发布成功不代表消费者切换或仓库公开条件已完成。
+消费者现已固定公开包 `nucleus-ci` 的真实 digest，并移除包拉取凭据；Halo、Rust 与缓存工作流按公开包匿名拉取。切换须经 PR、队列和缓存验收。旧包 `nucleus-halo-ci` 保持私有；旧包对新仓库的 Actions Read 单独撤销并读回后，才完成访问隔离。镜像发布成功不代表消费者切换或仓库公开条件已完成。
 
 更新依赖时，先更新所属版本源和相关下载摘要。Playwright 升级还须更新 Dockerfile 的官方镜像版本与 digest。构建并完成容器验收后，使用发布工作流发布已审阅修订。从发布日志回读实际 digest，再同时替换 Halo、Rust 与缓存工作流所有消费者中的镜像及 `HALO_CI_IMAGE`。提交前运行维护工具回归，并在 PR 和队列上确认实际验收。镜像 digest 变化时使用新的缓存身份，缓存缺失仍执行完整检查。
 

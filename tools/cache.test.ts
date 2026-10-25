@@ -43,7 +43,6 @@ type Workflow = {
       permissions?: Record<string, string>;
       container?: {
         image: string;
-        credentials: Record<string, string>;
         options: string;
       };
       env: Record<string, string>;
@@ -443,20 +442,16 @@ test("Halo verifies its immutable preinstalled image before restoring image-boun
     expect(step.if).toBeUndefined();
   const image = halo.jobs.website.container!;
   expect(image.image).toMatch(
-    /^ghcr.io\/silence-force\/nucleus-halo-ci@sha256:[0-9a-f]{64}$/,
+    /^ghcr.io\/silence-force\/nucleus-ci@sha256:[0-9a-f]{64}$/,
   );
   expect(image.options).toBe("--init --user 1001:1001 --ipc=host");
-  expect(image.credentials).toEqual({
-    username: "${{ github.actor }}",
-    password: "${{ secrets.GITHUB_TOKEN }}",
-  });
   expect(cache.jobs.halo.container).toEqual({
     ...image,
     options: "--user 1001:1001 --ipc=host",
   });
   for (const job of [halo.jobs.website, cache.jobs.halo]) {
     expect(job.env.HALO_CI_IMAGE).toBe(image.image);
-    expect(job.permissions).toEqual({ contents: "read", packages: "read" });
+    expect(job.permissions).toEqual({ contents: "read" });
   }
   for (const job of [
     cache.jobs.checks,
@@ -541,7 +536,7 @@ test("every package restores dependencies only after verifying the same fixed Po
   for (const job of [cache.jobs.packages, rust.jobs.packages]) {
     expect(job.container).toEqual(cache.jobs.halo.container);
     expect(job.env.HALO_CI_IMAGE).toBe(job.container!.image);
-    expect(job.permissions).toEqual({ contents: "read", packages: "read" });
+    expect(job.permissions).toEqual({ contents: "read" });
     const setup = job.steps.filter(
       (step) => step.uses === "./.github/actions/package-setup",
     );
@@ -636,12 +631,12 @@ test("package setup stops before cache output on an invalid image or failed veri
     ["ghcr.io/silence-force/nucleus-halo-ci:latest", true, false],
     ["ghcr.io/another/image@sha256:" + "a".repeat(64), true, false],
     [
-      "ghcr.io/silence-force/nucleus-halo-ci@sha256:" + "a".repeat(64),
+      "ghcr.io/silence-force/nucleus-ci@sha256:" + "a".repeat(64),
       false,
       false,
     ],
     [
-      "ghcr.io/silence-force/nucleus-halo-ci@sha256:" + "a".repeat(64),
+      "ghcr.io/silence-force/nucleus-ci@sha256:" + "a".repeat(64),
       true,
       true,
     ],
