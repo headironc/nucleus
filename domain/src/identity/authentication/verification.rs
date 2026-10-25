@@ -8,7 +8,7 @@ use tokio_postgres::{
 };
 
 use crate::{
-    database::transaction::{Completion, EndError, Known, Outcome, commit},
+    database::transaction::{Completion, EndError, Known, Outcome},
     identity::{
         authentication::{
             self, Error, Inner, Input, Receipt, Sender, Stage, TRANSACTION_BUDGET, database,
@@ -442,28 +442,29 @@ impl Inner {
         change: &Change<'_>,
     ) -> Result<Verification, Error> {
         let cause = match self.context.connections().lease().await {
-            Ok(lease) => match self.write(lease.client(), input, previous, change).await {
-                Ok(completion) => {
-                    let (completion, cleanup) = completion.recycle(lease).await;
-                    match completion {
-                        Completion::Known(Known {
-                            value: receipt,
-                            end: Ok(()),
-                        }) => return Ok(Verification::new(receipt)),
-                        Completion::Known(Known {
-                            value: receipt,
-                            end: Err(error),
-                        }) => {
-                            return Ok(Verification::recovered(
-                                self,
-                                receipt,
-                                Error::from(error).combine(cleanup),
-                            ));
-                        }
-                        Completion::Pending { error, .. } => Error::from(error).combine(cleanup),
+            Ok(lease) => match self
+                .write(Connection::Online(lease), input, previous, change)
+                .await
+            {
+                Ok((completion, cleanup)) => match completion {
+                    Completion::Known(Known {
+                        value: receipt,
+                        end: Ok(()),
+                    }) => return Ok(Verification::new(receipt)),
+                    Completion::Known(Known {
+                        value: receipt,
+                        end: Err(error),
+                    }) => {
+                        return Ok(Verification::recovered(
+                            self,
+                            receipt,
+                            Error::from(error).combine(cleanup),
+                        ));
                     }
-                }
-                Err(error) => error.combine(lease.discard().await),
+                    Completion::Pending { error, .. } => Error::from(error).combine(cleanup),
+                },
+                // `write` owns the failed attempt's connection and awaited its driver.
+                Err(error) => error,
             },
             Err(error) => error.into(),
         };
@@ -520,30 +521,45 @@ impl Inner {
         change: &Change<'_>,
     ) -> Result<(Completion<Receipt>, Result<(), platform::database::Error>), Error> {
         let session = self.context.connections().recover().await?;
-        let result = self.write(session.client(), input, previous, change).await;
-        match result {
-            Ok(completion) => Ok(completion.terminate(session).await),
-            Err(error) => Err(error.combine(session.terminate().await)),
-        }
+        self.write(Connection::Recovery(session), input, previous, change)
+            .await
     }
 
     async fn write(
         &self,
-        client: &Client,
+        connection: Connection,
         input: &Input,
         previous: Receipt,
         change: &Change<'_>,
-    ) -> Result<Completion<Receipt>, Error> {
-        let deadline = Instant::now() + TRANSACTION_BUDGET;
-        let transition =
-            timeout_at(deadline, self.transition(client, input, previous, change)).await??;
-        let outcome = match transition {
-            Transition::Original(receipt) if receipt.status.complete() => Outcome::Known(receipt),
-            Transition::Original(receipt) | Transition::Changed(receipt) => {
-                Outcome::Pending(receipt)
+    ) -> Result<(Completion<Receipt>, Result<(), platform::database::Error>), Error> {
+        let (tx, started) = Tx::begin_operation(
+            &self.context,
+            connection,
+            Instant::now() + TRANSACTION_BUDGET,
+            b"challenge/operation",
+            input.operation_id,
+        )
+        .await;
+        let result = timeout_at(tx.deadline(), async {
+            started?;
+            self.transition(tx.client(), input, previous, change).await
+        })
+        .await;
+        match result {
+            Ok(Ok(transition)) => {
+                let outcome = match transition {
+                    Transition::Original(receipt) if receipt.status.complete() => {
+                        Outcome::Known(receipt)
+                    }
+                    Transition::Original(receipt) | Transition::Changed(receipt) => {
+                        Outcome::Pending(receipt)
+                    }
+                };
+                Ok(tx.complete(outcome).await)
             }
-        };
-        Ok(commit(outcome, deadline, client.batch_execute("COMMIT")).await)
+            Ok(Err(error)) => Err(error.combine(tx.abandon().await)),
+            Err(error) => Err(Error::from(error).combine(tx.abandon().await)),
+        }
     }
 
     async fn transition(
@@ -553,7 +569,6 @@ impl Inner {
         previous: Receipt,
         change: &Change<'_>,
     ) -> Result<Transition, Error> {
-        transaction::begin(&self.context, client, input.operation_id).await?;
         let current = database::challenge::find_receipt(client, &self.keys, input)
             .await?
             .ok_or(Error::Facts {
@@ -2526,6 +2541,122 @@ pub(super) mod tests {
                 supplier.stop().await;
                 proxy.stop().await;
             }
+        });
+    }
+
+    #[test]
+    fn transition_begin_deadline_lets_one_independent_rewrite_complete_the_same_result() {
+        use fixture::database_proxy::{Fault, Proxy};
+
+        use crate::identity::authentication::dispatch::tests::proxied;
+
+        let server = server();
+        Runtime::new().expect("runtime").block_on(async {
+            timeout(Duration::from_secs(25), async {
+                let database = Database::initialized(Arc::clone(&server)).await;
+                let proxy = Proxy::start(&server).await;
+                let mut supplier = Supplier::new().await;
+                let (context, service) = database
+                    .start_on(supplier.client(), proxied(&database, &proxy))
+                    .await;
+                let observer = database
+                    .connections(&database.user)
+                    .recover()
+                    .await
+                    .expect("independent observer");
+                let task = run(&service);
+                let request = supplier.request().await;
+                // Keep the supplier's timestamp distinct from the rewrite's decision time.
+                let expected_solved_at = database.now().await - chrono::TimeDelta::seconds(1);
+                // Hold the transition's first statement, before the shared generation
+                // barrier returns. The one absolute budget still starts before BEGIN.
+                proxy.arm(Fault::StalledQuery);
+                request.reply(200, success(expected_solved_at));
+                let stalled = timeout(Duration::from_secs(3), proxy.intercepted())
+                    .await
+                    .expect("transition begin Parse held");
+                let receipt = timeout(Duration::from_secs(15), task)
+                    .await
+                    .expect("absolute transition budget")
+                    .expect("worker")
+                    .expect("independently rewritten conclusion");
+                let Status::Passed {
+                    solved_at,
+                    finished_at,
+                } = receipt.status()
+                else {
+                    panic!("retained supplier success must pass");
+                };
+                assert_eq!(solved_at, expected_solved_at);
+                assert_eq!(receipt.calls, 1);
+                // Inspect before releasing the original attempt: its held transaction
+                // cannot have produced these facts, so the rewrite did.
+                let stored = observer
+                    .client()
+                    .query_one(
+                        "SELECT status, calls, solved_at, finished_at FROM identity.challenges
+                         WHERE operation_id = $1",
+                        &[&input().operation_id()],
+                    )
+                    .await
+                    .expect("persisted conclusion while the original attempt is held");
+                assert_eq!(stored.get::<_, &str>("status"), "passed");
+                assert_eq!(stored.get::<_, i16>("calls"), 1);
+                assert_eq!(
+                    stored.get::<_, DateTime<Utc>>("solved_at"),
+                    expected_solved_at
+                );
+                assert_eq!(stored.get::<_, DateTime<Utc>>("finished_at"), finished_at);
+                let snapshot = "SELECT to_jsonb(challenge)::text FROM identity.challenges challenge WHERE operation_id = $1";
+                let held: String = observer
+                    .client()
+                    .query_one(snapshot, &[&input().operation_id()])
+                    .await
+                    .expect("conclusion facts while the original attempt is held")
+                    .get(0);
+                proxy.release();
+                timeout(Duration::from_secs(3), async {
+                    loop {
+                        if observer
+                            .client()
+                            .query_one(
+                                "SELECT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity WHERE pid = $1)",
+                                &[&stalled],
+                            )
+                            .await
+                            .expect("original backend lifetime")
+                            .get::<_, bool>(0)
+                        {
+                            break;
+                        }
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await
+                .expect("original backend ends after its driver");
+                let after: String = observer
+                    .client()
+                    .query_one(snapshot, &[&input().operation_id()])
+                    .await
+                    .expect("conclusion facts after the original attempt ends")
+                    .get(0);
+                assert_eq!(
+                    after, held,
+                    "the abandoned attempt cannot rewrite the conclusion"
+                );
+                stop(context, service).await;
+                assert!(
+                    timeout(Duration::from_millis(30), supplier.request())
+                        .await
+                        .is_err(),
+                    "the independent rewrite must not repeat Siteverify"
+                );
+                observer.terminate().await.expect("observer ended");
+                supplier.stop().await;
+                proxy.stop().await;
+            })
+            .await
+            .expect("transition deadline scenario budget");
         });
     }
 

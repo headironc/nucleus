@@ -236,7 +236,13 @@ bun tools/halo-ci-image.ts build nucleus-halo-ci:local
 
 构建器只发送镜像定义和 PostgreSQL 构建脚本及版本文件。PostgreSQL 从官方源码校验摘要后构建，安装固定在 `/opt/nucleus/target/postgresql/<version>`。运行前在仓库 `target/postgresql/<version>` 建立指向该安装的链接，避免移动后的动态库路径失效。任务使用 UID/GID 1001；`initdb`、数据库、真实后端、Node 和隔离 Nginx 在同一容器内通信，保留回环与 TLS 验收。
 
-[镜像发布工作流](../.github/workflows/halo-image.yml)只接受从 `dev` 手动执行，输入已审阅的完整提交 SHA。构建作业只有源码读取权限；独立发布作业不检出或执行源码，先核对镜像的仓库来源标签，再发布到私有 `ghcr.io/silence-force/nucleus-halo-ci`。发布后回读私有属性；包页面的仓库关联可为空，同仓消费权限由实际只读拉取验证。[GitHub 将这两种关联分开管理](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility#ensuring-workflow-access-to-your-package)。普通 PR、队列与缓存作业只具有包读取权限。发布产物不包含中间构建阶段，仓库令牌不传入镜像。
+[镜像发布工作流](../.github/workflows/halo-image.yml)仅接受新仓库 ID `1432619931` 从 `dev` 手动执行。输入已审阅的完整提交 SHA，选择 `build` 后只构建并上传 `nucleus-ci-image` artifact，保留一天。构建作业只有源码读取权限；产物包含完整镜像 tar、配置、history 和来源记录。先下载准确 artifact，检查全部层，包括后层删除或覆盖的文件，再核对配置、history、依赖许可及敏感内容。源码检查与文件名清单不能代替实际内容检查。
+
+检查通过后另行触发 `publish`，提供相同修订、成功的 build run ID、不可变 artifact ID 和已检查的 `nucleus-ci.tar` SHA-256。发布作业使用临时 `GITHUB_TOKEN` 的 `actions: read` 下载原产物，先核对仓库、工作流、运行状态及来源，再核对实际字节摘要。跨运行下载的权限要求见 [download-artifact](https://github.com/actions/download-artifact#download-artifacts-from-other-workflow-runs-or-repositories)。发布作业不检出或执行源码、不运行镜像、不重建产物；核对来源标签后推送 `ghcr.io/silence-force/nucleus-ci`。包写权限仅在发布作业内。
+
+首次发布选择预期 `private`；包公开后的更新选择 `public`。这个输入只核对结果，不改变可见性。发布后核对包名、预期可见性、仓库 ID 和完整仓库名；缺失或不同的关联都使验证失败。首次公开另行执行，只公开已检查的新包全部版本，并验证准确 digest 的匿名拉取。[公开 package 不能改回 private](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility#configuring-visibility-of-packages-for-an-organization)。发布报错或结果未知时先回读原 run 和准确 tag，确认实际结果后再决定修复，不直接重复触发推送。
+
+消费者现已固定公开包 `nucleus-ci` 的真实 digest，并移除包拉取凭据；Halo、Rust 与缓存工作流按公开包匿名拉取。切换须经 PR、队列和缓存验收。旧包 `nucleus-halo-ci` 保持私有；旧包对新仓库的 Actions Read 单独撤销并读回后，才完成访问隔离。镜像发布成功不代表消费者切换或仓库公开条件已完成。
 
 更新依赖时，先更新所属版本源和相关下载摘要。Playwright 升级还须更新 Dockerfile 的官方镜像版本与 digest。构建并完成容器验收后，使用发布工作流发布已审阅修订。从发布日志回读实际 digest，再同时替换 Halo、Rust 与缓存工作流所有消费者中的镜像及 `HALO_CI_IMAGE`。提交前运行维护工具回归，并在 PR 和队列上确认实际验收。镜像 digest 变化时使用新的缓存身份，缓存缺失仍执行完整检查。
 
