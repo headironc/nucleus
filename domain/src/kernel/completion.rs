@@ -79,6 +79,7 @@ impl Template {
             | Family::MobileCompletion
             | Family::Correction
             | Family::Cancellation
+            | Family::Avatar
             | Family::SystemCorrection
             | Family::NumberAllocation
             | Family::NumberCorrection
@@ -551,8 +552,8 @@ pub(crate) async fn verify_workforce_families<R>(client: &Client) -> Result<(), 
 pub(crate) async fn verify_identity_families<R>(client: &Client) -> Result<(), Error<R>> {
     let row = crate::database::verification::Stage::HistoryRecords
         .batch(Duration::from_secs(10), client.query_one(
-            "SELECT NOT EXISTS (SELECT 1 FROM identity.completions WHERE family IS NULL OR family NOT IN ($1,$2,$3,$4,$5,$6,$7))",
-            &[&Family::Logout.label(), &Family::Suspension.label(), &Family::Resumption.label(), &Family::MobileCompletion.label(), &Family::SystemCorrection.label(), &Family::Correction.label(), &Family::Cancellation.label()],
+            "SELECT NOT EXISTS (SELECT 1 FROM identity.completions WHERE family IS NULL OR family NOT IN ($1,$2,$3,$4,$5,$6,$7,$8))",
+            &[&Family::Logout.label(), &Family::Suspension.label(), &Family::Resumption.label(), &Family::MobileCompletion.label(), &Family::SystemCorrection.label(), &Family::Correction.label(), &Family::Cancellation.label(), &Family::Avatar.label()],
         )).await.map_err(history::Error::from)?.map_err(Error::query)?;
     if !row.try_get::<_, bool>(0).map_err(Error::decode)? {
         return Err(Error::corrupt(
@@ -643,6 +644,68 @@ pub(crate) async fn remove_expired<R>(
         ));
     }
     Ok(())
+}
+
+/// Cancellation removes only this account's retained avatar originals, after authenticating
+/// every exact row. No other family shares this deletion path.
+pub(crate) async fn remove_avatar<R>(
+    client: &Client,
+    keys: Keys<'_>,
+    template: Template,
+    target: &str,
+    now: DateTime<Utc>,
+) -> Result<(), Error<R>> {
+    if template.family != Family::Avatar {
+        return Err(Error::corrupt(
+            "only avatar completions share cancellation removal",
+        ));
+    }
+    let rows = client
+        .query(
+            &format!(
+                "SELECT {COLUMNS} FROM {} WHERE family=$1 AND target=$2 ORDER BY operation_id",
+                template.family.completions()
+            ),
+            &[&template.family.label(), &target],
+        )
+        .await
+        .map_err(Error::query)?;
+    for row in rows {
+        let record = Record::decode(template, &row, keys)?;
+        if record.target() != target {
+            return Err(Error::corrupt(
+                "an avatar completion retains its account target",
+            ));
+        }
+        record.check_time(now)?;
+        let changed = client
+            .execute(
+                &format!(
+                    "DELETE FROM {} WHERE family=$1 AND operation_id=$2 AND seal=$3 AND seal_key_id=$4 AND seal_version=$5",
+                    template.family.completions()
+                ),
+                &[
+                    &template.family.label(),
+                    &record.operation_id(),
+                    &record.seal.tag(),
+                    &record.seal.key_id(),
+                    &record.seal.version(),
+                ],
+            )
+            .await
+            .map_err(Error::query)?;
+        if changed != 1 {
+            return Err(Error::corrupt(
+                "avatar completion removal deletes its authenticated row",
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(crate) async fn avatar_removed<R>(client: &Client, target: &str) -> Result<bool, Error<R>> {
+    client.query_one("SELECT NOT EXISTS (SELECT 1 FROM identity.completions WHERE family='avatar' AND target=$1)", &[&target])
+        .await.map_err(Error::query)?.try_get(0).map_err(Error::decode)
 }
 
 pub(crate) async fn find<R>(

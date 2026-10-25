@@ -747,6 +747,12 @@ async fn relay(
                         .windows(b"INSERT INTO identity.rejections".len())
                         .any(|bytes| bytes == b"INSERT INTO identity.rejections")
                     || message
+                        .windows(b"INSERT INTO identity.uploads".len())
+                        .any(|bytes| bytes == b"INSERT INTO identity.uploads")
+                    || message
+                        .windows(b"INSERT INTO identity.publications".len())
+                        .any(|bytes| bytes == b"INSERT INTO identity.publications")
+                    || message
                         .windows(b"DELETE FROM identity.transfers".len())
                         .any(|bytes| bytes == b"DELETE FROM identity.transfers")
                     || message

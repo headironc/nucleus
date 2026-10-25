@@ -197,9 +197,21 @@ pub(crate) async fn remove(
             &[&account_id],
         )
         .await?;
-    if client.execute("UPDATE identity.avatars SET released_at = $2 WHERE account_id = $1 AND released_at IS NULL", &[&account_id, &now]).await? != 1 {
+    if client.execute("UPDATE identity.avatars SET released_at = $2, release = 'cancellation', release_operation_id = $3, release_transaction_id = pg_catalog.pg_current_xact_id() WHERE account_id = $1 AND released_at IS NULL", &[&account_id, &now, &operation_id]).await? != 1 {
         return Err(Error::Facts { rule: "cancellation releases exactly one current avatar" });
     }
+    crate::identity::avatar::upload::remove_account(client, app.keys(), account_id, now)
+        .await
+        .map_err(Error::Completion)?;
+    completion::remove_avatar(
+        client,
+        app.keys(),
+        crate::identity::avatar::COMPLETIONS,
+        &account_id.to_string(),
+        now,
+    )
+    .await
+    .map_err(Error::Completion)?;
     let candidate = account::transition::cancel(original, id, operation_id, now)?
         .write(client, app.keys(), app.anchors())
         .await?;
@@ -276,7 +288,11 @@ impl Original {
             "SELECT NOT EXISTS (SELECT 1 FROM identity.avatars WHERE account_id=$1 AND released_at IS NULL) AND NOT EXISTS (SELECT 1 FROM identity.receipts WHERE account_id=$1)",
             &[&self.account_id],
         ).await?.try_get(0)?;
-        if !removed {
+        if !removed
+            || !crate::identity::avatar::upload::removed(client, self.account_id).await?
+            || !completion::avatar_removed::<Infallible>(client, &self.account_id.to_string())
+                .await?
+        {
             return Err(Error::Facts {
                 rule: "cancellation releases its avatar and removes all retained receipts",
             });

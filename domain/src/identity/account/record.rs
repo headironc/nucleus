@@ -28,21 +28,7 @@ pub(crate) const RESUMPTIONS: &str = "identity.resumptions";
 pub(crate) const REPLACEMENTS: &str = "identity.replacements";
 pub(crate) const LOGOUTS: &str = "identity.logouts";
 pub(crate) const PROJECTIONS: &str = "identity.projections";
-
-/// Discovery only: retention authenticates the account and projection under their original lock.
-pub(crate) async fn cancellation_operation(
-    client: &Client,
-    account: Id,
-) -> Result<Option<operation::Id>, Error> {
-    Ok(client
-        .query_opt(
-            "SELECT operation_id FROM identity.projections WHERE account_id=$1 AND cause='cancellation'",
-            &[&account],
-        )
-        .await?
-        .map(|row| row.try_get(0))
-        .transpose()?)
-}
+pub(crate) const PORTRAITS: &str = "identity.portraits";
 
 pub(crate) async fn cancellation(
     client: &Client,
@@ -62,6 +48,28 @@ pub(crate) async fn cancellation(
         .await?
         .ok_or(Error::Integrity(
             "a cancellation retains its account projection",
+        ))?;
+    history::record(&row, keys, now)
+}
+
+pub(crate) async fn avatar(
+    client: &Client,
+    keys: Keys<'_>,
+    operation: operation::Id,
+    now: DateTime<Utc>,
+) -> Result<history::Verified<Record>, Error> {
+    use crate::history::Kind as _;
+    let row = client
+        .query_opt(
+            &format!(
+                "{} WHERE record.kind='avatar' AND record.operation_id=$1",
+                Record::SELECT
+            ),
+            &[&operation],
+        )
+        .await?
+        .ok_or(Error::Integrity(
+            "an avatar release retains its permanent account advancement",
         ))?;
     history::record(&row, keys, now)
 }
@@ -161,6 +169,11 @@ pub(crate) enum Event {
         sessions: Vec<session::Id>,
     },
     Correction(correction::Id),
+    Avatar {
+        id: super::portrait::Id,
+        previous: crate::identity::avatar::Revision,
+        revision: crate::identity::avatar::Revision,
+    },
     Cancellation(cancellation::Id),
 }
 
@@ -173,6 +186,7 @@ impl Event {
             Self::Replacement { .. } => "replacement",
             Self::Logout { .. } => "logout",
             Self::Correction(_) => "correction",
+            Self::Avatar { .. } => "avatar",
             Self::Cancellation(_) => "cancellation",
         }
     }
@@ -235,6 +249,7 @@ impl Record {
             Event::Replacement { .. } | Event::Logout { .. } | Event::Correction(_) => {
                 state.current().is_some()
             }
+            Event::Avatar { revision, .. } => state.avatar() == *revision,
         }
     }
 }
@@ -498,9 +513,9 @@ pub(crate) async fn created(
 impl history::Kind for Record {
     type Error = Error;
     const NAME: &'static str = "identity.account.record";
-    const SELECT: &'static str = r"SELECT record.account_id,record.person_id,record.sequence,record.operation_id,record.happened_at,record.kind,record.id,record.revision_id,record.operator_id,record.mobile,record.source,record.session_id,record.message_id,record.sessions,record.scope,record.paired,record.seal,record.seal_key_id,record.seal_version FROM (
+    const SELECT: &'static str = r"SELECT record.account_id,record.person_id,record.sequence,record.operation_id,record.happened_at,record.kind,record.id,record.revision_id,record.previous_revision,record.operator_id,record.mobile,record.source,record.session_id,record.message_id,record.sessions,record.scope,record.paired,record.seal,record.seal_key_id,record.seal_version FROM (
         SELECT creation.id AS account_id,creation.person_id,creation.sequence,creation.operation_id,creation.created_at AS happened_at,
-            'creation'::text AS kind,creation.id,creation.revision_id,NULL::uuid AS operator_id,NULL::bytea AS mobile,
+            'creation'::text AS kind,creation.id,creation.revision_id,NULL::uuid AS previous_revision,NULL::uuid AS operator_id,NULL::bytea AS mobile,
             creation.source,NULL::uuid AS session_id,NULL::uuid AS message_id,
             NULL::uuid[] AS sessions,NULL::text AS scope,
             true AS paired,
@@ -508,28 +523,33 @@ impl history::Kind for Record {
         FROM identity.creations creation
         UNION ALL
         SELECT suspension.account_id,suspension.person_id,suspension.sequence,suspension.operation_id,suspension.suspended_at,
-            'suspension',suspension.id,suspension.revision_id,suspension.operator_id,suspension.mobile,
+            'suspension',suspension.id,suspension.revision_id,NULL,suspension.operator_id,suspension.mobile,
             NULL,NULL,NULL,suspension.sessions,NULL,true,suspension.seal,suspension.seal_key_id,suspension.seal_version
         FROM identity.suspensions suspension
         UNION ALL
         SELECT resumption.account_id,resumption.person_id,resumption.sequence,resumption.operation_id,resumption.resumed_at,
-            'resumption',resumption.id,resumption.revision_id,resumption.operator_id,resumption.mobile,
+            'resumption',resumption.id,resumption.revision_id,NULL,resumption.operator_id,resumption.mobile,
             NULL,NULL,NULL,NULL,NULL,true,resumption.seal,resumption.seal_key_id,resumption.seal_version
         FROM identity.resumptions resumption
         UNION ALL
         SELECT replacement.account_id,replacement.person_id,replacement.sequence,replacement.operation_id,replacement.completed_at,
-            'replacement',replacement.id,NULL,replacement.operator_id,NULL,
+            'replacement',replacement.id,NULL,NULL,replacement.operator_id,NULL,
             NULL,replacement.session_id,replacement.message_id,replacement.sessions,NULL,
             true,replacement.seal,replacement.seal_key_id,replacement.seal_version
         FROM identity.replacements replacement
         UNION ALL
         SELECT logout.account_id,logout.person_id,logout.sequence,logout.id,logout.revoked_at,
-            'logout',logout.id,NULL,NULL,NULL,NULL,logout.initiator_id,NULL,logout.sessions,logout.scope,
+            'logout',logout.id,NULL,NULL,NULL,NULL,NULL,logout.initiator_id,NULL,logout.sessions,logout.scope,
             true,logout.seal,logout.seal_key_id,logout.seal_version
         FROM identity.logouts logout
         UNION ALL
+        SELECT portrait.account_id,portrait.person_id,portrait.sequence,portrait.operation_id,portrait.portrait_at,
+            'avatar',portrait.id,portrait.revision,portrait.previous_revision,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+            true,portrait.seal,portrait.seal_key_id,portrait.seal_version
+        FROM identity.portraits portrait
+        UNION ALL
         SELECT projection.account_id,projection.person_id,projection.sequence,projection.operation_id,projection.projected_at,
-            projection.cause,projection.id,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
+            projection.cause,projection.id,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,
             CASE projection.cause
                 WHEN 'correction' THEN EXISTS (SELECT 1 FROM identity.changes correction
                     WHERE correction.kind='correction' AND correction.id=projection.id AND correction.person_id=projection.person_id
@@ -594,6 +614,22 @@ impl history::Kind for Record {
                 }
             }
             "correction" => Event::Correction(row.try_get("id").map_err(Error::decode)?),
+            "avatar" => {
+                let previous: crate::identity::avatar::Revision =
+                    row.try_get("previous_revision").map_err(Error::decode)?;
+                let revision: crate::identity::avatar::Revision =
+                    row.try_get("revision_id").map_err(Error::decode)?;
+                if previous == revision {
+                    return Err(Error::Integrity(
+                        "an avatar advancement changes its revision",
+                    ));
+                }
+                Event::Avatar {
+                    id: row.try_get("id").map_err(Error::decode)?,
+                    previous,
+                    revision,
+                }
+            }
             "cancellation" => Event::Cancellation(row.try_get("id").map_err(Error::decode)?),
             _ => {
                 return Err(Error::Integrity(
@@ -681,6 +717,15 @@ impl history::Kind for Record {
                 fields.extend(sessions.iter().map(|id| id.as_bytes().to_vec()));
             }
             Event::Correction(id) => fields.push(id.as_bytes().to_vec()),
+            Event::Avatar {
+                id,
+                previous,
+                revision,
+            } => fields.extend([
+                id.as_bytes().to_vec(),
+                previous.as_bytes().to_vec(),
+                revision.as_bytes().to_vec(),
+            ]),
             Event::Cancellation(id) => fields.push(id.as_bytes().to_vec()),
         }
         Zeroizing::new(fields)
@@ -843,6 +888,7 @@ pub(crate) async fn age(
             Event::Resumption { .. } => (RESUMPTIONS, "resumed_at"),
             Event::Replacement { .. } => (REPLACEMENTS, "completed_at"),
             Event::Logout { .. } => (LOGOUTS, "revoked_at"),
+            Event::Avatar { .. } => ("identity.portraits", "portrait_at"),
             Event::Correction(_) | Event::Cancellation(_) => {
                 return Err(Error::Integrity(
                     "SMS fixture projections were excluded before mutation",
@@ -983,6 +1029,17 @@ impl history::Record for Record {
                     "INSERT INTO identity.projections (id,cause,account_id,person_id,sequence,operation_id,projected_at,seal,seal_key_id,seal_version) VALUES ($1,'correction',$2,$3,$4,$5,$6,$7,$8,$9)",
                     &[id, &self.account_id, &self.data.person_id, &self.sequence, &self.data.operation_id,
                       &self.data.happened_at, &seal.tag(), &seal.key_id(), &seal.version()],
+                ).await?;
+            }
+            Event::Avatar {
+                id,
+                previous,
+                revision,
+            } => {
+                client.execute(
+                    "INSERT INTO identity.portraits (id,account_id,person_id,sequence,operation_id,portrait_at,previous_revision,revision,seal,seal_key_id,seal_version) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
+                    &[id, &self.account_id, &self.data.person_id, &self.sequence, &self.data.operation_id,
+                      &self.data.happened_at, previous, revision, &seal.tag(), &seal.key_id(), &seal.version()],
                 ).await?;
             }
             Event::Cancellation(id) => {

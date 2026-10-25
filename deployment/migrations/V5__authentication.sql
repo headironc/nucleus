@@ -1,6 +1,6 @@
 -- R1 reads current account ownership. Account creation and management are not granted.
 CREATE TABLE identity.completions (
-    family text NOT NULL CHECK (family IN ('logout', 'suspension', 'resumption', 'mobile_completion', 'correction', 'system_correction', 'cancellation')),
+    family text NOT NULL CHECK (family IN ('logout', 'suspension', 'resumption', 'mobile_completion', 'correction', 'system_correction', 'cancellation', 'avatar')),
     operation_id uuid NOT NULL,
     action text NOT NULL CHECK (
         (family = 'logout' AND action = 'logout')
@@ -8,9 +8,10 @@ CREATE TABLE identity.completions (
         OR (family = 'resumption' AND action = 'resume')
         OR (family = 'mobile_completion' AND action IN ('self', 'assisted'))
         OR (family = 'cancellation' AND action IN ('self', 'managed'))
-        OR (family IN ('correction', 'system_correction') AND action = 'correct')),
+        OR (family IN ('correction', 'system_correction') AND action = 'correct')
+        OR (family = 'avatar' AND action = 'replace')),
     target text NOT NULL CHECK (target <> ''
-        AND (family NOT IN ('correction', 'system_correction', 'cancellation')
+        AND (family NOT IN ('correction', 'system_correction', 'cancellation', 'avatar')
             OR target ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')),
     input bytea NOT NULL CHECK (octet_length(input) >= 37),
     subject text NOT NULL CHECK ((family = 'system_correction' AND subject = 'system')
@@ -433,6 +434,8 @@ BEGIN
                     AND sequence = expected.sequence AND transaction_id = pg_catalog.pg_current_xact_id()
                 UNION ALL SELECT sequence FROM identity.replacements WHERE account_id = NEW.id
                     AND sequence = expected.sequence AND transaction_id = pg_catalog.pg_current_xact_id()
+                UNION ALL SELECT sequence FROM identity.portraits WHERE account_id = NEW.id
+                    AND sequence = expected.sequence AND transaction_id = pg_catalog.pg_current_xact_id()
                 UNION ALL SELECT sequence FROM identity.logouts WHERE account_id = NEW.id
                     AND sequence = expected.sequence AND transaction_id = pg_catalog.pg_current_xact_id()
                 UNION ALL SELECT sequence FROM identity.projections WHERE account_id = NEW.id
@@ -444,6 +447,7 @@ BEGIN
                 UNION ALL SELECT account_id, person_id, sequence, suspended_at FROM identity.suspensions
                 UNION ALL SELECT account_id, person_id, sequence, resumed_at FROM identity.resumptions
                 UNION ALL SELECT account_id, person_id, sequence, completed_at FROM identity.replacements
+                UNION ALL SELECT account_id, person_id, sequence, portrait_at FROM identity.portraits
                 UNION ALL SELECT account_id, person_id, sequence, revoked_at FROM identity.logouts
                 UNION ALL SELECT account_id, person_id, sequence, projected_at FROM identity.projections
             ) record WHERE record.account_id = NEW.id AND record.person_id = NEW.person_id

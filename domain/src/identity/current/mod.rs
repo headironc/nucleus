@@ -369,16 +369,8 @@ impl Service {
                 )
                 .await?;
                 let state = state.ok_or(Error::Invalid)?;
-                let now = self.confirm(actor, &state)?;
-                database::deliver(
-                    client,
-                    &state,
-                    &self.0.keys,
-                    self.0.app.keys(),
-                    &self.0.avatar,
-                    now,
-                )
-                .await
+                self.confirm(actor, &state)?;
+                database::deliver(client, &state, &self.0.keys, &self.0.app, &self.0.avatar).await
             }),
         )
         .await
@@ -529,7 +521,7 @@ mod tests {
                     tests::{CODE, age, input, message},
                 },
             },
-            avatar::link,
+            avatar::{self, link},
             current::{Error, Proof},
             session,
         },
@@ -1038,7 +1030,7 @@ mod tests {
     }
 
     #[test]
-    fn current_reads_use_one_snapshot_observation_without_the_instance_session() {
+    fn current_reads_sample_authorization_and_signing_time_without_the_instance_session() {
         use fixture::database_proxy::{Fault, Proxy};
 
         use crate::identity::authentication::proxied;
@@ -1096,8 +1088,8 @@ mod tests {
                     proxy.release();
                     assert_eq!(
                         proxy.time_queries() - before,
-                        1,
-                        "one transaction observation"
+                        if cancel { 1 } else { 2 },
+                        "authorization observes the snapshot; successful delivery samples fresh signing time"
                     );
                     if cancel {
                         assert!(
@@ -1242,7 +1234,7 @@ mod tests {
                     let url = url::Url::parse(account.avatar().link().href()).expect("signed URL");
                     let digest = url.path().strip_prefix("/api/v1/avatars/").expect("path").strip_suffix(".webp").expect("suffix").parse().expect("digest");
                     let query: std::collections::HashMap<_,_> = url.query_pairs().collect();
-                    let image = services.avatar().read(link::Proof::new(digest, query["key_id"].parse().expect("key id"), query["expires_at"].parse().expect("expiration"), query["signature"].parse().expect("signature"))).await.expect("anonymous image");
+                    let image = services.avatar().read(link::Proof::new(digest, query["key_id"].parse().expect("key id"), query["expires_at"].parse().expect("expiration"), query["signature"].parse().expect("signature")), avatar::read_capacity()).await.expect("anonymous image");
                     assert_eq!(image.bytes(), include_bytes!("../../../../assets/avatars/0-cat.webp"));
                     assert!(image.cache() <= Duration::from_secs(86400));
                     let after: Vec<i64> = observer.client().query_one("SELECT ARRAY[(SELECT count(*) FROM identity.authentications),(SELECT count(*) FROM identity.sessions),(SELECT count(*) FROM identity.attempts),(SELECT count(*) FROM identity.receipts),(SELECT count(*) FROM identity.persons),(SELECT count(*) FROM identity.revisions),(SELECT count(*) FROM identity.accounts),(SELECT count(*) FROM identity.avatars)]", &[]).await.expect("unchanged facts").get(0);

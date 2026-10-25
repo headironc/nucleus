@@ -14,6 +14,18 @@ use crate::application::keys;
 
 static SERVER: Mutex<Weak<fixture::Server>> = Mutex::new(Weak::new());
 
+/// Files share the already-running fixture server's owned temporary-directory lifetime.
+pub(crate) fn avatar_storage() -> domain::identity::avatar::StorageSettings {
+    let server = SERVER
+        .lock()
+        .expect("fixture lock")
+        .upgrade()
+        .expect("active fixture server");
+    let (root, mount, device) = server.files();
+    domain::identity::avatar::StorageSettings::new(root, mount, device)
+        .expect("real avatar storage settings")
+}
+
 pub(crate) fn server() -> Arc<fixture::Server> {
     let mut shared = SERVER.lock().expect("fixture lock");
     if let Some(server) = shared.upgrade() {

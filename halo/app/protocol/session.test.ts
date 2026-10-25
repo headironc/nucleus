@@ -379,9 +379,18 @@ describe("actual R1 and current-account protocols", () => {
     expect(fetch).toHaveBeenCalledOnce();
   });
 
+  it.each([1, 511, 512, 1024])("accepts a square avatar of %i pixels", async (size) => {
+    const value = { ...account, avatar: { ...account.avatar, width: size, height: size } };
+    const fetch = vi.fn().mockResolvedValue(Response.json({ code: "ok", account: value }));
+    vi.stubGlobal("fetch", fetch);
+    expect(await current(id, new AbortController().signal)).toEqual({ kind: "account", account: value });
+    expect(fetch).toHaveBeenCalledOnce();
+  });
+
   it.each([
     { mediaType: "image/png" }, { mediaType: "" }, { width: 0 }, { width: 511 },
     { width: 1024 }, { width: 512.5 }, { height: 513 }, { revision: "invalid" },
+    { width: 1025, height: 1025 }, { width: 0, height: 0 },
   ])("rejects unsupported avatar metadata: %j", async (change) => {
     const fetch = vi.fn().mockResolvedValue(Response.json({ code: "ok", account: { ...account, avatar: { ...account.avatar, ...change } } }));
     vi.stubGlobal("fetch", fetch);

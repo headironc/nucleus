@@ -127,6 +127,23 @@ BEGIN
     IF TG_TABLE_NAME = 'appointments' THEN
         IF NEW.sequence > 1 THEN RETURN NULL; END IF;
     END IF;
+    IF TG_TABLE_NAME = 'avatars' THEN
+        -- A replacement insert is paired with its permanent advancement and the release
+        -- written by this same transaction, not with a new-account creation.
+        IF EXISTS (SELECT 1 FROM identity.portraits portrait
+            JOIN identity.accounts account ON account.id = portrait.account_id
+            JOIN identity.avatars released ON released.account_id = portrait.account_id
+            WHERE portrait.account_id = NEW.account_id AND portrait.revision = NEW.revision
+                AND portrait.transaction_id = pg_catalog.pg_current_xact_id()
+                AND account.avatar = portrait.revision
+                AND released.id <> NEW.id AND released.revision = portrait.previous_revision
+                AND released.release = 'replacement'
+                AND released.release_operation_id = portrait.operation_id
+                AND released.released_at = portrait.portrait_at
+                AND released.release_transaction_id = portrait.transaction_id) THEN
+            RETURN NULL;
+        END IF;
+    END IF;
     IF TG_TABLE_NAME IN ('accounts', 'holders') THEN target := NEW.id;
     ELSIF TG_TABLE_NAME = 'avatars' THEN target := NEW.account_id;
     ELSE SELECT id INTO target FROM identity.accounts WHERE person_id = NEW.person_id;

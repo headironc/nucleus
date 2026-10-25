@@ -54,6 +54,8 @@ pub struct Settings {
     registration: registration::Limits,
     avatar: avatar::link::Link,
     avatar_retention: avatar::retention::Settings,
+    avatar_storage: Option<avatar::storage::Settings>,
+    avatar_limits: avatar::upload::Limits,
 }
 
 impl Settings {
@@ -70,11 +72,23 @@ impl Settings {
             registration,
             avatar,
             avatar_retention: avatar::retention::Settings::default(),
+            avatar_storage: None,
+            avatar_limits: avatar::upload::Limits::default(),
         })
     }
 
     pub fn with_avatar_retention(mut self, settings: avatar::retention::Settings) -> Self {
         self.avatar_retention = settings;
+        self
+    }
+
+    pub fn with_avatar_storage(mut self, settings: Option<avatar::storage::Settings>) -> Self {
+        self.avatar_storage = settings;
+        self
+    }
+
+    pub fn with_avatar_limits(mut self, settings: avatar::upload::Limits) -> Self {
+        self.avatar_limits = settings;
         self
     }
 }
@@ -307,17 +321,35 @@ impl Services {
             settings.registration,
         );
         let result = async {
-            let now = verify(&barrier, &app, &metadata, &keys, &invitations, &app_id).await?;
-            registration::ready(barrier.client(), &app, now).await?;
-            verification::Stage::BarrierConfirmation
-                .query(Duration::from_secs(10), barrier.confirm())
-                .await??;
             let avatar = avatar::Service::prepare(
+                app.clone(),
                 context.clone(),
                 Arc::clone(&keys),
                 settings.avatar,
                 Arc::clone(&registry),
+                settings.avatar_storage,
+                settings.avatar_limits,
             )?;
+            let now = verify(&barrier, &app, &metadata, &keys, &invitations, &app_id).await?;
+            verification::Stage::Avatars
+                .batch(
+                    Duration::from_secs(10),
+                    avatar.verify(barrier.client(), now),
+                )
+                .await?
+                .map_err(Error::AvatarFacts)?;
+            avatar::retention::Retention::new(
+                app.clone(),
+                avatar.clone(),
+                settings.avatar_retention,
+            )
+            .restore()
+            .await
+            .map_err(Error::AvatarFacts)?;
+            registration::ready(barrier.client(), &app, now).await?;
+            verification::Stage::BarrierConfirmation
+                .query(Duration::from_secs(10), barrier.confirm())
+                .await??;
             let current =
                 current::Service::prepare(app.clone(), Arc::clone(&keys), app_id, avatar.clone());
             let authentication = authentication::Service::prepare(
@@ -557,6 +589,8 @@ pub enum Error {
     Suspension(#[from] crate::suspension::Error),
     #[error("{0}")]
     Avatar(#[from] avatar::Error),
+    #[error("avatar retained-fact verification failed: {0}")]
+    AvatarFacts(crate::kernel::Error<std::convert::Infallible>),
     #[error("{0}")]
     Metadata(#[from] keys::database::Error),
     #[error("{0}")]

@@ -15,7 +15,7 @@ use domain::identity::{
     session, wechat,
 };
 use serde::Serialize;
-use tokio::time::timeout;
+use tokio::time::{Instant, timeout, timeout_at};
 use utoipa::ToSchema;
 use utoipa_axum::{
     router::{OpenApiRouter, UtoipaMethodRouterExt},
@@ -37,6 +37,54 @@ pub(super) fn router(context: &Context) -> OpenApiRouter<Context> {
             authenticate,
         ))
     }))
+}
+
+/// The absolute upload admission deadline shared by authentication, body and business work.
+#[derive(Clone, Copy)]
+pub(crate) struct Deadline(pub(crate) Instant);
+
+pub(crate) const UPLOAD_TOTAL: Duration = Duration::from_secs(30);
+
+pub(super) async fn authenticate_upload(
+    State(context): State<Context>,
+    source: source::Source,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, Error> {
+    let deadline = Instant::now() + UPLOAD_TOTAL;
+    context.admission.write(source.address())?;
+    authenticate_at(context, &mut request, deadline, true).await?;
+    request.extensions_mut().insert(Deadline(deadline));
+    Ok(timeout_at(deadline, next.run(request)).await?)
+}
+
+pub(super) async fn authenticate_original(
+    State(context): State<Context>,
+    source: source::Source,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, Error> {
+    let deadline = Instant::now() + UPLOAD_TOTAL;
+    context.admission.read(source.address())?;
+    authenticate_at(context, &mut request, deadline, false).await?;
+    request.extensions_mut().insert(Deadline(deadline));
+    Ok(timeout_at(deadline, next.run(request)).await?)
+}
+
+async fn authenticate_at(
+    context: Context,
+    request: &mut Request,
+    deadline: Instant,
+    writing: bool,
+) -> Result<(), Error> {
+    let proof = proof(request.headers())?;
+    if writing && !request.headers().contains_key("origin") {
+        return Err(Error::Origin);
+    }
+    origin(request.headers(), &context)?;
+    let actor = timeout_at(deadline, context.services.current().authenticate(proof)).await??;
+    request.extensions_mut().insert(actor);
+    Ok(())
 }
 
 pub(crate) async fn authenticate(

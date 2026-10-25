@@ -456,7 +456,17 @@ fn http_validates_requests_before_business_work_and_describes_actual_routes() {
                     assert_eq!(value["components"]["schemas"][schema]["properties"]["code"]["pattern"], "^[0-9]{6}$");
                 }
                 let paths = value["paths"].as_object().expect("paths");
-                assert_eq!(paths.len(), 84);
+                assert_eq!(paths.len(), 86);
+                assert_eq!(paths["/api/v1/accounts/current/avatar"]["put"]["operationId"], "replaceAvatar");
+                assert_eq!(paths["/api/v1/replacements/{id}"]["get"]["operationId"], "avatarReplacement");
+                let upload_content = paths["/api/v1/accounts/current/avatar"]["put"]["requestBody"]["content"].as_object().expect("raw upload media");
+                assert_eq!(upload_content.len(), 3);
+                for media in ["image/png", "image/jpeg", "image/webp"] {
+                    let schema = &upload_content[media]["schema"];
+                    let schema = schema["$ref"].as_str().map_or(schema, |reference| value.pointer(reference.strip_prefix('#').expect("local image schema")).expect("image schema"));
+                    assert_eq!(schema["type"], "string");
+                    assert_eq!(schema["format"], "binary");
+                }
                 assert!(paths.contains_key("/api/v1/affiliations"));
                 assert!(paths.contains_key("/api/v1/settings"));
                 assert!(paths.contains_key("/api/v1/workforce/directories"));
@@ -612,8 +622,8 @@ fn http_validates_requests_before_business_work_and_describes_actual_routes() {
                 assert!(avatar["properties"]["href"]["pattern"].as_str().expect("avatar path pattern").contains("/api/v1/avatars/"));
                 assert_eq!(avatar["properties"]["mediaType"]["pattern"], r#"^image/webp(?![\s\S])"#);
                 for field in ["width", "height"] {
-                    assert_eq!(avatar["properties"][field]["minimum"], 512);
-                    assert_eq!(avatar["properties"][field]["maximum"], 512);
+                    assert_eq!(avatar["properties"][field]["minimum"], 1);
+                    assert_eq!(avatar["properties"][field]["maximum"], 1024);
                 }
                 for name in ["current.Receipt", "current.Account", "current.Binding", "person.number.Suffix", "avatar.Current"] {
                     let schema = &value["components"]["schemas"][name];

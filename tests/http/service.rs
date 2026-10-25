@@ -7,6 +7,7 @@
 
 use std::{
     fs::{self, File},
+    os::unix::fs::{MetadataExt, PermissionsExt},
     path::Path,
     process::Stdio,
     time::Duration,
@@ -95,6 +96,16 @@ fn delivered_binary_serves_from_external_configuration_and_stops_on_sigterm() {
             fs::create_dir(&secrets).expect("credentials directory");
             credentials(&secrets);
             let socket = directory.path().join("notify");
+            let storage = directory.path().join("storage");
+            fs::create_dir(&storage).expect("storage root");
+            fs::set_permissions(&storage, fs::Permissions::from_mode(0o700))
+                .expect("private storage root");
+            let device = fs::metadata(&storage).expect("storage device").dev();
+            let mut mount = storage.clone();
+            while let Some(parent) = mount.parent() {
+                if fs::metadata(parent).expect("mount ancestor").dev() != device { break; }
+                mount = parent.to_path_buf();
+            }
             let notifications = UnixDatagram::bind(&socket).expect("systemd notification socket");
             let stderr = directory.path().join("stderr");
             let settings = [
@@ -118,6 +129,9 @@ fn delivered_binary_serves_from_external_configuration_and_stops_on_sigterm() {
                 ("NUCLEUS_HTTP__TRUSTED_PROXIES", r#"["127.0.0.1/32"]"#.to_owned()),
                 ("NUCLEUS_IDENTITY__AUTHENTICATION__CAPACITY", "8".to_owned()),
                 ("NUCLEUS_IDENTITY__AVATAR__ORIGIN", "https://avatars.example.com".to_owned()),
+                ("NUCLEUS_STORAGE__ROOT", storage.to_str().expect("UTF-8 storage root").to_owned()),
+                ("NUCLEUS_STORAGE__MOUNT", mount.to_str().expect("UTF-8 mount").to_owned()),
+                ("NUCLEUS_STORAGE__DEVICE", device.to_string()),
                 ("NUCLEUS_WECHAT__WEBSITE__APP_ID", "website-fixture".to_owned()),
                 ("NUCLEUS_PROCESS__STOP_SECONDS", "10".to_owned()),
             ];

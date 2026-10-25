@@ -176,6 +176,35 @@ pub(crate) fn cancel(
     change(original, data, Event::Cancellation(id), operation_id, now)
 }
 
+/// Advance the account's avatar revision only after the replacement facts are fixed.
+pub(crate) fn avatar(
+    original: &Verified<State>,
+    id: super::portrait::Id,
+    previous: crate::identity::avatar::Revision,
+    revision: crate::identity::avatar::Revision,
+    operation_id: operation::Id,
+    now: DateTime<Utc>,
+) -> Result<Change<State>, Error> {
+    let mut data = current(original, now)?;
+    if original.avatar() != previous || revision == previous {
+        return Err(Error::Integrity(
+            "an avatar advancement names its previous and changed revision",
+        ));
+    }
+    data.avatar = revision;
+    change(
+        original,
+        data,
+        Event::Avatar {
+            id,
+            previous,
+            revision,
+        },
+        operation_id,
+        now,
+    )
+}
+
 pub(crate) fn confirmation(
     revision_id: revision::Id,
     operator_id: revision::Id,

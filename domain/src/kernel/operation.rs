@@ -22,6 +22,7 @@ pub enum Family {
     MobileCompletion,
     Correction,
     Cancellation,
+    Avatar,
     SystemCorrection,
     NumberAllocation,
     NumberCorrection,
@@ -54,6 +55,7 @@ impl Family {
                 | Self::MobileCompletion
                 | Self::Correction
                 | Self::Cancellation
+                | Self::Avatar
                 | Self::SystemCorrection
                 | Self::NumberAllocation
                 | Self::NumberCorrection
@@ -84,6 +86,7 @@ impl Family {
             Self::MobileCompletion => b"transfer/completion",
             Self::Correction | Self::SystemCorrection => b"identity/correction/operation",
             Self::Cancellation => b"identity/cancellation/operation",
+            Self::Avatar => b"identity/avatar/operation",
             Self::NumberAllocation => b"workforce/allocation/operation",
             Self::NumberCorrection => b"workforce/correction/operation",
             Self::NumberRecovery => b"workforce/recovery/operation",
@@ -119,6 +122,7 @@ impl Family {
             | Self::MobileCompletion
             | Self::Correction
             | Self::Cancellation
+            | Self::Avatar
             | Self::SystemCorrection => crate::kernel::completion::IDENTITY,
             #[cfg(test)]
             Self::Toy => "testing.completions",
@@ -146,6 +150,7 @@ impl Family {
             Self::MobileCompletion => "mobile_completion",
             Self::Correction => "correction",
             Self::Cancellation => "cancellation",
+            Self::Avatar => "avatar",
             Self::SystemCorrection => "system_correction",
             Self::NumberAllocation => "number_allocation",
             Self::NumberCorrection => "number_correction",

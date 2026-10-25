@@ -953,7 +953,7 @@ pub(crate) mod tests {
                             runtime.client().execute("DELETE FROM identity.receipts WHERE account_id = $1", &[&account.id()]).await?;
                         }
                         if defect != "avatar" {
-                            runtime.client().execute("UPDATE identity.avatars SET released_at = $2 WHERE account_id = $1", &[&account.id(), &now]).await?;
+                            runtime.client().execute("UPDATE identity.avatars SET released_at = $2, release='cancellation', release_operation_id=$3, release_transaction_id=pg_current_xact_id() WHERE account_id = $1", &[&account.id(), &now, &operation]).await?;
                         }
                         if defect != "retained_account" {
                             if defect != "account_projection" {
@@ -1620,7 +1620,7 @@ pub(crate) mod tests {
                         "envelope" => { owner.client().execute("UPDATE identity.cancellations SET mobile = decode(repeat('ff', 48), 'hex') WHERE id = $1", &[&result.id()]).await.expect("unparseable envelope with SQL-valid length"); }
                         "future" => { owner.client().execute("UPDATE identity.cancellations SET cancelled_at = cancelled_at + interval '1 day' WHERE id = $1", &[&result.id()]).await.expect("future completion"); }
                         "sequence" => { owner.client().execute("UPDATE identity.persons SET sequence = sequence + 1 WHERE id = $1", &[&account.person_id()]).await.expect("incomplete permanent lineage"); }
-                        "avatar" => { owner.client().execute("UPDATE identity.avatars SET released_at = NULL WHERE account_id = $1", &[&account.id()]).await.expect("missing release consequence"); }
+                        "avatar" => { owner.client().execute("UPDATE identity.avatars SET released_at = NULL, release=NULL, release_operation_id=NULL, release_transaction_id=NULL WHERE account_id = $1", &[&account.id()]).await.expect("missing release consequence"); }
                         _ => unreachable!("selected defects"),
                     }
                     owner.client().batch_execute("COMMIT").await.expect("damage committed");

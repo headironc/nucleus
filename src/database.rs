@@ -99,6 +99,9 @@ mod tests {
             .env("NUCLEUS_HTTP__TRUSTED_PROXIES", r#"["127.0.0.1/32"]"#)
             .env("NUCLEUS_IDENTITY__AUTHENTICATION__CAPACITY", "16")
             .env("NUCLEUS_IDENTITY__AVATAR__ORIGIN", "https://example.com")
+            .env("NUCLEUS_STORAGE__ROOT", "/fictional/avatar-root")
+            .env("NUCLEUS_STORAGE__MOUNT", "/")
+            .env("NUCLEUS_STORAGE__DEVICE", "1")
             .env("NUCLEUS_WECHAT__WEBSITE__APP_ID", "website-fixture")
             .env(
                 "NUCLEUS_DATABASE__AUTHORITY",

@@ -9,7 +9,7 @@ use tokio_postgres::types::{FromSql, IsNull, ToSql, Type, to_sql_checked};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-/// The client-supplied identifier of an original Identity operation.
+/// An Identity operation identifier. Business originals use client-supplied IDs.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, Display, Serialize, DeserializeFromStr, ToSchema,
 )]
@@ -18,7 +18,7 @@ use uuid::Uuid;
 pub struct Id(Uuid);
 
 impl Id {
-    #[cfg(any(test, feature = "test-support"))]
+    /// Anonymous image work uses this only for internal execution diagnostics.
     pub(crate) fn allocate() -> Self {
         Self(Uuid::new_v4())
     }

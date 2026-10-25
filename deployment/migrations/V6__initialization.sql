@@ -1,12 +1,21 @@
 CREATE TABLE identity.avatars (
     id uuid PRIMARY KEY,
     account_id uuid NOT NULL,
+    revision uuid NOT NULL,
     digest bytea NOT NULL CHECK (octet_length(digest) = 32),
     size bigint NOT NULL CHECK (size > 0 AND size <= 8388608),
     width integer NOT NULL CHECK (width BETWEEN 1 AND 1024),
     height integer NOT NULL CHECK (height = width),
     released_at timestamptz CHECK (isfinite(released_at)),
-    transaction_id xid8 NOT NULL DEFAULT pg_catalog.pg_current_xact_id()
+    release text CHECK (release IN ('cancellation', 'replacement')),
+    release_operation_id uuid,
+    release_transaction_id xid8,
+    transaction_id xid8 NOT NULL DEFAULT pg_catalog.pg_current_xact_id(),
+    UNIQUE (account_id, revision),
+    CHECK ((released_at IS NULL AND release IS NULL AND release_operation_id IS NULL
+            AND release_transaction_id IS NULL)
+        OR (released_at IS NOT NULL AND release IS NOT NULL AND release_operation_id IS NOT NULL
+            AND release_transaction_id IS NOT NULL))
 );
 CREATE UNIQUE INDEX avatars_current_idx ON identity.avatars (account_id) WHERE released_at IS NULL;
 CREATE INDEX avatars_retention_idx ON identity.avatars (released_at, id) WHERE released_at IS NOT NULL;
@@ -461,7 +470,10 @@ BEGIN
         target := CASE WHEN TG_OP = 'DELETE' THEN OLD.account_id ELSE NEW.account_id END;
     END IF;
     IF EXISTS (SELECT 1 FROM identity.accounts WHERE id = target AND cancellation_id IS NULL) THEN
-        IF (SELECT count(*) FROM identity.avatars WHERE account_id = target AND released_at IS NULL) <> 1 THEN
+        IF (SELECT count(*) FROM identity.avatars WHERE account_id = target AND released_at IS NULL) <> 1
+            OR NOT EXISTS (SELECT 1 FROM identity.accounts account
+                JOIN identity.avatars avatar ON avatar.account_id = account.id AND avatar.released_at IS NULL
+                WHERE account.id = target AND account.avatar = avatar.revision) THEN
             RAISE EXCEPTION 'account requires exactly one current avatar' USING ERRCODE = '23514';
         END IF;
     ELSIF EXISTS (SELECT 1 FROM identity.avatars WHERE account_id = target AND released_at IS NULL) THEN
@@ -479,12 +491,35 @@ LANGUAGE plpgsql VOLATILE SET search_path = '' AS $$
 BEGIN
     IF ROW(NEW.id, NEW.account_id, NEW.digest, NEW.size, NEW.width, NEW.height)
         IS DISTINCT FROM ROW(OLD.id, OLD.account_id, OLD.digest, OLD.size, OLD.width, OLD.height)
+        OR NEW.revision IS DISTINCT FROM OLD.revision
         OR OLD.released_at IS NOT NULL OR NEW.released_at IS NULL THEN
         RAISE EXCEPTION 'avatar content is immutable and release is final' USING ERRCODE = '23514';
     END IF;
-    IF NOT identity.cancelling(OLD.account_id)
-        OR NEW.released_at IS DISTINCT FROM (SELECT cancelled_at FROM identity.cancellations WHERE account_id = OLD.account_id) THEN
-        RAISE EXCEPTION 'avatar release requires its current account cancellation' USING ERRCODE = '23514';
+    IF NEW.release_transaction_id IS DISTINCT FROM pg_catalog.pg_current_xact_id() THEN
+        RAISE EXCEPTION 'avatar release is stamped by its replacing transaction' USING ERRCODE = '23514';
+    END IF;
+    IF NEW.release = 'cancellation' THEN
+        IF NOT identity.cancelling(OLD.account_id)
+            OR NEW.released_at IS DISTINCT FROM (SELECT cancelled_at FROM identity.cancellations WHERE account_id = OLD.account_id)
+            OR NEW.release_operation_id IS DISTINCT FROM (SELECT operation_id FROM identity.cancellations WHERE account_id = OLD.account_id) THEN
+            RAISE EXCEPTION 'avatar release requires its current account cancellation' USING ERRCODE = '23514';
+        END IF;
+    ELSIF NEW.release = 'replacement' THEN
+        IF identity.cancelling(OLD.account_id)
+            OR NOT EXISTS (SELECT 1 FROM identity.portraits portrait
+                JOIN identity.accounts account ON account.id = portrait.account_id
+                WHERE portrait.account_id = OLD.account_id AND portrait.operation_id = NEW.release_operation_id
+                    AND portrait.previous_revision = OLD.revision
+                    AND portrait.portrait_at = NEW.released_at
+                    AND portrait.transaction_id = pg_catalog.pg_current_xact_id()
+                    AND account.avatar = portrait.revision
+                    AND account.person_id = portrait.person_id
+                    AND account.sequence = portrait.sequence
+                    AND account.changed_at = portrait.portrait_at) THEN
+            RAISE EXCEPTION 'avatar replacement release requires its paired advancement' USING ERRCODE = '23514';
+        END IF;
+    ELSE
+        RAISE EXCEPTION 'avatar release declares its source' USING ERRCODE = '23514';
     END IF;
     RETURN NEW;
 END

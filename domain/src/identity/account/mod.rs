@@ -1,5 +1,6 @@
 //! Account identity preserved across lookup, locking and mobile envelope binding.
 
+pub(crate) mod portrait;
 pub(crate) mod record;
 pub(crate) mod state;
 pub(crate) mod transition;
@@ -439,8 +440,8 @@ impl Prepared {
         self.revision.write(client, keys).await?;
         client
             .execute(
-                "INSERT INTO identity.avatars (id, account_id, digest, size, width, height) VALUES ($1, $2, $3, $4, 512, 512)",
-                &[&self.identity.avatar_id, &self.identity.account_id, &&self.digest[..], &self.size],
+                "INSERT INTO identity.avatars (id, account_id, revision, digest, size, width, height) VALUES ($1, $2, $3, $4, $5, 512, 512)",
+                &[&self.identity.avatar_id, &self.identity.account_id, &self.identity.avatar, &&self.digest[..], &self.size],
             )
             .await?;
         Ok(self.account)
@@ -468,8 +469,8 @@ impl Prepared {
         self.revision.write(client, keys).await?;
         client
             .execute(
-                "INSERT INTO identity.avatars (id, account_id, digest, size, width, height) VALUES ($1, $2, $3, $4, 512, 512)",
-                &[&self.identity.avatar_id, &self.identity.account_id, &&self.digest[..], &self.size],
+                "INSERT INTO identity.avatars (id, account_id, revision, digest, size, width, height) VALUES ($1, $2, $3, $4, $5, 512, 512)",
+                &[&self.identity.avatar_id, &self.identity.account_id, &self.identity.avatar, &&self.digest[..], &self.size],
             )
             .await?;
         let account = self.account;
