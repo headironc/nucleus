@@ -349,6 +349,66 @@ test("publication verifies the inspected archive and provenance before Docker re
   }
 });
 
+test("the build exports provenance that the publisher accepts without rewriting it", () => {
+  const workflow = Bun.YAML.parse(
+    read(".github/workflows/halo-image.yml"),
+  ) as any;
+  const exportStep = workflow.jobs.build.steps.find(
+    (step: any) => step.name === "Export the complete image for inspection",
+  );
+  const verifyStep = workflow.jobs.publish.steps.find(
+    (step: any) => step.name === "Verify the inspected bytes before loading",
+  );
+  const directory = mkdtempSync(join(tmpdir(), "nucleus-image-export-"));
+  const bytes = "synthetic image archive";
+  const sha = createHash("sha256").update(bytes).digest("hex");
+  const env = {
+    ...process.env,
+    RUNNER_TEMP: directory,
+    REVISION: "d".repeat(40),
+    GITHUB_RUN_ID: "123",
+    GITHUB_RUN_ATTEMPT: "2",
+    GITHUB_STEP_SUMMARY: join(directory, "summary"),
+    BUILD_RUN: "123",
+    IMAGE_SHA256: sha,
+  };
+  const producers = `git() { printf '%s\\n' "$REVISION"; }
+docker() {
+  case "$1 $2" in
+    'save halo-ci:build') printf 'synthetic image archive' > "$4" ;;
+    'image inspect') printf '[]\\n' ;;
+    'image history') printf '{}\\n' ;;
+    *) return 99 ;;
+  esac
+}\n`;
+  try {
+    const build = spawnSync("bash", ["-c", producers + exportStep.run], {
+      env,
+      encoding: "utf8",
+    });
+    expect(build.error).toBeUndefined();
+    expect(build.status, build.stderr).toBe(0);
+    expect(
+      JSON.parse(
+        readFileSync(join(directory, "nucleus-ci/provenance.json"), "utf8"),
+      ),
+    ).toEqual({
+      revision: env.REVISION,
+      image_sha256: sha,
+      run: "123",
+      attempt: "2",
+    });
+    const verify = spawnSync("bash", ["-c", verifyStep.run], {
+      env,
+      encoding: "utf8",
+    });
+    expect(verify.error).toBeUndefined();
+    expect(verify.status, verify.stderr).toBe(0);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("published manifest must retain the inspected image configuration", () => {
   const workflow = Bun.YAML.parse(
     read(".github/workflows/halo-image.yml"),

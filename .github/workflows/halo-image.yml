@@ -64,7 +64,7 @@ jobs:
           image_sha256=$(sha256sum "$RUNNER_TEMP/nucleus-ci/nucleus-ci.tar" | cut -d ' ' -f 1)
           jq --null-input --arg revision "$REVISION" --arg image_sha256 "$image_sha256" \
             --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
-            '{revision, image_sha256, run, attempt}' > "$RUNNER_TEMP/nucleus-ci/provenance.json"
+            '{revision: $revision, image_sha256: $image_sha256, run: $run, attempt: $attempt}' > "$RUNNER_TEMP/nucleus-ci/provenance.json"
           printf 'Revision: %s\nImage archive SHA-256: %s\nBuild run: %s\n' \
             "$REVISION" "$image_sha256" "$GITHUB_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
