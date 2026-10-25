@@ -810,6 +810,98 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn lost_retry_qualification_closes_the_stage_without_a_second_verification() {
+        use std::sync::Arc;
+
+        use crate::identity::revocation::Scope;
+
+        let server = server();
+        Runtime::new().expect("runtime").block_on(Box::pin(async {
+            timeout(
+                Duration::from_secs(20),
+                Box::pin(async {
+                    let database = Database::initialized(Arc::clone(&server)).await;
+                    let mut supplier = Supplier::new().await;
+                    let mut sms = fixture::supplier::Supplier::start().await;
+                    let (context, services) = start(&database, &supplier, &sms).await;
+                    let actor = actor(&database, &services, &mut supplier).await;
+                    let operation_id = operation();
+                    let service = services.authentication().clone();
+                    let original = actor.clone();
+                    let task = tokio::spawn(async move {
+                        service
+                            .send_current(original, sending(operation_id, "13900000000"))
+                            .await
+                    });
+                    let verification = supplier.request().await;
+                    // The first supplier conclusion remains final, but the retry decision
+                    // must recheck the acting session before claiming a second call.
+                    Box::pin(
+                        services
+                            .revocation()
+                            .revoke(actor, operation(), Scope::Current),
+                    )
+                    .await
+                    .expect("revoke current qualification");
+                    verification.reply(
+                        200,
+                        json!({"success":false,"error-codes":["internal-error"]}).to_string(),
+                    );
+                    let error = timeout(Duration::from_secs(5), task)
+                        .await
+                        .expect("original retry bounded")
+                        .expect("worker")
+                        .expect_err("lost retry qualification closes the stage");
+                    assert!(matches!(
+                        error,
+                        authentication::Error::Supplier(
+                            crate::identity::challenge::client::Error::Expired
+                        )
+                    ));
+                    let observer = database
+                        .connections(&database.user)
+                        .recover()
+                        .await
+                        .expect("independent observer");
+                    let row = observer
+                        .client()
+                        .query_one(
+                            "SELECT status, calls, solved_at IS NULL AS unsolved,
+                                finished_at IS NOT NULL AS finished
+                         FROM identity.challenges WHERE operation_id = $1",
+                            &[&operation_id],
+                        )
+                        .await
+                        .expect("independent stage facts");
+                    assert_eq!(row.get::<_, &str>("status"), "inconclusive");
+                    assert_eq!(row.get::<_, i16>("calls"), 1);
+                    assert!(row.get::<_, bool>("unsolved"));
+                    assert!(row.get::<_, bool>("finished"));
+                    assert!(
+                        timeout(Duration::from_millis(30), supplier.observe())
+                            .await
+                            .is_err(),
+                        "the lost qualification cannot claim a second Siteverify"
+                    );
+                    assert!(
+                        timeout(Duration::from_millis(30), sms.request())
+                            .await
+                            .is_err(),
+                        "the lost qualification cannot send SMS"
+                    );
+                    observer.terminate().await.expect("observer ended");
+                    services.drain().await.expect("all original work completed");
+                    context.stop().await.expect("runtime ended");
+                    sms.stop().await;
+                    supplier.stop().await;
+                }),
+            )
+            .await
+            .expect("bounded retry qualification loss");
+        }));
+    }
+
+    #[test]
     fn transfer_refusal_preserves_actual_rollback_failure() {
         use std::sync::Arc;
 

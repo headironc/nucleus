@@ -240,7 +240,7 @@ HTTP 等待失败、供应商结果未知和数据库提交未知分别处理。
 
 当前 `Command` 声明 `COMPLETIONS`、`ORDER`、`session`、`request`、`locks`、`authorize`、`load`、纯 `decide`、`apply` 与 `replay`，由 `App::command` 执行。`session` 提供原会话主体；执行器鉴别后把主体传给 `authorize`，由后者判断权限并返回人员、实名版本和决定性时间组成的 `Authorization`。`request` 构造封闭动作、规范目标与输入。`load` 接收已授权主体。`apply` 返回输出，并把已写状态的候选交给执行器持有；后续写入失败也不会丢失已登记的候选。初始化的角色、Account 与 Holder 共用一组 `Pending`，按同一提交结局结算。目录配置没有状态锚定候选。`Query` 以关联类型 `Authorized` 把授权结果交给 `read`，同时传入 `history::View`。
 
-`Tx::begin` 承担 READ COMMITTED、截止、共享屏障、代次栅栏与原操作锁。C1 首次接纳与原操作回读通过 `Tx::begin_operation` 使用同一实现，保持原 `challenge/operation` 锁域，不建立完成记录家族。未迁入的用例经 `database::transaction` 调用同一底层实现。`Tx::now` 在锁后通过当前事务取数据库时间，与进程内高水位比较并推进高水位。命令按全局顺序自行取锁，通用 `Locks` 仍属目标。写入发现锁后集合变化时，执行器先回滚，再在原截止内完整重试一次。`ORDER` 由系统指派和初始化消费；会话主体由执行器统一解析。`FaultKind` 暂含 Identity 与 Access 的过渡错误类型。
+`Tx::begin` 承担 READ COMMITTED、截止、共享屏障、代次栅栏与原操作锁。C1 Challenge 的首次接纳、阶段更新与原操作回读通过 `Tx::begin_operation` 使用同一实现，保持原 `challenge/operation` 锁域，不建立完成记录家族。未迁入的用例经 `database::transaction` 调用同一底层实现。`Tx::now` 在锁后通过当前事务取数据库时间，与进程内高水位比较并推进高水位。命令按全局顺序自行取锁，通用 `Locks` 仍属目标。写入发现锁后集合变化时，执行器先回滚，再在原截止内完整重试一次。`ORDER` 由系统指派和初始化消费；会话主体由执行器统一解析。`FaultKind` 暂含 Identity 与 Access 的过渡错误类型。
 
 `kernel::keys` 当前管理信封的活动及保留 `encryption` 密钥版本。Identity 的个人数据、Center 取值及共同完成输入复用这一实现。各记录所有者继续提供原字段绑定，密文字节契约保持不变。封印仍复用 `keys::seal`。`kernel::startup`、`kernel::retention` 和通用 `Expiry` 尚未建立，当前启动装配与配置清理继续使用现有入口。
 
@@ -521,7 +521,7 @@ Center 的管理候选复用 Identity 的 `account::Reader` 和 `person::Reader`
 
 账户暂停与恢复由 `domain::suspension` 组合 Identity 和 Access，声明内核命令，分别沿 Kernel Suspension、Resumption 家族协调原操作。Identity 保留 Account 永久记录，内核完成记录绑定原输入，Access 提供准确权限及角色判断。候选在只读事务中核对当前身份、准确权限和目标。写入与原结果核对的共同后果、锁序及期限由[暂停恢复用例](identity/suspension.md#事实约束与权限)拥有。
 
-`verification` 拥有首次 Challenge 接纳、提交未知回读及人机校验阶段。首次接纳与提交未知回读的连接、绝对截止、提交分类和收尾由 `kernel::tx` 持有；证明、输入、发送者核验、阶段解释及原工作首次占用的外呼资格仍归 `verification`。`dispatch` 编排短信供应商调用，其 `transaction` 模块拥有许可、发送占用、结论事务及原结果恢复。`authentication::session` 拥有 R1 创建 Session 的猜错、消费和原结果交接事务。R2 复用 Identity 的完整开户、Session 事实和 Access 首条指派，在本用例内裁决保存点、额度和提交恢复。`authentication::Retention` 拥有 C1/R1 游标，`registration::Retention` 拥有 R2 游标，各自执行保留、删除及原实体核对。进程持有清理工作直到当前候选实际结束。清理逐项直接执行，不为每个候选创建任务，也不构造请求回执。
+`verification` 拥有首次 Challenge 接纳、提交未知回读及人机校验阶段。首次接纳、阶段更新与提交未知回读的连接、绝对截止、提交分类和收尾由 `kernel::tx` 持有；阶段更新需要独立恢复时，先等待原驱动结束，再以恢复会话回写同一结果，不重复外呼。证明、输入、发送者核验、重试资格、阶段解释及原工作首次占用的外呼资格仍归 `verification`。`dispatch` 编排短信供应商调用，其 `transaction` 模块拥有许可、发送占用、结论事务及原结果恢复。`authentication::session` 拥有 R1 创建 Session 的猜错、消费和原结果交接事务。R2 复用 Identity 的完整开户、Session 事实和 Access 首条指派，在本用例内裁决保存点、额度和提交恢复。`authentication::Retention` 拥有 C1/R1 游标，`registration::Retention` 拥有 R2 游标，各自执行保留、删除及原实体核对。进程持有清理工作直到当前候选实际结束。清理逐项直接执行，不为每个候选创建任务，也不构造请求回执。
 
 `authentication::database::challenge` 拥有 Challenge 持久事实与原输入核验。固定查询覆盖来源读取、清理候选及原删除结果回读。`database::message` 拥有 Message、Check 与发送占用的配对事实，以及发送序号和后续许可查询。所属模块封装行解码、行锁和删除语句，不提交事务。用例决定加锁顺序、状态迁移、清理资格与共同提交。额度查询及其判断继续由 `quota` 共同维护。库入口与已交付范围见[短信认证](identity/authentication.md#首次接纳边界)。
 
