@@ -53,7 +53,7 @@ export function runTarget(run: Json, repo: string): bigint {
     throw new Error("queue CI run does not identify a supported dev candidate");
   return BigInt(match[1]);
 }
-export function contract(gate: Gate, rules: Json[], target = "dev"): void {
+export function contract(gate: Gate, rules: Json[], target = "dev", view?: Record): void {
   if (!["dev", "main"].includes(target))
     throw new Error("admission requires a supported protected target");
   if (!rules.some((rule) => field(rule, "type") === "required_signatures"))
@@ -83,8 +83,10 @@ export function contract(gate: Gate, rules: Json[], target = "dev"): void {
   )
     throw new Error("Cladiron required check has an ambiguous producer");
   if (target === "main" && gate.mainRules) gate.mainRules(rules);
+  if (target === "dev" && gate.devRules) gate.devRules(rules, view);
   if (
-    target === "main" && !gate.mainRules &&
+    target === "main" &&
+    !gate.mainRules &&
     !rules.some((rule) => {
       if (field(rule, "type") !== "workflows") return false;
       const parameters = field(rule, "parameters");
@@ -104,10 +106,11 @@ export function contract(gate: Gate, rules: Json[], target = "dev"): void {
   const queues = rules
     .filter((rule) => field(rule, "type") === "merge_queue")
     .map((rule) => field(rule, "parameters"));
-  if (target === "main" && queues.length)
-    throw new Error("main admission requires the direct merge path");
+  if ((target === "main" || gate.devRules) && queues.length)
+    throw new Error(`${target} admission requires the direct merge path`);
   if (
     target === "dev" &&
+    !gate.devRules &&
     (queues.length !== 1 ||
       Object.entries({
         grouping_strategy: "ALLGREEN",
@@ -415,7 +418,7 @@ export class Queue {
       return { view, reasons: ["PR is not an open ready protected candidate"] };
     const [current, initialReasons] = this.gate.assessment(repo, number, view);
     let reasons = initialReasons;
-    contract(this.gate, array(current.rules), this.gate.target(view));
+    contract(this.gate, array(current.rules), this.gate.target(view), view);
     let approval: Json = null,
       owners: Json = null;
     if (!reasons.length) {
@@ -1229,7 +1232,9 @@ export class Queue {
       )
         return this.gate.main(number);
       let queued =
-        this.gate.target(initial) === "dev" ? this.entry(repo, number) : null;
+        this.gate.target(initial) === "dev" && !this.gate.devRules
+          ? this.entry(repo, number)
+          : null;
       const stack = get(initial, "stack");
       if (
         queued !== null &&
@@ -1298,7 +1303,7 @@ export class Queue {
         head: field(review.view, "headRefOid"),
         identity: binding(repo, number, review),
       };
-      if (initial.baseRefName === "main") return 0;
+      if (initial.baseRefName === "main" || this.gate.devRules) return 0;
       const previous = queued;
       queued = this.entry(repo, number);
       if (!equal(entryIdentity(queued), entryIdentity(previous))) {
@@ -1378,6 +1383,25 @@ export class Queue {
         `#${number} queue check failed: ${error instanceof Error ? error.message : "unknown error"}`,
       );
       return 1;
+    }
+  }
+
+  // External eligibility checks use the same check writer and withdrawal path.
+  reject(repo: string, number: bigint, view: Record): void {
+    const rejected = {
+      view,
+      reasons: ["Trusted candidate eligibility is not established"],
+    };
+    try {
+      this.setCheck(
+        repo,
+        view.headRefOid,
+        binding(repo, number, rejected),
+        "failure",
+        rejected,
+      );
+    } finally {
+      this.gate.withdraw(repo, number);
     }
   }
 }

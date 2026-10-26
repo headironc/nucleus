@@ -678,6 +678,7 @@ export interface GateOptions {
   eventName?: string;
   eventPath?: string;
   mainRules?: (rules: Json[]) => void;
+  devRules?: (rules: Json[], view?: Record) => void;
 }
 
 function nextCursor(
@@ -711,6 +712,7 @@ export class Gate {
   readonly eventName: string | undefined;
   readonly eventPath: string | undefined;
   readonly mainRules: ((rules: Json[]) => void) | undefined;
+  readonly devRules: ((rules: Json[], view?: Record) => void) | undefined;
   private readonly contextCache = new Map<string, Json[]>();
   private readonly comparisonCache = new Map<string, Record>();
 
@@ -729,6 +731,7 @@ export class Gate {
     this.eventName = options.eventName;
     this.eventPath = options.eventPath;
     this.mainRules = options.mainRules;
+    this.devRules = options.devRules;
   }
 
   gh(...args: string[]): string {
@@ -1212,12 +1215,18 @@ export class Gate {
       );
   }
   assessment(repo: string, number: bigint, view: Record): [Record, string[]] {
+    if (
+      this.devRules &&
+      (view.baseRefName !== "dev" || get(view, "stack") !== null)
+    )
+      throw new Error("Personal dev admission requires an independent PR");
     if (get(view, "stack") !== null && get(view.stack, "invalid") !== null)
       throw new Error(string(field(view.stack, "invalid")));
     const current = this.evidence(repo, number, view),
-      reuse = this.queueEnabled && deliveryTarget(view) === "dev";
+      reuse =
+        this.queueEnabled && deliveryTarget(view) === "dev" && !this.devRules;
     if (this.queueEnabled)
-      contract(this, array(current.rules), deliveryTarget(view));
+      contract(this, array(current.rules), deliveryTarget(view), view);
     const head = string(field(view, "headRefOid")),
       context = reviewContext(
         this.contexts(repo, head),
@@ -1308,12 +1317,21 @@ export class Gate {
           "PR diff changed after review; establish coverage for the new inputs",
         );
     }
-    if (this.queueEnabled && view.baseRefName === "main") {
-      const target = this.targetHead(repo, "main");
+    if (this.queueEnabled && (view.baseRefName === "main" || this.devRules)) {
+      const target = this.targetHead(repo, string(view.baseRefName));
       current.integration = { base: target };
       if (!equal(target, view.baseRefOid))
         reasons.push(
-          "main target advanced beyond the recorded review baseline",
+          `${view.baseRefName} target advanced beyond the recorded review baseline`,
+        );
+      if (
+        this.devRules &&
+        !["ahead", "identical"].includes(
+          string(this.relationship(repo, target, head)),
+        )
+      )
+        reasons.push(
+          "Personal dev candidate does not contain the current baseline",
         );
     }
     reasons.push(

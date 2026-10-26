@@ -15,19 +15,19 @@ import {
   repository,
   repositoryId,
   workflow,
-  type PromotionDeployment,
-} from "./promotion-deployment";
-import type { Api } from "./promotion-credentials";
+  devWorkflow,
+  type Ledger,
+} from "./merge-deployment";
+import { ApiFailure, type Api } from "./merge-credentials";
+import { commit } from "./release-candidate";
 
-export type Operation = {
-  version: bigint;
+type Binding = {
   stage: "intent" | "not-sent" | "failed" | "merged";
   previous: bigint | null;
   intent: bigint | null;
   commit: string | null;
   pr: bigint;
   prId: string;
-  dev: string;
   base: string;
   head: string;
   tree: string;
@@ -38,10 +38,16 @@ export type Operation = {
   installation: bigint;
   repository: bigint;
   actor: bigint;
-  branch: "main";
 };
+export type Operation = Binding &
+  (
+    | { version: 1n; branch: "main"; dev: string }
+    | { version: 2n; branch: "dev" }
+  );
 export type Entry = { id: bigint; value: Operation };
 const prefix = "Nucleus promotion v1\n";
+const devPrefix = "Nucleus merge v2\n";
+const root = `repos/${repository}`;
 const keys = [
   "version",
   "stage",
@@ -50,7 +56,6 @@ const keys = [
   "commit",
   "pr",
   "prId",
-  "dev",
   "base",
   "head",
   "tree",
@@ -65,21 +70,23 @@ const keys = [
 ].sort();
 export function operation(value: Json): Operation {
   const row = object(value);
+  const main = row.version === 1n && row.branch === "main";
   if (
-    !isDeepStrictEqual(Object.keys(row).sort(), keys) ||
-    row.version !== 1n ||
+    (!main && !(row.version === 2n && row.branch === "dev")) ||
+    !isDeepStrictEqual(
+      Object.keys(row).sort(),
+      main ? [...keys, "dev"].sort() : keys,
+    ) ||
+    (main && !sha(row.dev)) ||
     row.repository !== repositoryId ||
     row.actor !== ownerId ||
-    row.branch !== "main" ||
     typeof row.prId !== "string" ||
     !row.prId ||
     !["intent", "not-sent", "failed", "merged"].includes(string(row.stage)) ||
     [row.pr, row.run, row.attempt, row.installation].some(
       (id) => typeof id !== "bigint" || id <= 0n,
     ) ||
-    [row.dev, row.base, row.head, row.tree, row.source].some(
-      (id) => !sha(id),
-    ) ||
+    [row.base, row.head, row.tree, row.source].some((id) => !sha(id)) ||
     [row.previous, row.intent].some(
       (id) => id !== null && (typeof id !== "bigint" || id <= 0n),
     ) ||
@@ -133,7 +140,7 @@ export function history(entries: Entry[]): Entry | null {
 export class OperationStore {
   constructor(
     readonly api: Api,
-    readonly config: PromotionDeployment,
+    readonly config: Ledger,
   ) {}
   async read(): Promise<Entry[]> {
     const result: Entry[] = [],
@@ -171,12 +178,18 @@ export class OperationStore {
           field(node, "lastEditedAt") !== null ||
           field(node, "editor") !== null ||
           typeof id !== "bigint" ||
-          !body.startsWith(prefix)
+          (!body.startsWith(prefix) && !body.startsWith(devPrefix))
         )
           throw new Error(
             "Operation record has an untrusted author, edit or format",
           );
-        result.push({ id, value: operation(parse(body.slice(prefix.length))) });
+        const legacy = body.startsWith(prefix);
+        const value = operation(
+          parse(body.slice(legacy ? prefix.length : devPrefix.length)),
+        );
+        if ((value.version === 1n) !== legacy)
+          throw new Error("Operation record version differs from its envelope");
+        result.push({ id, value });
       }
       const page = field(comments, "pageInfo");
       if (field(page, "hasNextPage") === false) cursor = null;
@@ -206,7 +219,7 @@ export class OperationStore {
       await this.api(
         `repos/${repository}/issues/${this.config.issue}/comments`,
         "POST",
-        { body: prefix + wire(value) },
+        { body: (value.version === 1n ? prefix : devPrefix) + wire(value) },
       );
     } catch {
       /* The same target is read once; creation is never retried. */
@@ -249,7 +262,7 @@ export async function originalEnded(
     field(run, "id") !== value.run ||
     field(run, "run_attempt") !== value.attempt ||
     field(field(run, "repository"), "id") !== repositoryId ||
-    field(run, "path") !== workflow ||
+    field(run, "path") !== (value.branch === "main" ? workflow : devWorkflow) ||
     field(run, "head_sha") !== value.source ||
     field(run, "head_branch") !== "dev" ||
     field(field(run, "actor"), "id") !== value.actor ||
@@ -258,4 +271,125 @@ export async function originalEnded(
   )
     throw new Error("Original promotion run identity is unverified");
   return field(run, "status") === "completed";
+}
+
+export function bindPull(
+  pull: Json,
+  wanted: { pr: bigint; head: string },
+  branch: "dev" | "main",
+): string {
+  const base = field(pull, "base"),
+    head = field(pull, "head");
+  if (
+    field(pull, "number") !== wanted.pr ||
+    field(pull, "url") !==
+      `https://api.github.com/${root}/pulls/${wanted.pr}` ||
+    field(field(base, "repo"), "id") !== repositoryId ||
+    field(base, "ref") !== branch ||
+    field(field(head, "repo"), "id") !== repositoryId ||
+    field(head, "sha") !== wanted.head ||
+    (branch === "main" &&
+      !/^release\/[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(
+        string(field(head, "ref")),
+      ))
+  )
+    throw new Error("Merge PR identity, source or target mismatch");
+  return string(field(pull, "node_id"));
+}
+
+export async function observed(
+  read: Api,
+  value: Operation,
+): Promise<string | null> {
+  const pull = await read(`${root}/pulls/${value.pr}`);
+  if (bindPull(pull, value, value.branch) !== value.prId)
+    throw new Error("Original PR identity changed");
+  const mergedState = field(pull, "merged");
+  if (mergedState === false) return null;
+  if (mergedState !== true)
+    throw new Error("Original PR merge state is unknown");
+  const merged = commit(string(field(pull, "merge_commit_sha")));
+  const result = await read(`${root}/commits/${merged}`);
+  if (
+    field(result, "sha") !== merged ||
+    !isDeepStrictEqual(
+      array(field(result, "parents")).map((parent) => field(parent, "sha")),
+      value.branch === "main" ? [value.base, value.head] : [value.base],
+    ) ||
+    field(field(field(result, "commit"), "tree"), "sha") !== value.tree ||
+    field(field(field(result, "commit"), "verification"), "verified") !== true
+  )
+    throw new Error(
+      "Merged commit parents, tree or signature differ from the accepted candidate",
+    );
+  const ref = await read(`${root}/git/ref/heads/${value.branch}`);
+  if (field(ref, "ref") !== `refs/heads/${value.branch}`)
+    throw new Error("Merge target ref identity mismatch");
+  const tip = commit(string(field(field(ref, "object"), "sha")));
+  const comparison = await read(`${root}/compare/${merged}...${tip}`);
+  if (
+    field(field(comparison, "base_commit"), "sha") !== merged ||
+    !["identical", "ahead"].includes(string(field(comparison, "status")))
+  )
+    throw new Error("Merged candidate is not reachable from its target");
+  return merged;
+}
+
+export async function recover(
+  store: OperationStore,
+  read: Api,
+  actions: Api,
+  installation: bigint,
+): Promise<boolean> {
+  const pending = history(await store.read());
+  if (pending === null) return false;
+  if (pending.value.installation !== installation)
+    throw new Error("Original operation belongs to another installation");
+  if (!(await originalEnded(actions, pending)))
+    throw new Error("Original merge execution has not ended");
+  const result = await observed(read, pending.value);
+  if (result === null)
+    throw new Error(
+      "Original merge outcome remains unknown; no new write is permitted",
+    );
+  await store.finish(pending, "merged", result);
+  return true;
+}
+
+export async function execute(
+  store: OperationStore,
+  merge: Api,
+  value: Operation,
+  final: () => Promise<void>,
+): Promise<string> {
+  if (history(await store.read()) !== null)
+    throw new Error("An earlier merge is unresolved");
+  const intent = await store.append(value);
+  try {
+    await final();
+  } catch (error) {
+    await store.finish(intent, "not-sent");
+    throw error;
+  }
+  let rejection = false;
+  try {
+    await merge(`${root}/pulls/${value.pr}/merge`, "PUT", {
+      sha: value.head,
+      merge_method: value.branch === "main" ? "merge" : "squash",
+    });
+  } catch (error) {
+    rejection =
+      error instanceof ApiFailure && [405, 409, 422].includes(error.status);
+  }
+  const result = await observed(merge, value);
+  if (result !== null) {
+    await store.finish(intent, "merged", result);
+    return result;
+  }
+  if (rejection) await store.finish(intent, "failed");
+  throw new Error(
+    rejection
+      ? "GitHub rejected merge; a new explicit request is required"
+      : "Merge outcome is unknown; recover the original operation without resending",
+  );
 }
