@@ -6,7 +6,6 @@ import { type Api, type Credentials } from "./merge-credentials";
 import { bindPull } from "./merge-operation";
 import {
   appId,
-  deployment,
   ownerId,
   repository,
   repositoryId,
@@ -140,8 +139,7 @@ const invocation: Api = async (path): Promise<Json> => {
   };
 };
 
-test("deployment is disabled and merge requests require an exact accepted dev declaration", () => {
-  expect(() => deployment()).toThrow("not deployed");
+test("merge requests require an exact accepted dev declaration", () => {
   expect(
     request({
       pr: "42",

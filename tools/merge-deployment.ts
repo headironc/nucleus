@@ -13,8 +13,22 @@ export type MergeDeployment = {
   dev: Protection;
 };
 
-// Both targets share one operation history. Enabling is a reviewed deployment.
-export const mergeDeployment: MergeDeployment | null = null;
+// Both targets share one operation history. Platform activation is separate.
+export const mergeDeployment: MergeDeployment | null = {
+  ledger: {
+    bot: 268568838n,
+    issue: 16n,
+    issueId: "I_kwDOVWQLm88AAAABZ-6hkw",
+  },
+  main: {
+    updateRule: 25874774n,
+    rules: [25798637n, 25798669n, 25874774n],
+  },
+  dev: {
+    updateRule: 25874777n,
+    rules: [25798637n, 25798667n, 25874777n],
+  },
+};
 export const repository = "headironc/nucleus";
 export const repositoryId = 1432619931n;
 export const ownerId = 19648989n;
