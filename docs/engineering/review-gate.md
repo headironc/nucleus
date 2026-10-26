@@ -22,7 +22,9 @@ GitHub 在 PR 创建、提交更新和重开时要求一次新的必需工作流
 
 ## 个人 main 固定发布候选
 
-个人晋级只适用于 private `headironc/nucleus`，固定仓库 ID `1432619931`、账户 ID `19648989` 和 Cladiron App ID `3104501`。源码中的部署绑定默认为 `null`。启用属于独立配置操作，必须先完成本节的平台、凭据和实际验收。组织控制器仅在 `silence-force/nucleus` 运行；个人 `dev` 使用下节的独立 PR 入口，Cubic 接入及迁移另行交付。
+个人晋级只适用于 private `headironc/nucleus`，固定仓库 ID `1432619931`、账户 ID `19648989` 和 Cladiron App ID `3104501`。可信源码已绑定实际操作记录与仓库规则身份；永久更新规则在迁移准备时保持 disabled、无 bypass。发布绑定不代表个人准入已启用，必须先完成本节的平台、凭据和实际验收。组织控制器仅在 `silence-force/nucleus` 运行；个人 `dev` 使用下节的独立 PR 入口，Cubic 接入及迁移另行交付。
+
+切换时先停接新请求并启用同一永久更新规则，保持无 bypass。在阻写状态下核清在途终态、完成最终备份，再迁移并核对规则 ID、个人来源、Environment 和操作记录。目标凭据、保护前置及供应商覆盖满足后，仅为获准合并验收设置准确 Cladiron 的 PR-only 例外；验收成功后才恢复日常请求。Cladiron 的 Issues write 权限用于共用操作记录；修改共享 App 的权限前，必须交付其他消费者的权限兼容并核清影响，不能让其精确权限校验失效。
 
 ### 发布准备与准入
 
@@ -66,7 +68,7 @@ PR 生命周期、审查通知和 CI 完成只触发自动评估。目标推送�
 
 账户所有者从受保护 `dev` 手动运行 `merge`，显式给出准确 PR 编号及完整 `H`，才请求一次 squash。运行者和重触发者均绑定账户所有者；重新运行旧 job 不能再发送合并。运行环境、workflow SHA、签出源码和实时 `dev` 必须一致。`pull_request_target` 的 API 运行头可以描述 PR 来源；可信控制版本仍由运行环境的目标 ref、workflow SHA、签出及实时 `dev` 共同核定。入口不执行候选代码或依赖。
 
-部署统一由 `merge-deployment.ts` 拥有，同一仓库只有 dev/main 两个固定目标，各自绑定保护规则。个人 `dev` 保留与上节相同的严格检查、准确生产者、批准、Code Owner review、讨论、签名及禁止强推/删除，只允许 squash，禁止队列。永久 update-only 规则仅给 Cladiron PR-only 例外。完整 bypass、真实 CODEOWNERS、权益和旧秘密持有点仍由获授权的配置验收核清。`dev-admission` Environment 仅向可信 `dev` 提供 `NUCLEUS_DEV_PRIVATE_KEY`；源码默认关闭，不创建 Environment、Secret 或规则。
+部署统一由 `merge-deployment.ts` 拥有，同一仓库只有 dev/main 两个固定目标，各自绑定保护规则。个人 `dev` 保留与上节相同的严格检查、准确生产者、批准、Code Owner review、讨论、签名及禁止强推/删除，只允许 squash，禁止队列。永久 update-only 规则仅给 Cladiron PR-only 例外。完整 bypass、真实 CODEOWNERS、权益和旧秘密持有点仍由获授权的配置验收核清。`dev-admission` Environment 仅向可信 `dev` 提供 `NUCLEUS_DEV_PRIVATE_KEY`；源码不创建 Environment、Secret 或规则，部署绑定与平台实际启用分别验收。
 
 自动评估、dev 合并和 main 晋级共享 `review-gate` 写锁。显式合并先恢复同一操作 issue 内的未终结发送，再自己完成准入，不持锁等待另一个 gate 作业。dev 意图采用 v2，绑定 PR 节点、`H/B`、树、生命周期、请求者、原 run/attempt、源码及 installation；读取器保留既有 main v1 记录。任何目标的未知发送都阻止另一目标发送，恢复核原入口和原运行终态，不重新提交请求。恢复模式不依赖新候选或当前准入保护已经通过。
 
