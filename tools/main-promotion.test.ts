@@ -1,15 +1,9 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
-import {
-  admission,
-  bindPull,
-  ci,
-  preflight,
-  protection,
-  request,
-  reviewSnapshot,
-} from "./main-promotion";
-import { type Api, type Credentials } from "./promotion-credentials";
+import { admission, request, reviewSnapshot } from "./main-promotion";
+import { ci, preflight, protection } from "./merge-admission";
+import { type Api, type Credentials } from "./merge-credentials";
+import { bindPull } from "./merge-operation";
 import {
   appId,
   deployment,
@@ -17,8 +11,9 @@ import {
   repository,
   repositoryId,
   workflow,
-  type PromotionDeployment,
-} from "./promotion-deployment";
+  type Protection,
+  type Ledger,
+} from "./merge-deployment";
 import { Queue, contract } from "./review-queue";
 import {
   BASE,
@@ -41,7 +36,7 @@ import {
   type Record,
 } from "./review-json";
 
-const config: PromotionDeployment = {
+const config: Protection & Ledger = {
   bot: 99n,
   issue: 1n,
   issueId: "node",
@@ -274,7 +269,7 @@ test("release PR binds the same repository, exact SHA, main target and release b
     base: { repo: { id: repositoryId }, ref: "main" },
     head: { repo: { id: repositoryId }, sha: HEAD, ref: "release/one" },
   };
-  expect(bindPull(pull, wanted)).toBe("node");
+  expect(bindPull(pull, wanted, "main")).toBe("node");
   for (const mutate of [
     (row: Record) => {
       object(row.base).ref = "dev";
@@ -294,7 +289,7 @@ test("release PR binds the same repository, exact SHA, main target and release b
   ]) {
     const row = structuredClone(pull);
     mutate(row);
-    expect(() => bindPull(row, wanted)).toThrow();
+    expect(() => bindPull(row, wanted, "main")).toThrow();
   }
 });
 

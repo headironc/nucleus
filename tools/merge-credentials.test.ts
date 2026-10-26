@@ -3,18 +3,14 @@ import { generateKeyPairSync, verify } from "node:crypto";
 import {
   appPermissions,
   mint,
+  mintReview,
   revoke,
   scopes,
   verifyInstallation,
   verifyRepository,
   type Api,
-} from "./promotion-credentials";
-import {
-  appId,
-  ownerId,
-  repository,
-  repositoryId,
-} from "./promotion-deployment";
+} from "./merge-credentials";
+import { appId, ownerId, repository, repositoryId } from "./merge-deployment";
 import { field, object, parse, type Json, type Record } from "./review-json";
 
 const { privateKey, publicKey } = generateKeyPairSync("rsa", {
@@ -99,6 +95,15 @@ function service(
     },
   };
 }
+
+test("automatic admission issues only a review token and revokes that token", async () => {
+  const state = service();
+  const credentials = await mintReview(key, state.transport, state.mask);
+  expect(credentials.tokens).toEqual({ review: "test-review" });
+  expect(state.issued).toEqual(["test-review"]);
+  await revoke(Object.values(credentials.tokens), state.transport);
+  expect(state.deleted).toEqual(["test-review"]);
+});
 
 test("credentials bind exact account, App, installation, repository and purpose before returning masked tokens", async () => {
   const state = service();

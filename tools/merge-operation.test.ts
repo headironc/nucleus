@@ -1,22 +1,25 @@
 import { expect, test } from "bun:test";
-import { ApiFailure, type Api } from "./promotion-credentials";
+import { ApiFailure, type Api } from "./merge-credentials";
 import {
   appId,
   ownerId,
   repository,
   repositoryId,
   workflow,
-  type PromotionDeployment,
-} from "./promotion-deployment";
+  devWorkflow,
+  type Ledger,
+  type Protection,
+} from "./merge-deployment";
 import {
   history,
   OperationStore,
   operation,
   originalEnded,
+  execute,
+  recover,
   type Entry,
   type Operation,
-} from "./promotion-operation";
-import { execute, recover } from "./main-promotion";
+} from "./merge-operation";
 import {
   array,
   field,
@@ -26,7 +29,7 @@ import {
   type Record,
 } from "./review-json";
 
-const config: PromotionDeployment = {
+const config: Ledger & Protection = {
   bot: 99n,
   issue: 1n,
   issueId: "issue-node",
@@ -74,7 +77,10 @@ function records(
         end = page + size;
       const nodes: Record[] = entries.slice(page, end).map((entry) => ({
         databaseId: entry.id,
-        body: "Nucleus promotion v1\n" + wire(entry.value),
+        body:
+          (entry.value.version === 1n
+            ? "Nucleus promotion v1\n"
+            : "Nucleus merge v2\n") + wire(entry.value),
         lastEditedAt: null,
         editor: null,
         author: {
@@ -350,6 +356,124 @@ test("an invalid merge-state read cannot close a rejected operation as confirmed
     ).rejects.toThrow("merge state is unknown");
     expect(api.sends()).toBe(1);
     expect(data.entries).toHaveLength(1);
+    expect(history(await data.store.read())?.value.stage).toBe("intent");
+  }
+});
+
+const { dev: _acceptedDev, ...binding } = value as Extract<
+  Operation,
+  { version: 1n }
+>;
+const dev: Operation = { ...binding, version: 2n, branch: "dev" };
+const devActions: Api = async (...args) => ({
+  ...object(await actions(...args)),
+  path: devWorkflow,
+});
+function devResult(
+  options: {
+    applied?: boolean;
+    parents?: Json[];
+    signature?: boolean;
+    reachable?: boolean;
+    tree?: string;
+  } = {},
+) {
+  let sends = 0;
+  const read: Api = async (path, method, body): Promise<Json> => {
+    if (method === "PUT") {
+      sends++;
+      expect(body).toEqual({ sha: dev.head, merge_method: "squash" });
+      throw new Error("lost response");
+    }
+    if (path.endsWith("/pulls/42"))
+      return {
+        number: dev.pr,
+        node_id: dev.prId,
+        url: `https://api.github.com/repos/${repository}/pulls/42`,
+        head: {
+          repo: { id: repositoryId },
+          sha: dev.head,
+          ref: "feature/work",
+        },
+        base: { repo: { id: repositoryId }, ref: "dev" },
+        merged: options.applied ?? true,
+        merge_commit_sha: merged,
+      };
+    if (path.endsWith(`/commits/${merged}`))
+      return {
+        sha: merged,
+        parents: options.parents ?? [{ sha: dev.base }],
+        commit: {
+          tree: { sha: options.tree ?? dev.tree },
+          verification: { verified: options.signature ?? true },
+        },
+      };
+    if (path.endsWith("/git/ref/heads/dev"))
+      return { ref: "refs/heads/dev", object: { sha: merged } };
+    if (path.includes("/compare/"))
+      return {
+        base_commit: { sha: merged },
+        status: options.reachable === false ? "diverged" : "identical",
+      };
+    throw new Error(`Unexpected path ${path}`);
+  };
+  return { read, sends: () => sends };
+}
+
+test("dev uses one squash and confirms a signed single-parent candidate tree after response loss", async () => {
+  const data = records(),
+    api = devResult();
+  expect(await execute(data.store, api.read, dev, async () => {})).toBe(merged);
+  expect(api.sends()).toBe(1);
+  expect(data.entries.at(-1)?.value.stage).toBe("merged");
+  expect(() => operation({ ...dev, dev: value.head })).toThrow();
+  expect(() => operation({ ...dev, branch: "main" })).toThrow();
+});
+
+test("one ledger preserves historical main records and blocks either target behind an unknown dev send", async () => {
+  const data = records({ pageSize: 1 }),
+    api = devResult({ applied: false });
+  const first = await data.store.append(value);
+  await data.store.finish(first, "not-sent");
+  const next = { ...dev, previous: data.entries.at(-1)!.id };
+  await expect(
+    execute(data.store, api.read, next, async () => {}),
+  ).rejects.toThrow("unknown");
+  for (const later of [dev, value])
+    await expect(
+      execute(data.store, api.read, later, async () => {}),
+    ).rejects.toThrow("earlier merge");
+  expect(api.sends()).toBe(1);
+  await expect(
+    recover(data.store, devResult().read, actions, dev.installation),
+  ).rejects.toThrow("identity");
+  const running: Api = async (...args) => ({
+    ...object(await devActions(...args)),
+    status: "in_progress",
+  });
+  await expect(
+    recover(data.store, devResult().read, running, dev.installation),
+  ).rejects.toThrow("has not ended");
+  expect(
+    await recover(data.store, devResult().read, devActions, dev.installation),
+  ).toBe(true);
+  expect(history(await data.store.read())).toBeNull();
+});
+
+test("dev result mismatch stays unresolved and cannot free the shared writer", async () => {
+  for (const options of [
+    { parents: [{ sha: dev.base }, { sha: dev.head }] },
+    { parents: [{ sha: dev.head }] },
+    { signature: false },
+    { tree: dev.base },
+    { reachable: false },
+  ]) {
+    const data = records(),
+      api = devResult(options);
+    await expect(
+      execute(data.store, api.read, dev, async () => {}),
+    ).rejects.toThrow();
+    expect(api.sends()).toBe(1);
     expect(history(await data.store.read())?.value.stage).toBe("intent");
   }
 });

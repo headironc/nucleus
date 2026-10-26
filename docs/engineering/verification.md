@@ -93,7 +93,7 @@ Halo 仅豁免上文的根文档、`docs/**/*.md`、两份文档格式配置，�
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Cargo 依赖边界                    | `bun test tools/check-dependencies.test.ts`                                                                                                                            |
 | 审查关卡、队列与证据 JSON         | `bun test tools/review-gate.test.ts tools/review-queue.test.ts tools/review-json.test.ts`                                                                              |
-| 固定发布候选、可信晋级与恢复      | `bun test tools/release-candidate.test.ts tools/main-promotion.test.ts tools/promotion-credentials.test.ts tools/promotion-operation.test.ts`                          |
+| 固定发布候选、可信合并与恢复      | `bun test tools/release-candidate.test.ts tools/main-promotion.test.ts tools/dev-admission.test.ts tools/merge-credentials.test.ts tools/merge-operation.test.ts`      |
 | 输入分类、package、CI、缓存或 Bun | `bun test tools/check-inputs.test.ts tools/check-packages.test.ts tools/rust-workflow.test.ts tools/cache.test.ts tools/check-bun.test.ts tools/halo-ci-image.test.ts` |
 | Halo 指定验收入口                 | `bun test tools/check-halo-test.test.ts tools/check-inputs.test.ts tools/cache.test.ts`                                                                                |
 | Halo 本地运行时准备               | `bun test tools/halo-local.test.ts tools/halo-browser-smoke.test.ts tools/halo-ci-image.test.ts`                                                                       |

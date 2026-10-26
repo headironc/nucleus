@@ -101,7 +101,7 @@ jobs:
       - name: Check dependency boundaries
         run: bun tools/check-dependencies.ts
       - name: Test review gate
-        run: bun test tools/review-gate.test.ts tools/review-queue.test.ts tools/review-json.test.ts tools/release-candidate.test.ts tools/main-promotion.test.ts tools/promotion-credentials.test.ts tools/promotion-operation.test.ts
+        run: bun test tools/review-gate.test.ts tools/review-queue.test.ts tools/review-json.test.ts tools/release-candidate.test.ts tools/main-promotion.test.ts tools/dev-admission.test.ts tools/merge-credentials.test.ts tools/merge-operation.test.ts
       - name: Test package checks
         run: bun test tools/check-inputs.test.ts tools/check-packages.test.ts tools/rust-workflow.test.ts tools/cache.test.ts tools/check-bun.test.ts tools/halo-ci-image.test.ts tools/check-halo-test.test.ts tools/halo-local.test.ts tools/halo-browser-smoke.test.ts
 

@@ -1,12 +1,7 @@
 import { sign } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { array, field, parse, string, wire, type Json } from "./review-json";
-import {
-  appId,
-  ownerId,
-  repository,
-  repositoryId,
-} from "./promotion-deployment";
+import { appId, ownerId, repository, repositoryId } from "./merge-deployment";
 
 export type Api = (path: string, method?: string, body?: Json) => Promise<Json>;
 export class ApiFailure extends Error {
@@ -60,9 +55,9 @@ export const scopes = {
     statuses: "read",
   },
 } as const;
-export type Credentials = {
+export type Credentials<K extends keyof typeof scopes = keyof typeof scopes> = {
   installation: bigint;
-  tokens: { -readonly [K in keyof typeof scopes]: string };
+  tokens: { [P in K]: string };
 };
 
 function owner(value: Json): void {
@@ -71,7 +66,7 @@ function owner(value: Json): void {
     field(value, "login") !== "headironc" ||
     field(value, "type") !== "User"
   )
-    throw new Error("Promotion account identity mismatch");
+    throw new Error("Trusted merge account identity mismatch");
 }
 export function verifyRepository(value: Json): void {
   if (
@@ -80,7 +75,7 @@ export function verifyRepository(value: Json): void {
     field(value, "private") !== true ||
     field(value, "default_branch") !== "dev"
   )
-    throw new Error("Promotion repository identity mismatch");
+    throw new Error("Trusted merge repository identity mismatch");
   owner(field(value, "owner"));
 }
 export function verifyInstallation(value: Json): bigint {
@@ -96,7 +91,7 @@ export function verifyInstallation(value: Json): bigint {
     field(value, "repository_selection") !== "selected" ||
     !isDeepStrictEqual(field(value, "permissions"), appPermissions)
   )
-    throw new Error("Promotion installation or permission mismatch");
+    throw new Error("Trusted merge installation or permission mismatch");
   return id;
 }
 
@@ -111,11 +106,28 @@ export async function revoke(tokens: string[], transport = api): Promise<void> {
 }
 
 // Called only after source/run/deployment verification. No token is exported to a later job.
-export async function mint(
+export function mint(
   key: string,
   transport = api,
   mask = (token: string) => console.log(`::add-mask::${token}`),
 ): Promise<Credentials> {
+  return issue(key, ["review", "record", "merge"], transport, mask);
+}
+
+export function mintReview(
+  key: string,
+  transport = api,
+  mask = (token: string) => console.log(`::add-mask::${token}`),
+): Promise<Credentials<"review">> {
+  return issue(key, ["review"], transport, mask);
+}
+
+async function issue<K extends keyof typeof scopes>(
+  key: string,
+  purposes: readonly K[],
+  transport: typeof api,
+  mask: (token: string) => void,
+): Promise<Credentials<K>> {
   const at = Math.floor(Date.now() / 1000);
   const encode = (value: Json) =>
     Buffer.from(wire(value)).toString("base64url");
@@ -129,14 +141,14 @@ export async function mint(
     field(actual, "slug") !== "cladiron" ||
     !isDeepStrictEqual(field(actual, "permissions"), appPermissions)
   )
-    throw new Error("Promotion App identity or permission mismatch");
+    throw new Error("Trusted merge App identity or permission mismatch");
   const installation = async () =>
     verifyInstallation(await app(`repos/${repository}/installation`));
   const id = await installation(),
     known: string[] = [];
-  const tokens = {} as Credentials["tokens"];
+  const tokens = {} as Credentials<K>["tokens"];
   try {
-    for (const name of Object.keys(scopes) as (keyof typeof scopes)[]) {
+    for (const name of purposes) {
       if ((await installation()) !== id)
         throw new Error("Installation changed during issuance");
       const response = await app(

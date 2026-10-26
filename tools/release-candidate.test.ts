@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { git, prepareRelease, validateRelease } from "./release-candidate";
 import { release } from "./main-promotion";
-import { repositoryId, repository as remote } from "./promotion-deployment";
-import type { Api } from "./promotion-credentials";
+import { repositoryId, repository as remote } from "./merge-deployment";
+import type { Api } from "./merge-credentials";
 import type { Json } from "./review-json";
 
 const directories: string[] = [];
