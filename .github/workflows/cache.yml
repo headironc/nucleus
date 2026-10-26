@@ -34,7 +34,7 @@ concurrency:
 jobs:
   checks:
     if: ${{ github.ref == 'refs/heads/dev' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     env:
       CARGO_TARGET_DIR: target/cargo
@@ -65,7 +65,7 @@ jobs:
   packages:
     name: cache (${{ matrix.package }})
     needs: checks
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     container:
@@ -107,7 +107,7 @@ jobs:
   halo:
     name: cache (Halo HTTP)
     if: ${{ github.ref == 'refs/heads/dev' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     container:

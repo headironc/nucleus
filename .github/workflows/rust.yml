@@ -15,7 +15,7 @@ permissions:
 
 jobs:
   changes:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     outputs:
       tier: ${{ steps.changes.outputs.tier }}
       packages: ${{ steps.changes.outputs.packages }}
@@ -80,7 +80,7 @@ jobs:
   tools:
     needs: changes
     if: ${{ needs.changes.outputs.tier != 'skip' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -108,7 +108,7 @@ jobs:
   checks:
     needs: changes
     if: ${{ needs.changes.outputs.tier != 'skip' && needs.changes.outputs.tier != 'tools' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     env:
       CARGO_TARGET_DIR: target/cargo
     steps:
@@ -130,7 +130,7 @@ jobs:
     name: package (${{ matrix.package }}${{ matrix.group && format(' {0}', matrix.group) || '' }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
     needs: changes
     if: ${{ needs.changes.outputs.tier != 'skip' && needs.changes.outputs.tier != 'tools' && needs.changes.outputs.tier != 'checks' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
     container:
@@ -177,7 +177,7 @@ jobs:
   rust:
     if: ${{ always() }}
     needs: [changes, tools, checks, packages]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Require every Rust check
         env:
