@@ -82,8 +82,9 @@ export function contract(gate: Gate, rules: Json[], target = "dev"): void {
     required.some(([name, app]) => name === CHECK[0] && !equal(app, CHECK[1]))
   )
     throw new Error("Cladiron required check has an ambiguous producer");
+  if (target === "main" && gate.mainRules) gate.mainRules(rules);
   if (
-    target === "main" &&
+    target === "main" && !gate.mainRules &&
     !rules.some((rule) => {
       if (field(rule, "type") !== "workflows") return false;
       const parameters = field(rule, "parameters");

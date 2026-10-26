@@ -15,6 +15,7 @@
 | 网站短信发码 C1 与登录 R1                 | 已交付 | [短信认证](identity/authentication.md)、[匿名身份 HTTP](http/identity.md)                                                                            |
 | 网站正式注册 R2                           | 已交付 | [正式注册](identity/registration.md)                                                                                                                 |
 | 空库初始化与停机指派                      | 已交付 | [Access 初始化与指派](operations/access.md)                                                                                                          |
+| 个人 main 固定发布候选与可信晋级工具      | 已交付 | [晋级契约](engineering/review-gate.md#个人-main-固定发布候选)；部署默认关闭，平台配置与真实启用验收另行完成                                          |
 | 网站当前身份、本人资料与账户会话封印      | 已交付 | [当前身份](identity/current.md)、[账户](identity/account.md)、[会话事实](identity/session.md)                                                        |
 | Halo 网站本人姓名与身份证尾号摘要         | 已交付 | [当前身份](identity/current.md#本人账户投影)、[页面](client/pages.md#网站本人账户设计稿)                                                             |
 | Halo 网站本人微信绑定事实摘要             | 已交付 | [当前身份](identity/current.md#本人账户投影)、[页面](client/pages.md#网站本人账户设计稿)                                                             |

@@ -677,6 +677,7 @@ export interface GateOptions {
   error?: (message: string) => void;
   eventName?: string;
   eventPath?: string;
+  mainRules?: (rules: Json[]) => void;
 }
 
 function nextCursor(
@@ -709,6 +710,7 @@ export class Gate {
   readonly error: (message: string) => void;
   readonly eventName: string | undefined;
   readonly eventPath: string | undefined;
+  readonly mainRules: ((rules: Json[]) => void) | undefined;
   private readonly contextCache = new Map<string, Json[]>();
   private readonly comparisonCache = new Map<string, Record>();
 
@@ -726,6 +728,7 @@ export class Gate {
     this.error = options.error ?? console.error;
     this.eventName = options.eventName;
     this.eventPath = options.eventPath;
+    this.mainRules = options.mainRules;
   }
 
   gh(...args: string[]): string {

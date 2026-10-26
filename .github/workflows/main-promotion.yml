@@ -1,0 +1,60 @@
+name: Main promotion
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [merge, recover]
+        required: true
+        description: Merge one accepted release or recover an earlier outcome
+      pr:
+        type: string
+        description: Exact release PR number (merge only)
+      dev:
+        type: string
+        description: Accepted dev commit (full SHA)
+      base:
+        type: string
+        description: Expected main commit (full SHA)
+      head:
+        type: string
+        description: Expected release candidate (full SHA)
+      accepted_dev:
+        type: boolean
+        default: false
+        description: I authorize this exact release and confirm dev business acceptance
+
+permissions: {}
+
+jobs:
+  promote:
+    if: github.repository == 'headironc/nucleus' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-26.04
+    environment: main-promotion
+    permissions:
+      contents: read
+      actions: read
+    concurrency:
+      group: review-gate
+      cancel-in-progress: false
+      queue: max
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .tool-versions
+      - run: bun tools/check-bun.ts
+      - name: Verify trusted invocation
+        env:
+          GH_ACTIONS_TOKEN: ${{ github.token }}
+        run: bun tools/main-promotion.ts --preflight
+      - name: Promote or recover the exact release
+        env:
+          GH_ACTIONS_TOKEN: ${{ github.token }}
+          NUCLEUS_PROMOTION_PRIVATE_KEY: ${{ secrets.NUCLEUS_PROMOTION_PRIVATE_KEY }}
+        run: bun tools/main-promotion.ts
