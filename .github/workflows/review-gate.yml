@@ -52,12 +52,13 @@ concurrency:
 jobs:
   gate:
     if: >-
+      github.repository == 'silence-force/nucleus' && (
       github.event_name == 'workflow_dispatch' ||
       github.event_name == 'schedule' ||
       github.event_name == 'workflow_run' ||
       github.event_name == 'pull_request_target' ||
       github.event_name == 'push' ||
-      (github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]')
+      (github.event.issue.pull_request && github.event.comment.user.login == 'chatgpt-codex-connector[bot]'))
     runs-on: ubuntu-24.04
     permissions:
       contents: read

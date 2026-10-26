@@ -1447,6 +1447,7 @@ function evaluateGate(
   eventName: string,
   event: object,
   run: number,
+  repository = "silence-force/nucleus",
 ) {
   const source = expression.trim();
   const body = source.startsWith("${{") ? source.slice(3, -2) : source;
@@ -1455,7 +1456,7 @@ function evaluateGate(
   const context = JSON.parse(
     JSON.stringify({
       github: {
-        repository: "owner/repository",
+        repository,
         event_name: eventName,
         event,
         run_id: run,
@@ -1522,7 +1523,7 @@ test("required main lifecycle runs cannot be coalesced by PR notifications", () 
 const queueNotice = {
   id: 10,
   event: "merge_group",
-  repository: { full_name: "owner/repository" },
+  repository: { full_name: "silence-force/nucleus" },
   path: ".github/workflows/rust.yml",
   head_branch: "gh-readonly-queue/dev/pr-42-abcdef",
   head_sha: "a".repeat(40),
@@ -1618,6 +1619,11 @@ test("review gate preserves running work and global serialization across event g
     queue: "max",
   });
   expect(gateScheduling.concurrency.group).not.toBe("review-gate");
+});
+
+test("organization gate cannot consume personal-repository secrets or run in another repository", () => {
+  for (const repository of ["headironc/nucleus", "other/nucleus"])
+    expect(truthy(evaluateGate(gateScheduling.jobs.gate.if, "workflow_dispatch", {}, 1001, repository))).toBe(false);
 });
 
 test("review gate targets events and reconciles all PRs inside one queued lock", () => {
