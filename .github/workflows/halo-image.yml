@@ -35,7 +35,7 @@ permissions:
 jobs:
   build:
     if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev' && github.repository_id == '1432619931' && inputs.operation == 'build' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
       - name: Require an exact reviewed revision
@@ -77,7 +77,7 @@ jobs:
 
   publish:
     if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev' && github.repository_id == '1432619931' && inputs.operation == 'publish' }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       contents: read
