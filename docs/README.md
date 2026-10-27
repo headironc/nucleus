@@ -123,8 +123,8 @@
 
 使用 Bun 1.4.2 和仓库的 `bun.lock`。需要安装依赖时执行 `bun install --frozen-lockfile --ignore-scripts`。默认只格式化改动文档：`./node_modules/.bin/prettier --write PATH...`。`bun run format:docs` 会重写整个文档集及 `AGENTS.md`，只有该完整范围已选定时才执行。
 
-必须运行 `bun run check:docs` 检查格式与 Markdown 结构。安装 lychee 0.24.2 后，运行 `bun run check:docs:links` 检查本地链接及标题锚点。两项检查覆盖 `AGENTS.md` 和 `docs/**/*.md`，[文档工作流](../.github/workflows/docs.yml)规定 CI 调用。离线检查不验证外部来源的真实性或当前可用性，外部证据按对应主张核验。
+必须运行 `bun run check:docs` 检查格式与 Markdown 结构。安装 lychee 0.24.2 后，运行 `bun run check:docs:links` 检查本地链接及标题锚点。两项本地检查覆盖 `AGENTS.md` 和 `docs/**/*.md`。旧 CI 已停用，当前自动化边界见[验证边界](engineering/verification.md#检查范围)。离线检查不验证外部来源的真实性或当前可用性，外部证据按对应主张核验。
 
-本地 Codex 会话还须对改动文档运行 `node "${CODEX_HOME:-$HOME/.codex}/tools/check-prose.mjs" PATH...`，对编号表运行同目录的 `check-ids.mjs`。它们是 CI 之外的补充工具；不可用时报告未运行，仓库检查仍须执行。
+本地 Codex 会话还须对改动文档运行 `node "${CODEX_HOME:-$HOME/.codex}/tools/check-prose.mjs" PATH...`，对编号表运行同目录的 `check-ids.mjs`。它们是仓库检查之外的补充工具；不可用时报告未运行，仓库检查仍须执行。
 
 格式、结构和链接检查不能证明业务规则正确或实现已交付。检查范围见[验证边界](engineering/verification.md#检查范围)，来源及审查覆盖见[设计证据](engineering/evidence.md)。

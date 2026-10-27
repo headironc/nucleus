@@ -2,25 +2,25 @@
 
 These rules apply to Rust design, implementation and review in Nucleus. This repository owns this adopted policy, including the project overrides below. Read applicable sections together with [repository instructions](../../AGENTS.md), the affected business documents and [controlled construction and queries](../architecture.md#类型构造与查询). Personal Codex files are not required inputs.
 
-The manifests and [Rust CI](../../.github/workflows/rust.yml) enforce only part of these rules. A missing diagnostic does not waive a requirement; do not claim lint coverage without checking the configured gate.
+The manifests and local checks enforce only part of these rules. The old CI workflows are retired; see [validation scope](verification.md#检查范围). A missing diagnostic does not waive a requirement; do not claim automated coverage without checking the actual result.
 
 ## Workspace validation
 
-- Use [the pinned Rust toolchain](../../rust-toolchain.toml) for builds, tests, Clippy and rustdoc. Local validation and [Rust CI](../../.github/workflows/rust.yml) share the [package checker](../../tools/check-packages.ts) for per-package builds, tests and rustdoc. Formatting uses a separate toolchain: install it with `rustup toolchain install nightly-2026-09-06 --profile minimal --component rustfmt`, then run `cargo +nightly-2026-09-06 fmt --all -- --check`. Installing it does not change the default build toolchain.
+- Use [the pinned Rust toolchain](../../rust-toolchain.toml) for builds, tests, Clippy and rustdoc. Local validation uses the [package checker](../../tools/check-packages.ts) for per-package builds, tests and rustdoc. Formatting uses a separate toolchain: install it with `rustup toolchain install nightly-2026-09-06 --profile minimal --component rustfmt`, then run `cargo +nightly-2026-09-06 fmt --all -- --check`. Installing it does not change the default build toolchain.
 - Build and test each Cargo workspace package separately. Build the library and binary targets that the package normally delivers, using the package's delivery feature set, and run that package's own tests. A workspace-wide build or test, or an `--all-targets` check, does not replace the per-package build: dependency feature unification can hide a feature missing from one package's declaration. A test build can enable features through dev-dependencies, so the package's tests alone do not replace building its delivered targets.
-- Run `cargo clippy --workspace --all-targets --locked -- -D warnings`. Run `bun tools/check-packages.ts --package PACKAGE` for affected packages, repeating `--package` for affected consumers of shared changes. With no package selection, the checker and CI check every workspace member, including the root package, `deployment` and `fixture`. Select consumers by reviewing the change; the checker does not infer its impact.
+- Run `cargo clippy --workspace --all-targets --locked -- -D warnings`. Run `bun tools/check-packages.ts --package PACKAGE` for affected packages, repeating `--package` for affected consumers of shared changes. With no package selection, the checker checks every workspace member, including the root package, `deployment` and `fixture`. Select consumers by reviewing the change; the checker does not infer its impact.
 - When a package directly uses a dependency feature, declare that feature in the consuming package's dependency specification. Do not rely on another workspace package to enable it.
-- Run the [dependency boundary checks](#dependency-boundaries) locally and in CI. Do not weaken gates to accommodate a scope expansion.
+- Run the [dependency boundary checks](#dependency-boundaries) locally. Preserve their coverage when preparing future CI.
 - Before database tests, read [database verification](../database.md#交付验证) for isolation, migrations, runtime identity, fixture lifecycle and host requirements. Apply the shared [check scope](verification.md#检查范围).
-- Rust CI caches downloaded Cargo dependencies and their build artifacts with [rust-cache](https://github.com/Swatinem/rust-cache). It places Cargo output in `target/cargo`, separate from the [PostgreSQL installation cache](../database.md#交付验证). The cache key includes the runner image, installed system package versions and the action's Rust toolchain, environment and dependency inputs. Workspace crates are rebuilt; cache hits do not skip any required check. Local Cargo output keeps its default location unless explicitly overridden.
+- Local Cargo output keeps its default location unless explicitly overridden. Reusing build artifacts does not skip any required check.
 
 The package checker runs on the repository's Bun 1.4.2. It reads Cargo metadata with `--locked`, validates every selected name before building, and coalesces duplicate selections. Names must match workspace members exactly; Cargo package patterns and dependencies outside the workspace are not selections. The default manifest belongs to this repository regardless of the caller's working directory. `--manifest-path PATH` selects an explicit workspace, including the disposable workspaces used by its regression tests; Cargo runs from that manifest's directory to retain its toolchain and configuration.
 
 For each selected package, the checker runs `cargo build`, `cargo test` and `cargo doc --no-deps` separately, all with `--locked` and the package's default delivery features. Rustdoc uses `-D warnings`, replacing inherited plain or encoded rustdoc flags. A failed metadata query, invalid selection, empty workspace or failed subprocess ends validation with a nonzero exit status; later steps do not run. The output names the selected packages and active step, and reports success only after all selected checks pass. It neither installs prerequisites nor runs formatting, Clippy, dependency or documentation-maintenance checks. Prepare the pinned PostgreSQL before running packages that use database fixtures, as described in [database verification](../database.md#交付验证).
 
-Install development dependencies with `bun install --frozen-lockfile --ignore-scripts`, then run `bun run check:tools` to type-check the TypeScript tools, their tests and the PostgreSQL preparation script. The [TypeScript configuration](../../tsconfig.json) explicitly loads the pinned Bun and Node type declarations. This check runs `tsc --noEmit` locally and in Rust CI; running scripts or tests with Bun alone does not establish type correctness.
+Install development dependencies with `bun install --frozen-lockfile --ignore-scripts`, then run `bun run check:tools` to type-check the TypeScript tools, their tests and the PostgreSQL preparation script. The [TypeScript configuration](../../tsconfig.json) explicitly loads the pinned Bun and Node type declarations. This check runs `tsc --noEmit`; running scripts or tests with Bun alone does not establish type correctness.
 
-Run `bun test tools/check-packages.test.ts` to exercise the entrypoint through real Cargo in disposable offline workspaces. The tests cover root and non-default members, explicit selections, invalid inputs, lockfile preservation, failure propagation and fatal rustdoc warnings. A feature-isolation example passes workspace builds and package tests but fails the independent production build. These tests verify validation behavior rather than a snapshot of today's package list; CI runs them before preparing PostgreSQL.
+Run `bun test tools/check-packages.test.ts` to exercise the entrypoint through real Cargo in disposable offline workspaces. The tests cover root and non-default members, explicit selections, invalid inputs, lockfile preservation, failure propagation and fatal rustdoc warnings. A feature-isolation example passes workspace builds and package tests but fails the independent production build. These tests verify validation behavior rather than a snapshot of today's package list.
 
 ## Dependency boundaries
 
@@ -31,7 +31,7 @@ Run `bun test tools/check-packages.test.ts` to exercise the entrypoint through r
 - Deployment and migration dependencies belong only to deployment's production graph.
 - `domain/test-support` exposes supplier fixture constructors. Enable it only through `dev-dependencies`, never in a delivered package's production graph or default features.
 
-Run these commands with Python 3.11 or later and the pinned Cargo toolchain. They need no Python packages, database or supplier. CI uses the same commands before preparing PostgreSQL:
+Run these local checks with Python 3.11 or later and the pinned Cargo toolchain. They need no Python packages, database or supplier:
 
 ```bash
 python3 -B tools/test_dependencies.py -v
@@ -81,7 +81,7 @@ Within a file, keep a type definition and its associated `impl` blocks together.
 - Name business models for the concepts they represent. Do not replace the business name with a generic storage label such as `Stored`.
 - Use enum context to avoid redundant variant names, as in `Status::Active`.
 - Keep the names in one state set consistent in grammatical form and meaning.
-- Keep standard predicate method names such as `is_empty()`. Provide `is_empty()` alongside a public `len()`. Review predicate names in addition to CI's configured checks.
+- Keep standard predicate method names such as `is_empty()`. Provide `is_empty()` alongside a public `len()`. Review predicate names in addition to automated checks.
 - Name ordinary getters after the value, as in `name()` or `id()`.
 - Name event time points with `_at` across fields, parameters, local variables and getters, as in `created_at` or `expires_at`. Keep the event name consistent from SQL decoding through the domain model and its accessors. Preserve externally defined protocol field names at their input and output boundaries.
 - Name mutable getters with the `_mut` suffix when they are needed.
