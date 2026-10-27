@@ -7,6 +7,7 @@ import {
   writeFileSync,
   chmodSync,
   chownSync,
+  appendFileSync,
 } from "node:fs";
 import path from "node:path";
 
@@ -126,8 +127,10 @@ function candidate(name, file, content) {
   writeFileSync(directory + "/" + file, content);
   git(directory, ["add", file]);
   git(directory, ["commit", "-qm", "test: candidate change"]);
-  const head = git(directory, ["rev-parse", "HEAD"]),
-    tree = git(directory, ["rev-parse", "HEAD^{tree}"]);
+  return bindCandidate(directory, base, git(directory, ["rev-parse", "HEAD"]));
+}
+function bindCandidate(directory, base, head) {
+  const tree = git(directory, ["rev-parse", "HEAD^{tree}"]);
   const integration = git(
     directory,
     ["commit-tree", tree, "-p", base, "-p", head],
@@ -205,6 +208,44 @@ const mixed = candidate(
 );
 assert.throws(() => checks(mixed), /outside the Nucleus Docs slice/);
 outcomes.push({ scenario: "mixed-scope-rejected", result: "passed" });
+const renamedDirectory = root + "/renamed";
+cpSync("/snapshot/policy", renamedDirectory, { recursive: true });
+init(renamedDirectory);
+writeFileSync(renamedDirectory + "/src/ci_rename_fixture.rs", "");
+appendFileSync(renamedDirectory + "/src/lib.rs", "\nmod ci_rename_fixture;\n");
+git(renamedDirectory, ["add", "src/ci_rename_fixture.rs", "src/lib.rs"]);
+git(renamedDirectory, [
+  "commit",
+  "-qm",
+  "test: valid empty Rust module baseline",
+]);
+const renameBase = git(renamedDirectory, ["rev-parse", "HEAD"]);
+git(renamedDirectory, [
+  "mv",
+  "src/ci_rename_fixture.rs",
+  "docs/ci-rename-fixture.md",
+]);
+git(renamedDirectory, ["commit", "-qm", "test: move Rust module into Docs"]);
+const renamed = bindCandidate(
+  renamedDirectory,
+  renameBase,
+  git(renamedDirectory, ["rev-parse", "HEAD"]),
+);
+writeFileSync(
+  "/evidence/rename-inputs.json",
+  JSON.stringify(
+    { candidate: renamed.candidate, changedPaths: renamed.changedPaths },
+    null,
+    2,
+  ) + "\n",
+);
+assert.ok(
+  renamed.changedPaths.includes("src/ci_rename_fixture.rs"),
+  "Renames must preserve the deleted Rust source input",
+);
+assert.ok(renamed.changedPaths.includes("docs/ci-rename-fixture.md"));
+assert.throws(() => checks(renamed), /outside the Nucleus Docs slice/);
+outcomes.push({ scenario: "renamed-rust-source-rejected", result: "passed" });
 mkdirSync(root + "/missing-reports", { mode: 0o700 });
 const incomplete = await VerifiedExecution.run(
   inputs,
