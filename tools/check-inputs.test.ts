@@ -110,7 +110,7 @@ const workflows = Object.fromEntries(
     name,
     Bun.YAML.parse(
       readFileSync(
-        new URL(`../.github/workflows/${name}.yml`, import.meta.url),
+        new URL(`./fixtures/retired-workflows/${name}.yml`, import.meta.url),
         "utf8",
       ),
     ),

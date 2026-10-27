@@ -467,7 +467,7 @@ test("notifications select related PRs; unassociated completions do not trigger 
 test("dev workflow isolates secrets to the trusted source and serializes evaluation with both merge targets", () => {
   const yaml = Bun.YAML.parse(
     readFileSync(
-      new URL("../.github/workflows/dev-admission.yml", import.meta.url),
+      new URL("./fixtures/retired-workflows/dev-admission.yml", import.meta.url),
       "utf8",
     ),
   ) as any;

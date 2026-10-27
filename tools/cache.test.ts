@@ -55,7 +55,7 @@ type Workflow = {
 function workflow(name: string): Workflow {
   return Bun.YAML.parse(
     readFileSync(
-      new URL(`../.github/workflows/${name}.yml`, import.meta.url),
+      new URL(`./fixtures/retired-workflows/${name}.yml`, import.meta.url),
       "utf8",
     ),
   ) as Workflow;

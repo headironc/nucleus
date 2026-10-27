@@ -238,7 +238,9 @@ bun run test -- app/protocol/affiliation.test.ts app/affiliation/marker.test.ts 
 
 ## CI 依赖镜像
 
-[Halo 工作流](../.github/workflows/halo.yml)、[Rust package 作业](../.github/workflows/rust.yml)及两者的[缓存预热](../.github/workflows/cache.yml)使用同一镜像 digest。镜像定义在 [Dockerfile](../.github/halo-ci/Dockerfile)。官方 Playwright 基础镜像固定版本与 digest，自带 Node 24、浏览器及系统依赖。派生镜像增加 Nginx、固定 Bun、Rust 工具链及组件，并编译固定 PostgreSQL。最终镜像只保留软件安装，不包含仓库源码、集群、证书或测试数据。
+旧 Halo、Rust、缓存和镜像发布工作流已停用。以下自动构建、发布和缓存叙述解释[历史夹具](../tools/fixtures/retired-workflows/README.md)中的退役协议，不是当前可调用的部署入口。镜像构建工具和本地容器验证继续保留；新发布流程另行授权和验收。
+
+[Halo 工作流](../tools/fixtures/retired-workflows/halo.yml)、[Rust package 作业](../tools/fixtures/retired-workflows/rust.yml)及两者的[缓存预热](../tools/fixtures/retired-workflows/cache.yml)使用同一镜像 digest。镜像定义在 [Dockerfile](../.github/halo-ci/Dockerfile)。官方 Playwright 基础镜像固定版本与 digest，自带 Node 24、浏览器及系统依赖。派生镜像增加 Nginx、固定 Bun、Rust 工具链及组件，并编译固定 PostgreSQL。最终镜像只保留软件安装，不包含仓库源码、集群、证书或测试数据。
 
 版本来源保持现有归属：Bun 读 `.tool-versions`，Rust 读 `rust-toolchain.toml`，PostgreSQL 读 `fixture/postgresql.version` 及其构建脚本，Playwright 读 `halo/package.json`。镜像记录这些输入、构建定义、构建器及其 Bun 版本解析依赖的摘要。运行前核对摘要、实际工具版本和浏览器可执行文件；不匹配时失败，更新镜像后再验收。普通 PR 与队列不安装系统包、下载工具链或编译 PostgreSQL。
 
@@ -250,7 +252,7 @@ bun tools/halo-ci-image.ts build nucleus-halo-ci:local
 
 构建器只发送镜像定义和 PostgreSQL 构建脚本及版本文件。PostgreSQL 从官方源码校验摘要后构建，安装固定在 `/opt/nucleus/target/postgresql/<version>`。运行前在仓库 `target/postgresql/<version>` 建立指向该安装的链接，避免移动后的动态库路径失效。任务使用 UID/GID 1001；`initdb`、数据库、真实后端、Node 和隔离 Nginx 在同一容器内通信，保留回环与 TLS 验收。
 
-[镜像发布工作流](../.github/workflows/halo-image.yml)仅接受新仓库 ID `1432619931` 从 `dev` 手动执行。输入已审阅的完整提交 SHA，选择 `build` 后只构建并上传 `nucleus-ci-image` artifact，保留一天。构建作业只有源码读取权限；产物包含完整镜像 tar、配置、history 和来源记录。先下载准确 artifact，检查全部层，包括后层删除或覆盖的文件，再核对配置、history、依赖许可及敏感内容。源码检查与文件名清单不能代替实际内容检查。
+[镜像发布工作流](../tools/fixtures/retired-workflows/halo-image.yml)仅接受新仓库 ID `1432619931` 从 `dev` 手动执行。输入已审阅的完整提交 SHA，选择 `build` 后只构建并上传 `nucleus-ci-image` artifact，保留一天。构建作业只有源码读取权限；产物包含完整镜像 tar、配置、history 和来源记录。先下载准确 artifact，检查全部层，包括后层删除或覆盖的文件，再核对配置、history、依赖许可及敏感内容。源码检查与文件名清单不能代替实际内容检查。
 
 检查通过后另行触发 `publish`，提供相同修订、成功的 build run ID、不可变 artifact ID 和已检查的 `nucleus-ci.tar` SHA-256。发布作业使用临时 `GITHUB_TOKEN` 的 `actions: read` 下载原产物，先核对仓库、工作流、运行状态及来源，再核对实际字节摘要。跨运行下载的权限要求见 [download-artifact](https://github.com/actions/download-artifact#download-artifacts-from-other-workflow-runs-or-repositories)。发布作业不检出或执行源码、不运行镜像、不重建产物；核对来源标签后推送 `ghcr.io/silence-force/nucleus-ci`。包写权限仅在发布作业内。
 

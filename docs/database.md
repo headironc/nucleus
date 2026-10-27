@@ -213,9 +213,9 @@ cargo test -p fixture --locked
 
 构建保留 ICU、Readline 和 zlib 的默认支持。OpenSSL 与 XML 显式启用。二进制安装在 `target/postgresql/18.4`；临时构建全部成功后才发布该目录，不创建系统数据库服务。重复运行脚本核验并复用已有构建。主机升级导致动态库不兼容时，先确认没有测试运行，再移除这个生成目录并重新构建。源码版本与摘要更新必须一同审阅；不因官方源出现更新版本自动升级。
 
-[Rust CI](../.github/workflows/rust.yml) 的 package 作业复用[固定依赖镜像](../halo/README.md#ci-依赖镜像)中的 PostgreSQL 安装。镜像构建时使用相同源码、摘要和准备脚本，任务以非 root 用户运行。每次先核对镜像输入，再校验四个程序的版本和可执行性。镜像缺失或输入、安装不匹配时失败，各作业不回退为源码构建。测试仍创建全新的隔离实例，不共享数据库数据、证书或密码。
+旧 Rust CI 的 package 与缓存入口已退役，其定义仅保留为[离线夹具](../tools/fixtures/retired-workflows/README.md)。本地准备与测试继续使用本节命令。每次运行 PostgreSQL 准备脚本时，脚本校验四个程序的版本和可执行性；测试夹具另行校验 `postgres` 版本。测试仍创建全新的隔离实例，不共享数据库数据、证书或密码。
 
-[缓存准备工作流](../.github/workflows/cache.yml) 在受保护的 `dev` 编译 package 依赖。生成与消费使用同一镜像和 [package 环境 Action](../.github/actions/package-setup/action.yml)，按镜像 digest 及包名区分缓存。缓存缺失仍使用镜像中的 PostgreSQL 软件安装，每次测试重新创建和清理隔离集群。跨 PR 命中、镜像拉取成本和节省时间以实际运行日志验证。
+原依赖镜像与 [package 环境 Action](../.github/actions/package-setup/action.yml) 保留供离线回归解释旧环境。它们不是当前自动运行的检查；缓存或历史运行成功不构成新候选验收。
 
 Ubuntu 24.04 与 26.04 分别链接各自主机的库，无需安装跨发行版的兼容库。隔离验证不证明真实部署凭据、证书、主机环境或规模性能。已交付写入用例共用工作登记与进程生命周期，各自核对提交未知。HTTP 和进程信号已接入，具体运行证据与 systemd 限制见 [HTTP 入口](http/api.md#nginx-接入与传输目标)。
 

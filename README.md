@@ -11,7 +11,7 @@ Nucleus contains a Rust backend, the Halo website, deployment tools, and isolate
 | `fixture/`           | Disposable PostgreSQL and supplier fixtures                                     |
 | `assets/`            | Runtime assets embedded in Rust binaries, including default avatars             |
 | `halo/`              | Independently built website, protocol generation, and browser acceptance tests  |
-| `tools/`, `.github/` | Repository validation tools and CI                                              |
+| `tools/`, `.github/` | Local validation, retired CI fixtures and retained environment definitions      |
 | `docs/`              | Authoritative architecture, business contracts, and engineering rules           |
 | `design/`            | Client page prototypes and their supporting design assets                       |
 

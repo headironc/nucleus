@@ -6,6 +6,10 @@
 
 ## 检查范围
 
+旧 GitHub Actions CI、审查关卡、镜像发布及 dev/main 准入入口已停用，两个分支均已移除旧保护。签名规则继续约束其他分支。本地检查、业务验收及当前候选审查继续执行，历史绿灯不提供新候选的验收结论。Dependabot 与独立托管审查不随这组工作流删除。
+
+工作流原件移至[历史测试夹具](../../tools/fixtures/retired-workflows/README.md)，保留分类、缓存、镜像和恢复回归。下文涉及工作流、队列、缓存预热及自动任务的描述均解释这些离线测试中的旧协议，不表示当前有相应部署。保留的本地分类、package、Halo 与维护工具命令仍按实际输入选择执行。新 CI 的选择、部署和强制机制另行验收。
+
 文档与设计材料改动运行[文档维护](../README.md#文档维护)规定的检查。设计稿还按[页面验收](../client/pages.md#验收)核对实际视觉与交互。实现改动验证当前选定结果及其失败边界，按 [Rust 工作区规则](rust.md#workspace-validation)执行受影响包及消费者的检查。
 
 普通验证只使用隔离 PostgreSQL、虚构数据和受控供应商替身，不使用生产环境或调用真实供应商。数据库测试还须遵守[操作安全](../database.md#操作安全)及[交付验证](../database.md#交付验证)。真实服务操作另按授权范围执行。
@@ -29,7 +33,7 @@
 
 Rust 分类豁免上表列出的 Markdown、三份根配置、`halo/` 和 Halo 工作流。`design/` 还豁免 HTML、CSS、只供页面稿预览的 `.js` 脚本、TXT 文本及 PNG/JPG/JPEG/WebP/AVIF/GIF/SVG 图片，后缀按小写匹配。其他脚本格式、清单、客户端目录或其他未知路径默认执行完整 Rust 检查。混合改动取四档中最高的一档：`skip`、`tools`、`checks`、`full`。Docs 工作流独立运行上述文档检查与预览传输回归。
 
-现有三份审查工作流是 [`review-gate.yml`](../../.github/workflows/review-gate.yml)、[`review-context.yml`](../../.github/workflows/review-context.yml) 和 [`review-activity.yml`](../../.github/workflows/review-activity.yml)。这些输入由工作流、审查关卡、队列及证据 JSON 回归消费。新增工作流仍按未知路径执行完整检查。
+现有三份审查工作流是 [`review-gate.yml`](../../tools/fixtures/retired-workflows/review-gate.yml)、[`review-context.yml`](../../tools/fixtures/retired-workflows/review-context.yml) 和 [`review-activity.yml`](../../tools/fixtures/retired-workflows/review-activity.yml)。这些输入由工作流、审查关卡、队列及证据 JSON 回归消费。新增工作流仍按未知路径执行完整检查。
 
 选检按实际消费者的完整输入决定。共享[输入分类器](../../tools/check-inputs.ts)供 Rust 和 Halo 使用，未知路径保守运行。新消费者开始读取豁免材料时，同片更新输入归属、分类与回归。缓存只加速检查，不代替检查。输入未变时复用有效结果，输入变化后补做受影响检查。分类结果只选择检查，不证明新的工作树已通过验收。
 
@@ -77,7 +81,7 @@ SQL 的范围包含 Domain 测试的直接嵌入，不能仅靠 Cargo 依赖方�
 
 ### Halo 验证
 
-[Halo 工作流](../../.github/workflows/halo.yml)保持每个 PR 和队列候选都有同一个 `website` 任务。任务先分类，仅明确的 `skip` 省略后续重步骤。重步骤仍检查实际 OpenAPI 快照、生成物同步、类型、单元测试和正式构建，并准备 Node、服务依赖及隔离浏览器验收。分类执行失败使任务失败。`dev` 的必需检查及等待、失败规则由[队列检查契约](review-gate.md#dev-队列检查)统一维护。操作命令见 [Halo 使用说明](../../halo/README.md)。
+[Halo 工作流](../../tools/fixtures/retired-workflows/halo.yml)保持每个 PR 和队列候选都有同一个 `website` 任务。任务先分类，仅明确的 `skip` 省略后续重步骤。重步骤仍检查实际 OpenAPI 快照、生成物同步、类型、单元测试和正式构建，并准备 Node、服务依赖及隔离浏览器验收。分类执行失败使任务失败。`dev` 的必需检查及等待、失败规则由[队列检查契约](review-gate.md#dev-队列检查)统一维护。操作命令见 [Halo 使用说明](../../halo/README.md)。
 
 两个 Rust 验收步骤通过 [Halo 测试入口](../../tools/check-halo-test.ts)运行固定的 HTTP 测试。入口保留快照的普通测试模式和浏览器的忽略测试模式，并核对准确测试名的普通成功结果及最终汇总。入口缺失、忽略状态变化、提前退出或执行失败均不通过。输出格式固定到项目 Rust 工具链；升级时运行实际夹具回归。该检查证明指定测试正常完成，不代替测试内的业务断言，也不证明生产就绪。
 
@@ -106,7 +110,7 @@ Halo 仅豁免上文的根文档、`docs/**/*.md`、两份文档格式配置，�
 
 缓存保存可重建的软件依赖，不保存验收结论。命中后仍执行所选检查；缺失或被回收时按同一契约准备依赖并验证。缓存不得包含临时数据库、角色凭据、证书、私钥、浏览器资料或业务恢复材料。
 
-[缓存工作流](../../.github/workflows/cache.yml)只在受保护的 `dev` 上预热。Rust 格式与 Clippy 作业继续使用宿主环境及系统包指纹。独立 package 作业与其预热共用 [package 环境 Action](../../.github/actions/package-setup/action.yml)，复用 Halo 已固定的依赖镜像。镜像预装固定 Rust 工具链、组件和 PostgreSQL 安装，以及 Halo 所需的 Nginx、Node、Bun、浏览器及系统库。两类任务均以非 root 用户运行，先核对镜像输入与软件版本，再按镜像 digest 和各自 owner 恢复 `target/cargo` 依赖。package 缓存按包区分，Halo 使用 `halo-http`；两者不混用。预热只编译交付及测试目标，不运行验收。
+[缓存工作流](../../tools/fixtures/retired-workflows/cache.yml)只在受保护的 `dev` 上预热。Rust 格式与 Clippy 作业继续使用宿主环境及系统包指纹。独立 package 作业与其预热共用 [package 环境 Action](../../.github/actions/package-setup/action.yml)，复用 Halo 已固定的依赖镜像。镜像预装固定 Rust 工具链、组件和 PostgreSQL 安装，以及 Halo 所需的 Nginx、Node、Bun、浏览器及系统库。两类任务均以非 root 用户运行，先核对镜像输入与软件版本，再按镜像 digest 和各自 owner 恢复 `target/cargo` 依赖。package 缓存按包区分，Halo 使用 `halo-http`；两者不混用。预热只编译交付及测试目标，不运行验收。
 
 Nucleus 的两组共用 `package-nucleus` owner，分别恢复依赖；`dev` 仍按包预热一次。三个 setup Action 默认恢复依赖；PR、队列和 Halo 消费者仍恢复缓存并运行完整检查。只有 `dev` 预热显式启用 `cache-lookup-only`。环境核验仍先执行，精确命中只查询 Rust 缓存，跳过归档传输和依赖编译。探针以 `save-if: false` 禁止保存；正常恢复实例保留原保存策略。
 
