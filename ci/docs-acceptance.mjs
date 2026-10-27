@@ -293,6 +293,11 @@ assert.equal(
   failed.observations.find((c) => c.request.name === "docs.links").settled,
   true,
 );
+assert.match(
+  failed.observations.find((c) => c.request.name === "docs.links").diagnostic,
+  /absent-composition-target\.md/,
+  "The authentic failure must retain its missing-link diagnostic",
+);
 writeFileSync(
   "/evidence/broken-report.json",
   JSON.stringify(failed, null, 2) + "\n",

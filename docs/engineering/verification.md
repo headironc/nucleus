@@ -4,7 +4,7 @@
 
 ## Docs 共享执行
 
-共同执行器及[固定跨库合同](https://github.com/headironc/designs/blob/4354779e28d769f0e276bfc3aeae15bcd1dcab3e/ci-architecture.md#三个实际消费者的调用合同)由 designs 维护，agents、Nucleus 和 designs 各自维护业务策略。本库拥有业务选检、Docs 配方和覆盖核验，当前本地代码不是已启用 CI。
+共同执行器及[固定跨库合同](https://github.com/headironc/designs/blob/84a97f6a14ebfa87e6dc37c790b14b77507e46da/ci-architecture.md#三个实际消费者的调用合同)由 designs 维护，agents、Nucleus 和 designs 各自维护业务策略。本库拥有业务选检、Docs 配方和覆盖核验，当前本地代码不是已启用 CI。
 
 本片只覆盖冻结分类器判定 Rust 为 `skip` 且 Halo 为 `skip` 的候选。比较未知时选择完整检查；需要 Rust/Halo 的输入返回未覆盖，不产生整体 CI 或准入成功。合法选择来自共同层核实的 B 到 I 完整差异，包含删除及改名两端，不能读取候选自报路径。
 
@@ -14,7 +14,7 @@ Docs 的完整义务是格式、Markdown 结构、离线链接和设计预览传
 
 实际入口是 [`ci/docs.ts`](../../ci/docs.ts)。P 从认证的执行目录重建命令，使用 Bun 1.4.2 和 lychee 0.24.2，每项时限为 180 秒。远端核验先核本地 P 源码身份，再使用认证报告中的远端路径；读取者的本机目录不替代原执行目录。共享源码固定展开到物理 `.shared/`，由独立的 Git 对象、锁文件和分发摘要绑定，目录保持忽略且未跟踪。P 与 S 分别准备自己的依赖，候选文档不安装依赖，也不接收可写输出目录。
 
-正常检出先准备根依赖，再用 Node 26.8.1 和 Bun 1.4.2 运行 `bun run prepare:ci`，随后运行 `bun run check:tools`。准备入口使用 designs 原样生成的 [`bootstrap.mjs`](../../ci/bootstrap.mjs)，按 [`shared.lock.json`](../../ci/shared.lock.json) 验证同仓库携带的原生分发包。固定源码为 `4354779`，包摘要为 `eed5e7cada459830cbd7d00608db1fe53abd3eb81c84e285fa420377194ffa56`。缺失、换包、错版本和已有目标目录使准备失败；失败时保留原目录，不自动覆盖。源码采用与平台受信来源指定分别进行，分发包及锁本身不授予激活权限。
+正常检出先准备根依赖，再用 Node 26.8.1 和 Bun 1.4.2 运行 `bun run prepare:ci`，随后运行 `bun run check:tools`。准备入口使用 designs 原样生成的 [`bootstrap.mjs`](../../ci/bootstrap.mjs)，按 [`shared.lock.json`](../../ci/shared.lock.json) 验证同仓库携带的原生分发包。固定源码为 `84a97f6`，包摘要为 `cfb02f82afeeaf2324b7618f7094f194d3ef7c2826525a6985919646bb680289`。缺失、换包、错版本和已有目标目录使准备失败；失败时保留原目录，不自动覆盖。源码采用与平台受信来源指定分别进行，分发包及锁本身不授予激活权限。
 
 [`ci/docs-acceptance.mjs`](../../ci/docs-acceptance.mjs) 在 S 的一次性容器内运行真实四项检查，并验证漏项、混合业务改动、真实断链和伪造报告被拒绝。脚本先检查容器边界，再核原签名 P 对象与源码树，并展开同一固定 S 包。只有候选 H 和双父 I 使用测试提交；结果保留本地来源，不建立 hosted 身份。验收只读挂载 `/snapshot/policy` 及对应的 `/snapshot/policy-identity.json`、`/snapshot/policy-commit`，另挂载 `/policy-deps`、`/shared-deps` 和 `/host-tools`。脚本将原报告写入独立 `/evidence`，不改宿主源码或进程身份。
 
