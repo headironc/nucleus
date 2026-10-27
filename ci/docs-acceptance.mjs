@@ -75,7 +75,7 @@ cpSync("/shared-deps", shared + "/node_modules", {
   verbatimSymlinks: true,
 });
 mkdirSync(root + "/tools");
-for (const name of ["bun", "lychee"]) {
+for (const name of ["node", "bun", "lychee"]) {
   cpSync("/host-tools/" + name, root + "/tools/" + name);
   chownSync(root + "/tools/" + name, 0, 0);
   chmodSync(root + "/tools/" + name, 0o755);
@@ -107,6 +107,7 @@ const target = {
   workflow: ".github/workflows/docs.yml",
 };
 const tools = [
+  ["node", "v26.8.1"],
   ["bun", "1.4.2"],
   ["lychee", "lychee 0.24.2"],
 ].map(([name, version]) => ({
