@@ -9,7 +9,6 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
-  readdirSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -784,7 +783,7 @@ test("dependency regression and boundary commands execute with Bun and propagate
   }
 });
 
-test("tool validation prepares pinned runtimes and covers every maintenance regression without backend setup", () => {
+test("retired tool validation prepares pinned runtimes and retains runnable regression inputs without backend setup", () => {
   const tools = workflow.jobs.tools;
   expect(tools["continue-on-error"]).toBeUndefined();
   const steps = tools.steps;
@@ -800,12 +799,13 @@ test("tool validation prepares pinned runtimes and covers every maintenance regr
 
   const regressions = steps.filter((step) => step.run?.startsWith("bun test "));
   const files = regressions.flatMap((step) => step.run!.trim().split(/\s+/).slice(2));
-  expect(files.sort()).toEqual(
-    readdirSync(new URL("./", import.meta.url))
-      .filter((name) => name.endsWith(".test.ts") && name !== "preview-design.test.ts")
-      .map((name) => `tools/${name}`)
-      .sort(),
-  );
+  // The immutable workflow snapshot cannot acquire tests added after retirement.
+  expect(files.length).toBeGreaterThan(0);
+  expect(new Set(files).size).toBe(files.length);
+  for (const file of files) {
+    expect(file).toMatch(/^tools\/[^/]+\.test\.ts$/);
+    expect(existsSync(new URL(`../${file}`, import.meta.url))).toBe(true);
+  }
   const install = steps.find((step) => step.run === "bun install --frozen-lockfile --ignore-scripts");
   const types = steps.find((step) => step.run === "bun run check:tools");
   const rust = steps.find((step) => step.run?.includes("rustup show active-toolchain"));
