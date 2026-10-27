@@ -19,7 +19,7 @@ import { dirname, join } from "node:path";
 
 const workflow = Bun.YAML.parse(
   readFileSync(
-    new URL("../.github/workflows/rust.yml", import.meta.url),
+    new URL("./fixtures/retired-workflows/rust.yml", import.meta.url),
     "utf8",
   ),
 ) as {
@@ -575,7 +575,7 @@ test("PR and queue runs have separate cancellation groups", () => {
   expect(workflow.concurrency).toEqual(expected);
   const docs = Bun.YAML.parse(
     readFileSync(
-      new URL("../.github/workflows/docs.yml", import.meta.url),
+      new URL("./fixtures/retired-workflows/docs.yml", import.meta.url),
       "utf8",
     ),
   ) as { on: Record<string, unknown>; concurrency?: unknown };
@@ -1111,7 +1111,7 @@ test("discovery rejects failed, empty or malformed matrices before publishing jo
 test("Docs always runs design preview regressions and propagates failures", () => {
   const docs = Bun.YAML.parse(
     readFileSync(
-      new URL("../.github/workflows/docs.yml", import.meta.url),
+      new URL("./fixtures/retired-workflows/docs.yml", import.meta.url),
       "utf8",
     ),
   ) as typeof workflow;
@@ -1180,7 +1180,7 @@ test("the protected aggregate job identities remain rust and docs", () => {
   expect(workflow.jobs.rust.name).toBeUndefined();
   const docs = Bun.YAML.parse(
     readFileSync(
-      new URL("../.github/workflows/docs.yml", import.meta.url),
+      new URL("./fixtures/retired-workflows/docs.yml", import.meta.url),
       "utf8",
     ),
   ) as typeof workflow;
@@ -1190,7 +1190,7 @@ test("the protected aggregate job identities remain rust and docs", () => {
 
 const gateScheduling = Bun.YAML.parse(
   readFileSync(
-    new URL("../.github/workflows/review-gate.yml", import.meta.url),
+    new URL("./fixtures/retired-workflows/review-gate.yml", import.meta.url),
     "utf8",
   ),
 ) as {
@@ -1629,7 +1629,7 @@ test("organization gate cannot consume personal-repository secrets or run in ano
 test("review gate targets events and reconciles all PRs inside one queued lock", () => {
   const gate = Bun.YAML.parse(
     readFileSync(
-      new URL("../.github/workflows/review-gate.yml", import.meta.url),
+      new URL("./fixtures/retired-workflows/review-gate.yml", import.meta.url),
       "utf8",
     ),
   ) as {
@@ -1838,7 +1838,7 @@ test("review gate targets events and reconciles all PRs inside one queued lock",
 test("formal and inline review activity relay to the trusted gate without credentials", () => {
   const activity = Bun.YAML.parse(
     readFileSync(
-      new URL("../.github/workflows/review-activity.yml", import.meta.url),
+      new URL("./fixtures/retired-workflows/review-activity.yml", import.meta.url),
       "utf8",
     ),
   ) as {
@@ -1870,7 +1870,7 @@ test("formal and inline review activity relay to the trusted gate without creden
 test("review context records trusted PR events without executing candidate code", () => {
   const context = Bun.YAML.parse(
     readFileSync(
-      new URL("../.github/workflows/review-context.yml", import.meta.url),
+      new URL("./fixtures/retired-workflows/review-context.yml", import.meta.url),
       "utf8",
     ),
   ) as {

@@ -15,8 +15,8 @@
 | 网站短信发码 C1 与登录 R1                 | 已交付 | [短信认证](identity/authentication.md)、[匿名身份 HTTP](http/identity.md)                                                                            |
 | 网站正式注册 R2                           | 已交付 | [正式注册](identity/registration.md)                                                                                                                 |
 | 空库初始化与停机指派                      | 已交付 | [Access 初始化与指派](operations/access.md)                                                                                                          |
-| 个人 main 固定发布候选与可信晋级工具      | 已交付 | [晋级契约](engineering/review-gate.md#个人-main-固定发布候选)；部署默认关闭，平台配置与真实启用验收另行完成                                          |
-| 个人 dev 独立 PR 准入与可信 squash        | 已交付 | [dev 契约](engineering/review-gate.md#个人-dev-严格同步-pr)；与 main 共用身份及原操作恢复，部署默认关闭                                              |
+| 个人 main 固定发布候选与可信晋级工具      | 已退役 | [历史晋级契约](engineering/review-gate.md#个人-main-固定发布候选)；源码、离线回归与原操作恢复材料保留，当前不提供部署入口                            |
+| 个人 dev 独立 PR 准入与可信 squash        | 已退役 | [历史 dev 契约](engineering/review-gate.md#个人-dev-严格同步-pr)；源码及与 main 共用的原操作恢复保留，当前不提供部署入口                             |
 | 网站当前身份、本人资料与账户会话封印      | 已交付 | [当前身份](identity/current.md)、[账户](identity/account.md)、[会话事实](identity/session.md)                                                        |
 | Halo 网站本人姓名与身份证尾号摘要         | 已交付 | [当前身份](identity/current.md#本人账户投影)、[页面](client/pages.md#网站本人账户设计稿)                                                             |
 | Halo 网站本人微信绑定事实摘要             | 已交付 | [当前身份](identity/current.md#本人账户投影)、[页面](client/pages.md#网站本人账户设计稿)                                                             |
@@ -77,7 +77,7 @@
 | ---------------------------------------------- | --------------------------------------------------------------------------------------- |
 | [完整架构](architecture.md)                    | 事实所有权、共同事务、并发、原操作、恢复、文件后果、类型、crate、PostgreSQL、启动和停止 |
 | [业务交付顺序](engineering/delivery.md)        | 实施切片、开发循环、持续授权、分支提升、剩余范围与依赖、里程碑验收和生产准备            |
-| [审查关卡契约](engineering/review-gate.md)     | 关卡维护与审计、可信身份、候选及基线绑定、检查刷新与失败恢复                            |
+| [审查关卡契约](engineering/review-gate.md)     | 退役部署的身份、候选及基线绑定，以及保留的原操作历史与恢复解释                          |
 | [模型选择与协作](engineering/models.md)        | 模型默认值与升级、运行限制、委派接纳和上下文接续                                        |
 | [模型行为场景](engineering/model-scenarios.md) | 模型政策的验收输入、可观察预期与失败条件                                                |
 | [Claude Code 调用](engineering/claude-code.md) | 经官方 DeepSeek 或 OpenCode 的只读、有界执行调用、工具审批、输出与失败恢复边界          |
@@ -187,10 +187,10 @@
 
 采用外部经验时按[证据要求](engineering/evidence.md#1-范围与使用)核对来源、适用条件与限制。模型、任务、团队或环境不同的结果不直接变成项目能力保证。也不据此自动增加审批、审查轮次或流程角色。提案在对应 PR 中说明解决的实际问题、已有规则为何不足和预期效果。长期文档保留可执行的规则与必要来源，不积累研究摘要或重复复盘台账。
 
-Bun 版本以根目录 [`.tool-versions`](../.tool-versions) 为准，CI 的 setup-bun 从该文件读取版本。本机安装 [mise](https://mise.jdx.dev/) 后，在仓库内执行 `mise install` 即安装并启用该版本；未使用 mise 时，按 `check:bun` 的提示用 Bun 官方安装脚本安装同一版本。根 `package.json` 的 `packageManager` 与 `@types/bun` 须与它一致。`bun run check:bun` 核对这三处及本机版本，`check:docs` 与 `check:tools` 也先执行它。升级 Bun 时同时修改这三处并更新 `bun.lock`；Dependabot 只提升 `@types/bun`，合并前须补齐 `.tool-versions` 与 `packageManager`。依赖以仓库的 `bun.lock` 为准。需要安装依赖时执行 `bun install --frozen-lockfile --ignore-scripts`。默认只格式化改动文档：`./node_modules/.bin/prettier --write PATH...`。`bun run format:docs` 会重写根 README、AGENTS.md、`docs/` 和 `design/` 下的 Markdown。只有该完整范围已选定时才执行。
+Bun 版本以根目录 [`.tool-versions`](../.tool-versions) 为准，本地检查从该文件核对版本。本机安装 [mise](https://mise.jdx.dev/) 后，在仓库内执行 `mise install` 即安装并启用该版本；未使用 mise 时，按 `check:bun` 的提示用 Bun 官方安装脚本安装同一版本。根 `package.json` 的 `packageManager` 与 `@types/bun` 须与它一致。`bun run check:bun` 核对这三处及本机版本，`check:docs` 与 `check:tools` 也先执行它。升级 Bun 时同时修改这三处并更新 `bun.lock`；Dependabot 只提升 `@types/bun`，合并前须补齐 `.tool-versions` 与 `packageManager`。依赖以仓库的 `bun.lock` 为准。需要安装依赖时执行 `bun install --frozen-lockfile --ignore-scripts`。默认只格式化改动文档：`./node_modules/.bin/prettier --write PATH...`。`bun run format:docs` 会重写根 README、AGENTS.md、`docs/` 和 `design/` 下的 Markdown。只有该完整范围已选定时才执行。
 
-必须运行 `bun run check:docs` 检查格式与 Markdown 结构。范围包含根 README、AGENTS.md、`halo/README.md`、`docs/**/*.md` 和 `design/**/*.md`。安装 lychee 0.24.2 后，运行 `bun run check:docs:links` 检查上述文档及 `design/**/*.html` 的本地链接、图片引用和标题锚点。运行 `bun test tools/preview-design.test.ts` 验证实际设计文件的预览传输及服务启动、失败和停止行为。[文档工作流](../.github/workflows/docs.yml)在每个 PR 和队列候选上执行这些检查。检查归属见[仓库与检查归属](engineering/verification.md#仓库与检查归属)。离线链接检查不验证外部来源、CSS 中的资源、脚本中的动态地址或浏览器效果。外部证据及设计验收按对应主张核验。
+必须运行 `bun run check:docs` 检查格式与 Markdown 结构。范围包含根 README、AGENTS.md、`halo/README.md`、`docs/**/*.md` 和 `design/**/*.md`。安装 lychee 0.24.2 后，运行 `bun run check:docs:links` 检查上述文档及 `design/**/*.html` 的本地链接、图片引用和标题锚点。运行 `bun test tools/preview-design.test.ts` 验证实际设计文件的预览传输及服务启动、失败和停止行为。旧[文档工作流定义](../tools/fixtures/retired-workflows/docs.yml)仅作为离线夹具保留；当前在本地执行这些检查。检查归属见[仓库与检查归属](engineering/verification.md#仓库与检查归属)。离线链接检查不验证外部来源、CSS 中的资源、脚本中的动态地址或浏览器效果。外部证据及设计验收按对应主张核验。
 
-本地 Codex 会话还须对改动文档运行 `node "${CODEX_HOME:-$HOME/.codex}/tools/check-prose.mjs" PATH...`，对编号表运行同目录的 `check-ids.mjs`。它们是 CI 之外的补充工具；不可用时报告未运行，仓库检查仍须执行。
+本地 Codex 会话还须对改动文档运行 `node "${CODEX_HOME:-$HOME/.codex}/tools/check-prose.mjs" PATH...`，对编号表运行同目录的 `check-ids.mjs`。它们是仓库检查之外的补充工具；不可用时报告未运行，仓库检查仍须执行。
 
 格式、结构和链接检查不能证明业务规则正确或实现已交付。检查范围见[验证边界](engineering/verification.md#检查范围)，外部来源见[设计证据](engineering/evidence.md)。

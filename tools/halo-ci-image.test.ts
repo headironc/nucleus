@@ -63,7 +63,7 @@ test("a tool upgrade cannot silently use the previous image or mismatched browse
 
 test("image publishing isolates source execution from package credentials", () => {
   const workflow = Bun.YAML.parse(
-    read(".github/workflows/halo-image.yml"),
+    read("tools/fixtures/retired-workflows/halo-image.yml"),
   ) as any;
   expect(Object.keys(workflow.on)).toEqual(["workflow_dispatch"]);
   expect(workflow.on).not.toHaveProperty("pull_request");
@@ -95,7 +95,7 @@ test("image publishing isolates source execution from package credentials", () =
 
 test("build and publication require separate dev dispatches in the exact repository", () => {
   const workflow = Bun.YAML.parse(
-    read(".github/workflows/halo-image.yml"),
+    read("tools/fixtures/retired-workflows/halo-image.yml"),
   ) as any;
   const bootstrap = {
     event_name: "workflow_dispatch",
@@ -153,7 +153,7 @@ test("build and publication require separate dev dispatches in the exact reposit
 
 test("published package must belong to the exact new repository and expected visibility", () => {
   const workflow = Bun.YAML.parse(
-    read(".github/workflows/halo-image.yml"),
+    read("tools/fixtures/retired-workflows/halo-image.yml"),
   ) as any;
   const step = workflow.jobs.publish.steps.find(
     (step: any) => step.name === "Verify package identity and visibility",
@@ -189,7 +189,7 @@ test("published package must belong to the exact new repository and expected vis
 
 test("publication rejects invalid inputs and artifacts outside a successful same-repository build", () => {
   const workflow = Bun.YAML.parse(
-    read(".github/workflows/halo-image.yml"),
+    read("tools/fixtures/retired-workflows/halo-image.yml"),
   ) as any;
   const step = workflow.jobs.publish.steps[0];
   const run = {
@@ -296,7 +296,7 @@ test("publication rejects invalid inputs and artifacts outside a successful same
 
 test("publication verifies the inspected archive and provenance before Docker receives it", () => {
   const workflow = Bun.YAML.parse(
-    read(".github/workflows/halo-image.yml"),
+    read("tools/fixtures/retired-workflows/halo-image.yml"),
   ) as any;
   const steps = workflow.jobs.publish.steps;
   const verify = steps.findIndex(
@@ -351,7 +351,7 @@ test("publication verifies the inspected archive and provenance before Docker re
 
 test("the build exports provenance that the publisher accepts without rewriting it", () => {
   const workflow = Bun.YAML.parse(
-    read(".github/workflows/halo-image.yml"),
+    read("tools/fixtures/retired-workflows/halo-image.yml"),
   ) as any;
   const exportStep = workflow.jobs.build.steps.find(
     (step: any) => step.name === "Export the complete image for inspection",
@@ -411,7 +411,7 @@ docker() {
 
 test("published manifest must retain the inspected image configuration", () => {
   const workflow = Bun.YAML.parse(
-    read(".github/workflows/halo-image.yml"),
+    read("tools/fixtures/retired-workflows/halo-image.yml"),
   ) as any;
   const step = workflow.jobs.publish.steps.find(
     (step: any) => step.name === "Publish the reviewed dependency image",

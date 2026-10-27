@@ -420,7 +420,7 @@ test("personal adapter uses the real Gate approval and Queue admission with exac
 test("workflow keeps secrets on the trusted source, shares the writer lock and exposes no candidate shell input", () => {
   const yaml = Bun.YAML.parse(
     readFileSync(
-      new URL("../.github/workflows/main-promotion.yml", import.meta.url),
+      new URL("./fixtures/retired-workflows/main-promotion.yml", import.meta.url),
       "utf8",
     ),
   ) as any;
