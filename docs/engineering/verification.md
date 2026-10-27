@@ -2,6 +2,24 @@
 
 本文拥有工具选型及当前变更的检查方法、范围与证据要求。执行时机与责任见[开发循环](delivery.md#开发循环)。跨能力故障要求由[架构验收](../architecture.md#隔离验收)拥有，各用例补齐所属输入、预期后果与恢复验证。
 
+## Docs 共享执行
+
+共同执行器及[固定跨库合同](https://github.com/headironc/designs/blob/3313469d3862490df378d745f8d6b609cfde5289/ci-architecture.md#三个实际消费者的调用合同)由 designs 维护，agents、Nucleus 和 designs 各自维护业务策略。本库拥有业务选检、Docs 配方和覆盖核验，当前本地代码不是已启用 CI。
+
+本片只覆盖冻结分类器判定 Rust 为 `skip` 且 Halo 为 `skip` 的候选。比较未知时选择完整检查；需要 Rust/Halo 的输入返回未覆盖，不产生整体 CI 或准入成功。合法选择来自共同层核实的 B 到 I 完整差异，包含删除及改名两端，不能读取候选自报路径。
+
+Docs 的完整义务是格式、Markdown 结构、离线链接和设计预览传输回归。配方从冻结策略目录启动，以显式路径读取候选全部文档及实际设计文件。格式与 Markdown 检查使用冻结配置和锁定库，不执行候选的工具配置。依赖准备、源码身份、隔离执行、报告来源、取消与进程结清由 designs 的共同实现负责。
+
+业务 verifier 从独立输入重建完整配方，核四项检查的真实命令、环境和成功终态。漏项、替换、重复、失败、取消、超时或未结清不能形成 Docs 成功。核验只消费共同层已认证的运行观察，不自行将候选报告当作可信事实。
+
+实际入口是 [`ci/docs.ts`](../../ci/docs.ts)。P 从认证的执行目录重建命令，使用 Bun 1.4.2 和 lychee 0.24.2，每项时限为 180 秒。远端核验先核本地 P 源码身份，再使用认证报告中的远端路径；读取者的本机目录不替代原执行目录。共享源码固定展开到物理 `.shared/`，由独立的 Git 对象、锁文件和分发摘要绑定，目录保持忽略且未跟踪。P 与 S 分别准备自己的依赖，候选文档不安装依赖，也不接收可写输出目录。
+
+正常检出先准备根依赖，再用 Node 26.8.1 和 Bun 1.4.2 运行 `bun run prepare:ci`，随后运行 `bun run check:tools`。准备入口使用 designs 原样生成的 [`bootstrap.mjs`](../../ci/bootstrap.mjs)，按 [`shared.lock.json`](../../ci/shared.lock.json) 验证同仓库携带的原生分发包。固定源码为 `3313469`，包摘要为 `429c65e20ee6c6e9de4db68c2675ecaadb0352fdcd954e3a84cbf8e344eef646`。缺失、换包、错版本和已有目标目录使准备失败；失败时保留原目录，不自动覆盖。源码采用与平台受信来源指定分别进行，分发包及锁本身不授予激活权限。
+
+[`ci/docs-acceptance.mjs`](../../ci/docs-acceptance.mjs) 在 S 的一次性容器内运行真实四项检查，并验证漏项、混合业务改动、真实断链和伪造报告被拒绝。脚本先检查容器边界，再核挂载的 P 提交对象摘要及源码树与输入身份一致，并展开同一固定 S 包。脚本不验证提交签名；交付方在准备挂载原件前单独验证签名。只有候选 H 和双父 I 使用测试提交；结果保留本地来源，不建立 hosted 身份。验收只读挂载 `/snapshot/policy` 及对应的 `/snapshot/policy-identity.json`、`/snapshot/policy-commit`，另挂载 `/policy-deps`、`/shared-deps` 和 `/host-tools`。脚本将原报告写入独立 `/evidence`，不改宿主源码或进程身份。
+
+首片真实交付还要求 P/S 组合可读、固定入口实际执行、原 artifact 来源验证，以及取消和上传未知结果恢复。本地业务回归不替代这些验收。源码指定、分发、权限及 CI 启用保持各自边界；本片不复制共同控制器，不恢复旧门禁，也不接入批准、合并、Rust/Halo runner、stack 或晋级。
+
 验收预检、增量证据复用及覆盖保留采用 [agents 的检查规则（657629e）](https://github.com/silence-force/agents/blob/657629ec7489b4c6817935fc5d078b639a28bee9/delivery/policy/review.md#checks)。本项目的检查范围、命令与证据入口仍由本文及其引用维护。
 
 ## 检查范围

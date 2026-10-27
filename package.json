@@ -4,6 +4,7 @@
   "packageManager": "bun@1.4.2",
   "scripts": {
     "check:bun": "bun tools/check-bun.ts",
+    "prepare:ci": "bun tools/check-bun.ts && node ci/prepare.mjs",
     "check:tools": "bun tools/check-bun.ts && tsc --noEmit",
     "preview:design": "bun tools/check-bun.ts && bun tools/preview-design.ts",
     "format:docs": "prettier --write README.md AGENTS.md halo/README.md \"docs/**/*.md\" \"design/**/*.md\" --no-error-on-unmatched-pattern",
@@ -16,6 +17,7 @@
     "@types/node": "26.6.4",
     "@types/serve-handler": "6.1.1",
     "markdownlint-cli2": "0.23.3",
+    "markdownlint": "0.41.1",
     "prettier": "3.9.9",
     "serve-handler": "6.1.7",
     "typescript": "7.0.2"

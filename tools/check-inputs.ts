@@ -5,6 +5,11 @@ import { fileURLToPath } from "node:url";
 
 // Input ownership is defined in docs/engineering/verification.md.
 type Tier = "skip" | "tools" | "checks" | "full";
+export type CheckSelection = {
+  tier: Tier;
+  halo: "skip" | "run";
+  packages: "all" | string[];
+};
 const tiers: Tier[] = ["skip", "tools", "checks", "full"];
 const root = realpathSync(
   resolve(dirname(fileURLToPath(import.meta.url)), ".."),
@@ -267,6 +272,37 @@ function haloInput(path: string) {
   return !(documentation(path) || design(path) || haloUnrelated.has(path));
 }
 
+export function selectChecks(
+  changed: readonly string[] | null,
+): CheckSelection {
+  if (changed === null) return { tier: "full", halo: "run", packages: "all" };
+  let tier: Tier = "skip";
+  let halo: "skip" | "run" = "skip";
+  let packages: "all" | Set<string> = new Set();
+  for (const path of changed) {
+    if (
+      !path ||
+      path.startsWith("/") ||
+      path.includes("\0") ||
+      path.split("/").some((part) => part === "." || part === ".." || !part)
+    )
+      throw new Error("Invalid changed source path");
+    const input = rustTier(path);
+    if (tiers.indexOf(input) > tiers.indexOf(tier)) tier = input;
+    if (input === "full" && packages !== "all") {
+      const affected = rustPackages(path);
+      if (affected === undefined) packages = "all";
+      else for (const name of affected) packages.add(name);
+    }
+    if (haloInput(path)) halo = "run";
+  }
+  return {
+    tier,
+    halo,
+    packages: packages === "all" ? "all" : [...packages].sort(),
+  };
+}
+
 function main() {
   const args = process.argv.slice(2);
   const ci = args.length === 1 && args[0] === "--ci";
@@ -275,9 +311,7 @@ function main() {
     throw new Error("Usage: bun tools/check-inputs.ts --ci | --base REF");
   if (ci && !process.env.GITHUB_OUTPUT)
     throw new Error("--ci requires GITHUB_OUTPUT");
-  let tier: Tier = "full";
-  let halo = "run";
-  let packages: "all" | Set<string> = "all";
+  let selected = selectChecks(null);
   try {
     if (
       realpathSync(process.cwd()) !== root ||
@@ -286,29 +320,15 @@ function main() {
       throw new Error("Run the classifier from its repository root");
     }
     const changed = ci ? ciPaths() : localPaths(args[1]);
-    tier = "skip";
-    halo = "skip";
-    packages = new Set();
-    for (const path of changed) {
-      const input = rustTier(path);
-      if (tiers.indexOf(input) > tiers.indexOf(tier)) tier = input;
-      if (input === "full" && packages !== "all") {
-        const affected = rustPackages(path);
-        if (affected === undefined) packages = "all";
-        else for (const name of affected) packages.add(name);
-      }
-      if (haloInput(path)) halo = "run";
-    }
+    selected = selectChecks(changed);
   } catch (error) {
-    tier = "full";
-    halo = "run";
-    packages = "all";
+    selected = selectChecks(null);
     console.error(
       `Unverified comparison; running all validation: ${error instanceof Error ? error.message : "unknown failure"}`,
     );
   }
-  const selection =
-    packages === "all" ? "all" : JSON.stringify([...packages].sort());
+  const { tier, halo, packages } = selected;
+  const selection = packages === "all" ? "all" : JSON.stringify(packages);
   console.log(`Rust validation tier: ${tier}\nHalo validation: ${halo}`);
   console.log(`Rust affected package roots: ${selection}`);
   if (!ci && tier === "full")
@@ -322,11 +342,13 @@ function main() {
     );
 }
 
-try {
-  main();
-} catch (error) {
-  console.error(
-    error instanceof Error ? error.message : "Input classification failed",
-  );
-  process.exitCode = 1;
+if (import.meta.main) {
+  try {
+    main();
+  } catch (error) {
+    console.error(
+      error instanceof Error ? error.message : "Input classification failed",
+    );
+    process.exitCode = 1;
+  }
 }

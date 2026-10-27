@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   statSync,
@@ -19,7 +20,10 @@ import { fileURLToPath } from "node:url";
 import { createDesignPreview } from "./preview-design";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const design = join(root, "design");
+const design = join(
+  realpathSync(process.env.NUCLEUS_DESIGN_CANDIDATE ?? root),
+  "design",
+);
 const script = join(root, "tools/preview-design.ts");
 const url = "http://127.0.0.1:4174/halo-home.html";
 const servers = new Set<Server>();
@@ -203,7 +207,7 @@ function snapshot() {
 
 test("every current design file retains its bytes and browser MIME", async () => {
   const before = snapshot();
-  const { port } = await listen();
+  const { port } = await listen(createDesignPreview(design));
   expect(before.size).toBeGreaterThan(0);
   for (const [path, bytes] of before) {
     const response = await get(port, `/${path}`);
