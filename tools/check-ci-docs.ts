@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import * as prettier from "prettier";
@@ -41,6 +41,23 @@ export async function checkDocs(
     throw new Error(
       "Docs checks must start in the frozen policy with a separate candidate",
     );
+  // Globs do not descend into symlinked directories, even when inputs match.
+  const inspect = (directory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const location = path.join(directory, entry.name);
+      if (entry.isSymbolicLink())
+        throw new Error(
+          "Docs input must be a regular file inside the candidate",
+        );
+      if (entry.isDirectory()) inspect(location);
+    }
+  };
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (!["docs", "design"].includes(entry.name)) continue;
+    if (entry.isSymbolicLink())
+      throw new Error("Docs input must be a regular file inside the candidate");
+    if (entry.isDirectory()) inspect(path.join(root, entry.name));
+  }
   const inputs = files(root, markdown);
   for (const file of ["README.md", "AGENTS.md", "halo/README.md"])
     if (!inputs.includes(path.join(root, file)))

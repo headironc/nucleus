@@ -16,7 +16,7 @@ Docs 的完整义务是格式、Markdown 结构、离线链接和设计预览传
 
 正常检出先准备根依赖，再用 Node 26.8.1 和 Bun 1.4.2 运行 `bun run prepare:ci`，随后运行 `bun run check:tools`。准备入口使用 designs 原样生成的 [`bootstrap.mjs`](../../ci/bootstrap.mjs)，按 [`shared.lock.json`](../../ci/shared.lock.json) 验证同仓库携带的原生分发包。固定源码为 `84a97f6`，包摘要为 `cfb02f82afeeaf2324b7618f7094f194d3ef7c2826525a6985919646bb680289`。缺失、换包、错版本和已有目标目录使准备失败；失败时保留原目录，不自动覆盖。源码采用与平台受信来源指定分别进行，分发包及锁本身不授予激活权限。
 
-[`ci/docs-acceptance.mjs`](../../ci/docs-acceptance.mjs) 在 S 的一次性容器内运行真实四项检查，并验证漏项、混合业务改动、真实断链和伪造报告被拒绝。脚本先检查容器边界，再核原签名 P 对象与源码树，并展开同一固定 S 包。只有候选 H 和双父 I 使用测试提交；结果保留本地来源，不建立 hosted 身份。验收只读挂载 `/snapshot/policy` 及对应的 `/snapshot/policy-identity.json`、`/snapshot/policy-commit`，另挂载 `/policy-deps`、`/shared-deps` 和 `/host-tools`。脚本将原报告写入独立 `/evidence`，不改宿主源码或进程身份。
+[`ci/docs-acceptance.mjs`](../../ci/docs-acceptance.mjs) 在 S 的一次性容器内运行真实四项检查，并验证漏项、混合业务改动、真实断链和伪造报告被拒绝。脚本先检查容器边界，再核挂载的 P 提交对象摘要及源码树与输入身份一致，并展开同一固定 S 包。脚本不验证提交签名；交付方在准备挂载原件前单独验证签名。只有候选 H 和双父 I 使用测试提交；结果保留本地来源，不建立 hosted 身份。验收只读挂载 `/snapshot/policy` 及对应的 `/snapshot/policy-identity.json`、`/snapshot/policy-commit`，另挂载 `/policy-deps`、`/shared-deps` 和 `/host-tools`。脚本将原报告写入独立 `/evidence`，不改宿主源码或进程身份。
 
 首片真实交付还要求 P/S 组合可读、固定入口实际执行、原 artifact 来源验证，以及取消和上传未知结果恢复。本地业务回归不替代这些验收。源码指定、分发、权限及 CI 启用保持各自边界；本片不复制共同控制器，不恢复旧门禁，也不接入批准、合并、Rust/Halo runner、stack 或晋级。
 

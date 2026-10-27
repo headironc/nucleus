@@ -800,7 +800,26 @@ test("retired tool validation prepares pinned runtimes and retains runnable regr
   const regressions = steps.filter((step) => step.run?.startsWith("bun test "));
   const files = regressions.flatMap((step) => step.run!.trim().split(/\s+/).slice(2));
   // The immutable workflow snapshot cannot acquire tests added after retirement.
-  expect(files.length).toBeGreaterThan(0);
+  expect(files).toEqual([
+    "tools/check-dependencies.test.ts",
+    "tools/review-gate.test.ts",
+    "tools/review-queue.test.ts",
+    "tools/review-json.test.ts",
+    "tools/release-candidate.test.ts",
+    "tools/main-promotion.test.ts",
+    "tools/dev-admission.test.ts",
+    "tools/merge-credentials.test.ts",
+    "tools/merge-operation.test.ts",
+    "tools/check-inputs.test.ts",
+    "tools/check-packages.test.ts",
+    "tools/rust-workflow.test.ts",
+    "tools/cache.test.ts",
+    "tools/check-bun.test.ts",
+    "tools/halo-ci-image.test.ts",
+    "tools/check-halo-test.test.ts",
+    "tools/halo-local.test.ts",
+    "tools/halo-browser-smoke.test.ts",
+  ]);
   expect(new Set(files).size).toBe(files.length);
   for (const file of files) {
     expect(file).toMatch(/^tools\/[^/]+\.test\.ts$/);

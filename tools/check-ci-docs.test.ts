@@ -6,6 +6,7 @@ import {
   rmSync,
   writeFileSync,
   existsSync,
+  symlinkSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -117,6 +118,27 @@ test("missing mandatory document inputs fail instead of reducing scope", async (
   await expect(checkDocs("format", fixture.root)).rejects.toThrow(
     "Missing required Docs input: halo/README.md",
   );
+});
+
+test("Docs scans reject symlinked directories instead of silently omitting inputs", async () => {
+  for (const file of [
+    "docs/hidden.md",
+    "docs/nested",
+    "design/hidden.html",
+    "design/assets",
+    "docs",
+  ]) {
+    const fixture = candidate();
+    const target = path.join(fixture.root, "outside");
+    mkdirSync(target);
+    writeFileSync(path.join(target, "invalid.md"), "#    Unformatted\n");
+    rmSync(path.join(fixture.root, file), { recursive: true, force: true });
+    symlinkSync(target, path.join(fixture.root, file));
+    for (const mode of ["format", "markdown", "links"])
+      await expect(checkDocs(mode, fixture.root)).rejects.toThrow(
+        "Docs input must be a regular file inside the candidate",
+      );
+  }
 });
 
 test("the real offline link checker detects a broken candidate link", async () => {
