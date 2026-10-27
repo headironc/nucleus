@@ -143,21 +143,21 @@ bun tools/halo-local.ts
 
 默认模式在固定环境中依次核对镜像工具、以 `bun install --frozen-lockfile --ignore-scripts` 安装 Halo 依赖并执行浏览器冒烟：分别启动默认 headless shell 与带 `channel: "chromium"`、沿用原生消费者 `ignoreDefaultArgs: ["--disable-back-forward-cache"]` 的完整 Chromium，各自打开页面、导航到无副作用的内联页面、核对内容并关闭。冒烟通过后才运行现有类型检查、正式构建和 `HALO_NGINX=/usr/sbin/nginx bun tools/check-halo-test.ts browser`。`--prepare` 只完成镜像核对、依赖安装和同样的双浏览器冒烟，用于快速验证环境，不宣称完整验收；`--native` 准备后只运行 `tests/identity.spec.ts` 的 `native history and reload` 用例。
 
-容器以当前宿主 UID/GID 运行，使用 `--init --ipc=host`、2 个 CPU，不启用特权或额外能力，不发布端口，也不挂载凭据或 Docker socket。仓库挂载为 `/workspace`；容器目标目录、根与 Halo 依赖、Cargo 与 Bun 缓存位于 `target/halo-local/`。每轮使用独立的 XDG 和截图目录，复用缓存并保留此前结果。入口保留镜像账号记录，并为缺失的宿主 UID/GID 添加本轮映射。映射文件只读挂载到该容器，保证 PostgreSQL 能解析实际运行用户。容器不继承宿主的浏览器路径、库路径、字体或 XDG 配置。信号只转发一次，等待原有清理并回读实际容器状态。客户端提前退出时，入口取消仍在运行的原容器并等待结束；无法核实终止时报告准确容器名并失败。CI 仍直接使用镜像内的 `bun tools/halo-ci-image.ts verify`、底层构建和浏览器命令；容器入口不替代 CI。
+容器以当前宿主 UID/GID 运行，使用 `--init --ipc=host`、2 个 CPU，不启用特权或额外能力，不发布端口，也不挂载凭据或 Docker socket。仓库挂载为 `/workspace`；容器目标目录、根与 Halo 依赖、Cargo 与 Bun 缓存位于 `target/halo-local/`。每轮使用独立的 XDG 和截图目录，复用缓存并保留此前结果。入口保留镜像账号记录，并为缺失的宿主 UID/GID 添加本轮映射。映射文件只读挂载到该容器，保证 PostgreSQL 能解析实际运行用户。容器不继承宿主的浏览器路径、库路径、字体或 XDG 配置。信号只转发一次，等待原有清理并回读实际容器状态。客户端提前退出时，入口取消仍在运行的原容器并等待结束；无法核实终止时报告准确容器名并失败。旧 CI 曾直接调用镜像内的验证和浏览器命令；当前自动入口已停用，本地容器入口继续承担本机完整验收。
 
-底层 CI 入口保持可用：在已具备镜像工具、Halo 依赖和构建产物的环境中，可仍在仓库根目录运行 `HALO_NGINX=/usr/sbin/nginx bun tools/check-halo-test.ts browser`；CI 在固定镜像内安装依赖并构建后调用该入口。宿主不再提供 `playwright install` 或系统 Nginx 的准备步骤。
+底层本地验收命令保持可用：在已具备镜像工具、Halo 依赖和构建产物的环境中，可仍在仓库根目录运行 `HALO_NGINX=/usr/sbin/nginx bun tools/check-halo-test.ts browser`。旧 CI 的对应调用已退役。宿主不再提供 `playwright install` 或系统 Nginx 的准备步骤。
 
 直接使用底层命令并需要独立保存浏览器二进制时，安装和测试均设置同一个 `PLAYWRIGHT_BROWSERS_PATH`。测试创建临时数据库、证书、Node 监听、独立 HTTPS 头像入口和 Nginx 配置，结束时清理进程及临时目录。头像入口把浏览器的原生图片 GET 原样转发给真实后端的签名图片路由，只记录路径摘要、请求头存在布尔值、状态、响应头和字节摘要，不记录完整签名链接、Cookie 值或图片内容。截图位于 `halo/test-results/`。
 
 ### 失败与中断证据
 
-浏览器验收入口把持久证据写到仓库根目录的 `target/halo-browser-evidence/`，该目录已被忽略且不进入发布物；CI 使用其中按运行和尝试标识命名的子目录，上传范围不会包含旧运行。每次运行在 `current.json` 绑定唯一 `runId`，记录位于 `runs/<runId>/`：`reporter.jsonl` 在选择完成时写入完整测试清单，并逐条同步写入开始、结束、状态、时长、期望状态、重试和经脱敏的原始断言消息与调用栈；`runner.jsonl` 记录执行边界、取消原因、Playwright 实际退出码或信号、报告完整性核对和逐项清理结果；`backend.jsonl` 由 Rust 夹具记录它观察到的浏览器子进程退出和后端排空边界；`harness.json` 记录外层 Cargo 退出、准确用例名的完成证明以及可观察到的 runner 与 backend 事实；`summary.json` 是供人工阅读的最终摘要。证据按事件同步写入，因此在后续测试阻塞、超时或进程被强制终止前，先前的失败已经可读。
+浏览器验收入口把持久证据写到仓库根目录的 `target/halo-browser-evidence/`，该目录已被忽略且不进入发布物。旧 CI 曾按运行和尝试标识选择子目录；当前入口只保存本地证据，不自动上传。每次运行在 `current.json` 绑定唯一 `runId`，记录位于 `runs/<runId>/`：`reporter.jsonl` 在选择完成时写入完整测试清单，并逐条同步写入开始、结束、状态、时长、期望状态、重试和经脱敏的原始断言消息与调用栈；`runner.jsonl` 记录执行边界、取消原因、Playwright 实际退出码或信号、报告完整性核对和逐项清理结果；`backend.jsonl` 由 Rust 夹具记录它观察到的浏览器子进程退出和后端排空边界；`harness.json` 记录外层 Cargo 退出、准确用例名的完成证明以及可观察到的 runner 与 backend 事实；`summary.json` 是供人工阅读的最终摘要。证据按事件同步写入，因此在后续测试阻塞、超时或进程被强制终止前，先前的失败已经可读。
 
 缺少最终记录表示结果未知，不等于成功。摘要区分实际结束、已开始但未结束、从未开始，以及开始状态未知。报告未完整结束时，缺少开始记录只能记为 `start_unknown`，因为 worker 的开始消息可能还在传输。报告完整结束后，才能把未观察到开始的用例记为 `never_started`。未分配 worker 的占位事件不构成实际开始。未结束的用例不记为通过，也不补写时长或状态。
 
 清理结果按实际观察到的进程退出和资源关闭判断。Cargo、管道关闭、runner 最终记录和实际进程终止分别观察。Cargo 先退出时，入口仍等待已登记的 runner 完成有界清理。返回前还核对 runner 与分离进程组均已终止；无法证明时记为未知并失败。执行预算到期及 `SIGINT`、`SIGTERM` 分别只请求一次取消。清理先向 Playwright 主进程发送 `SIGINT`，让它在原有宽限内排空 worker 事件并结束报告；宽限结束后仍按原边界终止进程组。全部测试及失败后的继续执行不变。证据描述观测结果，失败的业务原因由所属用例进一步核对。
 
-上传范围仅限上述证据目录，不包含 `halo/test-results/` 中的截图、trace、HAR 或附件正文。断言消息与调用栈保留操作符、值和 `文件:行:列`，但会遮蔽 Authorization、Cookie、token、密码、API key、Session 标识、查询密钥（含百分号编码名称）、完整签名头像链接及其查询/片段、私钥和固定虚构手机号；ANSI 颜色被移除，过长内容在脱敏后显式截断。脱敏和截断可能降低诊断细节，但不会把原断言替换成泛化的“失败”。Halo 工作流仅在浏览器验收实际尝试后以 `always()` 上传该目录，使用固定的 `actions/upload-artifact@v7.0.2`，产物名包含运行与尝试标识；浏览器验收已尝试但没有可上传证据时，`if-no-files-found: error` 使任务失败而不是转绿。证据写入失败会使验收失败。本地独立运行 `bun run test:browser` 也写入同一默认目录，可用 `HALO_TEST_EVIDENCE` 指向其他位置。
+旧工作流的上传范围仅限上述证据目录，不包含 `halo/test-results/` 中的截图、trace、HAR 或附件正文。断言消息与调用栈保留操作符、值和 `文件:行:列`，但会遮蔽 Authorization、Cookie、token、密码、API key、Session 标识、查询密钥（含百分号编码名称）、完整签名头像链接及其查询/片段、私钥和固定虚构手机号；ANSI 颜色被移除，过长内容在脱敏后显式截断。脱敏和截断可能降低诊断细节，但不会把原断言替换成泛化的“失败”。旧 Halo 工作流仅在浏览器验收实际尝试后以 `always()` 上传该目录，使用固定的 `actions/upload-artifact@v7.0.2`，产物名包含运行与尝试标识；浏览器验收已尝试但没有可上传证据时，`if-no-files-found: error` 使任务失败而不是转绿。上述自动上传已停用，本地证据写入失败仍使验收失败。本地独立运行 `bun run test:browser` 也写入同一默认目录，可用 `HALO_TEST_EVIDENCE` 指向其他位置。
 
 Cookie 对象断言可能通过通用 `value` 字段携带秘密，因此该字段也统一遮蔽。标量断言可能只输出 Cookie 值，不带请求头名称；脱敏也按网站 Session Cookie 的名称识别赋值并遮蔽凭据。清理先停止媒体请求的生产者，再取得并排空最新写入队列；清理期间新增的证据写入失败仍使验收失败。
 
