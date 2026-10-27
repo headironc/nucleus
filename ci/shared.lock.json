@@ -1,7 +1,7 @@
 {
-  "commit": "60af31eeabca3e39fc3024a57811e2ae28d3972b",
-  "tree": "8725a4669ced428afa0af37b4a050a4a4f24950a",
+  "commit": "4354779e28d769f0e276bfc3aeae15bcd1dcab3e",
+  "tree": "584f11c7dc17a1fc83fa3ccb8c8eb70d7cebc34f",
   "lockPath": "bun.lock",
   "lock": "1e397faac185cb83f2626699e0d329367b1db914df4f8d9c76b4e2ec65794d91",
-  "distribution": "32f457db64a2d39bc9935e94f28054c2eb5c74c54166ad1fd508c56c6b40f744"
+  "distribution": "eed5e7cada459830cbd7d00608db1fe53abd3eb81c84e285fa420377194ffa56"
 }
