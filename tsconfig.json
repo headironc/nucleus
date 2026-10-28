@@ -9,5 +9,5 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
-  "include": ["tools/**/*.ts", "ci/**/*.ts", "fixture/postgresql.ts"]
+  "include": ["tools/**/*.ts", "fixture/postgresql.ts"]
 }

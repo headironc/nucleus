@@ -21,7 +21,6 @@
 /files
 /logs
 /node_modules
-/.shared/
 /halo/node_modules
 /halo/build
 /halo/.react-router

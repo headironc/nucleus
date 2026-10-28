@@ -2,25 +2,11 @@
 
 本文拥有工具选型及当前变更的检查方法、范围与证据要求。执行时机与责任见[开发循环](delivery.md#开发循环)。跨能力故障要求由[架构验收](../architecture.md#隔离验收)拥有，各用例补齐所属输入、预期后果与恢复验证。
 
-## Docs 共享执行
+## CI 重建
 
-共同执行器及[固定跨库合同](https://github.com/headironc/designs/blob/3313469d3862490df378d745f8d6b609cfde5289/ci-architecture.md#三个实际消费者的调用合同)由 designs 维护，agents、Nucleus 和 designs 各自维护业务策略。本库拥有业务选检、Docs 配方和覆盖核验，当前本地代码不是已启用 CI。
+Nucleus 独立维护原生 CI、业务选检、依赖环境及结果解释。旧共享执行器、固定 Docs 配方、报告认证和自动准入已移除，新 CI 从零建立。正常检出直接安装本库锁定依赖，不再展开 `.shared/` 或运行 `prepare:ci`。
 
-本片只覆盖冻结分类器判定 Rust 为 `skip` 且 Halo 为 `skip` 的候选。比较未知时选择完整检查；需要 Rust/Halo 的输入返回未覆盖，不产生整体 CI 或准入成功。合法选择来自共同层核实的 B 到 I 完整差异，包含删除及改名两端，不能读取候选自报路径。
-
-Docs 的完整义务是格式、Markdown 结构、离线链接和设计预览传输回归。配方从冻结策略目录启动，以显式路径读取候选全部文档及实际设计文件。格式与 Markdown 检查使用冻结配置和锁定库，不执行候选的工具配置。依赖准备、源码身份、隔离执行、报告来源、取消与进程结清由 designs 的共同实现负责。
-
-业务 verifier 从独立输入重建完整配方，核四项检查的真实命令、环境和成功终态。漏项、替换、重复、失败、取消、超时或未结清不能形成 Docs 成功。核验只消费共同层已认证的运行观察，不自行将候选报告当作可信事实。
-
-实际入口是 [`ci/docs.ts`](../../ci/docs.ts)。P 从认证的执行目录重建命令，使用 Bun 1.4.2 和 lychee 0.24.2，每项时限为 180 秒。远端核验先核本地 P 源码身份，再使用认证报告中的远端路径；读取者的本机目录不替代原执行目录。共享源码固定展开到物理 `.shared/`，由独立的 Git 对象、锁文件和分发摘要绑定，目录保持忽略且未跟踪。P 与 S 分别准备自己的依赖，候选文档不安装依赖，也不接收可写输出目录。
-
-正常检出先准备根依赖，再用 Node 26.8.1 和 Bun 1.4.2 运行 `bun run prepare:ci`，随后运行 `bun run check:tools`。准备入口使用 designs 原样生成的 [`bootstrap.mjs`](../../ci/bootstrap.mjs)，按 [`shared.lock.json`](../../ci/shared.lock.json) 验证同仓库携带的原生分发包。固定源码为 `3313469`，包摘要为 `429c65e20ee6c6e9de4db68c2675ecaadb0352fdcd954e3a84cbf8e344eef646`。缺失、换包、错版本和已有目标目录使准备失败；失败时保留原目录，不自动覆盖。源码采用与平台受信来源指定分别进行，分发包及锁本身不授予激活权限。
-
-[`ci/docs-acceptance.mjs`](../../ci/docs-acceptance.mjs) 在 S 的一次性容器内运行真实四项检查，并验证漏项、混合业务改动、真实断链和伪造报告被拒绝。脚本先检查容器边界，再核挂载的 P 提交对象摘要及源码树与输入身份一致，并展开同一固定 S 包。脚本不验证提交签名；交付方在准备挂载原件前单独验证签名。只有候选 H 和双父 I 使用测试提交；结果保留本地来源，不建立 hosted 身份。验收只读挂载 `/snapshot/policy` 及对应的 `/snapshot/policy-identity.json`、`/snapshot/policy-commit`，另挂载 `/policy-deps`、`/shared-deps` 和 `/host-tools`。脚本将原报告写入独立 `/evidence`，不改宿主源码或进程身份。
-
-首片真实交付还要求 P/S 组合可读、固定入口实际执行、原 artifact 来源验证，以及取消和上传未知结果恢复。本地业务回归不替代这些验收。源码指定、分发、权限及 CI 启用保持各自边界；本片不复制共同控制器，不恢复旧门禁，也不接入批准、合并、Rust/Halo runner、stack 或晋级。
-
-验收预检、增量证据复用及覆盖保留采用 [agents 的检查规则（657629e）](https://github.com/silence-force/agents/blob/657629ec7489b4c6817935fc5d078b639a28bee9/delivery/policy/review.md#checks)。本项目的检查范围、命令与证据入口仍由本文及其引用维护。
+本地文档检查、类型检查、设计预览和业务回归继续由本库命令维护。新 workflow 的具体范围随真实消费者单独交付；本地通过不表示托管 CI 已启用。
 
 ## 检查范围
 
@@ -51,11 +37,9 @@ Docs 的完整义务是格式、Markdown 结构、离线链接和设计预览传
 
 Rust 分类豁免上表列出的 Markdown、三份根配置、`halo/` 和 Halo 工作流。`design/` 还豁免 HTML、CSS、只供页面稿预览的 `.js` 脚本、TXT 文本及 PNG/JPG/JPEG/WebP/AVIF/GIF/SVG 图片，后缀按小写匹配。其他脚本格式、清单、客户端目录或其他未知路径默认执行完整 Rust 检查。混合改动取四档中最高的一档：`skip`、`tools`、`checks`、`full`。Docs 工作流独立运行上述文档检查与预览传输回归。
 
-现有三份审查工作流是 [`review-gate.yml`](../../tools/fixtures/retired-workflows/review-gate.yml)、[`review-context.yml`](../../tools/fixtures/retired-workflows/review-context.yml) 和 [`review-activity.yml`](../../tools/fixtures/retired-workflows/review-activity.yml)。这些输入由工作流、审查关卡、队列及证据 JSON 回归消费。新增工作流仍按未知路径执行完整检查。
-
 选检按实际消费者的完整输入决定。共享[输入分类器](../../tools/check-inputs.ts)供 Rust 和 Halo 使用，未知路径保守运行。新消费者开始读取豁免材料时，同片更新输入归属、分类与回归。缓存只加速检查，不代替检查。输入未变时复用有效结果，输入变化后补做受影响检查。分类结果只选择检查，不证明新的工作树已通过验收。
 
-分类包含完整候选的添加、删除及改名两端。[GitHub 的 PR 事件](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)以合成提交作为 `GITHUB_SHA`。检出提交必须与它准确匹配。PR 候选恰有两个可读取的父提交，第二父准确匹配事件的 PR 头提交。选检读取第一父到候选的完整差异。目标前进后，事件中旧的 `pull_request.base.sha` 不参与选检绑定。CI 选检的第一父不替代[审查基线](review-gate.md#dev-队列检查)。队列比较仍绑定 `merge_group` 的 `base_sha` 与 `head_sha`。队列检出提交同时匹配事件头提交与 `GITHUB_SHA`，且唯一父提交是事件基线。队列选检读取该基线到候选的完整差异。未知事件、未知提交形状、缺失历史、Git 失败或无法解码的路径均运行完整检查，并报告原因。参数或输出接口错误使任务失败，不得转成成功跳过。队列启用边界见[交付契约](review-gate.md#dev-队列检查)。
+分类包含完整候选的添加、删除及改名两端。[GitHub 的 PR 事件](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)以合成提交作为 `GITHUB_SHA`。检出提交必须与它准确匹配。PR 候选恰有两个可读取的父提交，第二父准确匹配事件的 PR 头提交。选检读取第一父到候选的完整差异。目标前进后，事件中旧的 `pull_request.base.sha` 不参与选检绑定。CI 选检与独立审查的实际输入分别确认。队列比较仍绑定 `merge_group` 的 `base_sha` 与 `head_sha`。队列检出提交同时匹配事件头提交与 `GITHUB_SHA`，且唯一父提交是事件基线。队列选检读取该基线到候选的完整差异。未知事件、未知提交形状、缺失历史、Git 失败或无法解码的路径均运行完整检查，并报告原因。参数或输出接口错误使任务失败，不得转成成功跳过。队列启用边界见[交付契约](review-gate.md#dev-队列检查)。
 
 本地在仓库根目录运行 `bun tools/check-inputs.ts --base origin/dev`。分类器解析显式基线与 `HEAD`，以两者唯一的最佳共同祖先比较当前候选。路径取共同祖先到暂存区、暂存区到工作树的并集，再纳入未忽略的未跟踪文件。因此已提交、已暂存和未暂存改动均在范围内，两层改动不会互相抵消。被跟踪的忽略文件仍在范围内。分类器隔离调用者的 Git 环境覆盖，并核对脚本、工作目录与仓库根一致。分类器不会 fetch、安装或修改源码和配置。基线或历史不可用、存在多个最佳共同祖先时保守运行。报告给出 Rust 档位、直接受影响的包及 Halo 的运行或跳过决定。Rust 完整检查还给出包含消费者的 package 检查命令；其他检查使用所属文档的命令。
 
@@ -114,8 +98,6 @@ Halo 仅豁免上文的根文档、`docs/**/*.md`、两份文档格式配置，�
 | 受影响能力                        | 回归命令                                                                                                                                                               |
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Cargo 依赖边界                    | `bun test tools/check-dependencies.test.ts`                                                                                                                            |
-| 审查关卡、队列与证据 JSON         | `bun test tools/review-gate.test.ts tools/review-queue.test.ts tools/review-json.test.ts`                                                                              |
-| 固定发布候选、可信合并与恢复      | `bun test tools/release-candidate.test.ts tools/main-promotion.test.ts tools/dev-admission.test.ts tools/merge-credentials.test.ts tools/merge-operation.test.ts`      |
 | 输入分类、package、CI、缓存或 Bun | `bun test tools/check-inputs.test.ts tools/check-packages.test.ts tools/rust-workflow.test.ts tools/cache.test.ts tools/check-bun.test.ts tools/halo-ci-image.test.ts` |
 | Halo 指定验收入口                 | `bun test tools/check-halo-test.test.ts tools/check-inputs.test.ts tools/cache.test.ts`                                                                                |
 | Halo 本地运行时准备               | `bun test tools/halo-local.test.ts tools/halo-browser-smoke.test.ts tools/halo-ci-image.test.ts`                                                                       |
