@@ -402,7 +402,7 @@ mod tests {
             String::from_utf8(output.stdout)
                 .expect("query result")
                 .trim(),
-            "180004\nt"
+            "180005\nt"
         );
         assert!(
             execute(&connection, "CREATE DATABASE fixture_version")
