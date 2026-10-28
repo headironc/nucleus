@@ -18,6 +18,18 @@ Nucleus 独立维护原生 CI、业务选检、依赖环境及结果解释。旧
 
 Docs 成功只证明上述文档检查，不代表 Rust、维护工具、Halo、完整 CI、提升或部署验收。当前切片不配置分支保护、队列、自动批准或合并；需要消费状态时，由平台所有者从真实 PR 运行回读检查名称、提供方及候选关联。
 
+### 原生维护工具
+
+[Maintenance tools 工作流](../../.github/workflows/maintenance-tools.yml)对面向 `dev` 或 `main` 的每个原生 PR 合成候选运行唯一的 `tools` 作业，显示名为 `Nucleus Maintenance tools`。打开、重开、提交更新和编辑事件均执行，包括草稿、非工具改动和目标分支变更；不使用路径过滤或条件跳过。日志核对实际检出提交等于事件的 `GITHUB_SHA`。
+
+作业使用 GitHub 托管的 Ubuntu 24.04、根目录固定的 Bun、Node 24，以及 `rust-toolchain.toml` 指定的 Rust 和 Clippy。完整工具回归实际编译离线 Rust 夹具，并运行 Docs 工作流的真实命令回归，因此还安装经固定摘要核对的 lychee 0.24.2。Action 固定完整源提交，权限仅为 `contents: read`，检出不保留凭据。根依赖按锁文件安装，禁用安装脚本；不恢复缓存。
+
+作业依次直接运行 `bun run check:tools`、`bun test tools/*.test.ts` 和 `bun tools/check-dependencies.ts`。通配符消费全部现有及新增工具测试；依赖边界入口读取当前工作区的实际 Cargo 元数据和生产依赖树。回归中的小型 Rust 夹具不代替产品 package 验收，工具任务也不需要真实数据库、供应商或浏览器服务。
+
+准备、类型检查、测试或依赖边界检查失败均保留失败，不继续生成成功结果。同一 PR 的新运行取消旧运行；失败、取消、超时、缺失及其他候选的成功均不能证明当前候选通过。修复源码或环境后以当前候选重新运行，保留原失败与新结果的关联。真实 PR 验收分别覆盖正例、类型错误、工具断言失败及生产依赖越界，本地回归不代替托管证据。
+
+该状态只证明维护工具验证，不代表 Rust 产品矩阵、Halo、完整 CI、main 提升或部署成功。本地仍按当前分类器执行完整选检或核对相关输入后复用有效证据；新增工作流和测试不会自动获得未知路径豁免。平台所有者负责从真实 PR 回读状态、提供方和候选关联，本工作流不配置保护、批准或合并。
+
 ## 检查范围
 
 旧 GitHub Actions CI、审查关卡、镜像发布及 dev/main 准入入口已停用，两个分支均已移除旧保护。签名规则继续约束其他分支。本地检查、业务验收及当前候选审查继续执行，历史绿灯不提供新候选的验收结论。Dependabot 与独立托管审查不随这组工作流删除。
@@ -110,6 +122,7 @@ Halo 仅豁免上文的根文档、`docs/**/*.md`、两份文档格式配置，�
 | Cargo 依赖边界                    | `bun test tools/check-dependencies.test.ts`                                                                                                                            |
 | 输入分类、package、CI、缓存或 Bun | `bun test tools/check-inputs.test.ts tools/check-packages.test.ts tools/rust-workflow.test.ts tools/cache.test.ts tools/check-bun.test.ts tools/halo-ci-image.test.ts` |
 | 原生 Docs 工作流                  | `bun test tools/docs-workflow.test.ts tools/check-bun.test.ts tools/preview-design.test.ts`                                                                            |
+| 原生维护工具工作流                | `bun test tools/maintenance-tools-workflow.test.ts`                                                                                                                    |
 | Halo 指定验收入口                 | `bun test tools/check-halo-test.test.ts tools/check-inputs.test.ts tools/cache.test.ts`                                                                                |
 | Halo 本地运行时准备               | `bun test tools/halo-local.test.ts tools/halo-browser-smoke.test.ts tools/halo-ci-image.test.ts`                                                                       |
 
