@@ -45,7 +45,7 @@ zeroize = { version = "1.9.0", default-features = false, features = ["alloc", "s
 [dev-dependencies]
 png = { version = "0.18.1", default-features = false }
 fixture = { path = "../fixture" }
-syn = { version = "2.0.119", default-features = false, features = ["full", "parsing"] }
+syn = { version = "3.0.6", default-features = false, features = ["full", "parsing"] }
 tempfile = "3.25.0"
 tracing-test = { version = "0.2.6", default-features = false }
 tokio = { version = "1.47.1", default-features = false, features = ["io-util", "macros", "net", "process", "rt-multi-thread", "time"] }
