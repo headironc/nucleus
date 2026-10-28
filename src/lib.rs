@@ -22,12 +22,3 @@ pub mod settings;
 pub mod source;
 pub mod suppliers;
 mod workforce;
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn native_clippy_failure_fixture() {
-        let enabled = std::hint::black_box(true);
-        let _observed = enabled == true;
-    }
-}
