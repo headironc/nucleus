@@ -337,7 +337,7 @@ fn correct_commits_and_replays_through_the_actual_binary() {
         assert_eq!(facts.get::<_, String>(3), "system");
         for column in [4, 5, 6] { assert!(facts.get::<_, bool>(column)); }
         assert_eq!(facts.get::<_, i64>(7), sequence, "name-only correction preserves account projection");
-        assert_eq!(facts.get::<_, i64>(8), 1);
+        assert_eq!(facts.get::<_, i64>(8), 2);
         assert_eq!(facts.get::<_, i64>(9), 1);
         let committed = snapshot(client).await;
         assert_ne!(committed, before);
