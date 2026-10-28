@@ -8,6 +8,16 @@ Nucleus 独立维护原生 CI、业务选检、依赖环境及结果解释。旧
 
 本地文档检查、类型检查、设计预览和业务回归继续由本库命令维护。新 workflow 的具体范围随真实消费者单独交付；本地通过不表示托管 CI 已启用。
 
+### 原生 Docs
+
+[Docs 工作流](../../.github/workflows/docs.yml)在面向 `dev` 或 `main` 的原生 `pull_request` 合成候选上运行唯一的 `docs` 作业，显示名为 `Nucleus Docs`。打开、重开、更新提交和编辑 PR 均重新执行；编辑事件包含更换目标分支。非文档改动和草稿 PR 也运行，不使用路径或作业条件跳过。存在合并冲突而没有合成候选时，不形成 Docs 成功证据。
+
+该作业使用 GitHub 托管的 Ubuntu 24.04、根目录固定的 Bun、Node 24 和 lychee 0.24.2。Action 固定到完整源提交，lychee 发布包安装前核对固定摘要。依赖按锁文件安装且禁用安装脚本；检出不保留凭据，权限仅为 `contents: read`。日志记录仓库、PR、运行及尝试编号，并核对实际检出提交等于事件的 `GITHUB_SHA`。
+
+作业直接运行[文档维护](../README.md#文档维护)的预览传输回归、格式、Markdown 和离线链接四项义务。任一准备或检查失败均失败，不忽略错误；超时和取消保留原生终态。同一 PR 的新运行取消旧运行，其他 PR 相互独立。失败、取消、超时、缺失运行及旧候选成功均不能作为当前候选成功。实际 PR 验收还须覆盖成功、断链、预览失败、工具不匹配、取消、非文档改动和候选或目标变化；本地回归不代替托管运行。
+
+Docs 成功只证明上述文档检查，不代表 Rust、维护工具、Halo、完整 CI、提升或部署验收。当前切片不配置分支保护、队列、自动批准或合并；需要消费状态时，由平台所有者从真实 PR 运行回读检查名称、提供方及候选关联。
+
 ## 检查范围
 
 旧 GitHub Actions CI、审查关卡、镜像发布及 dev/main 准入入口已停用，两个分支均已移除旧保护。签名规则继续约束其他分支。本地检查、业务验收及当前候选审查继续执行，历史绿灯不提供新候选的验收结论。Dependabot 与独立托管审查不随这组工作流删除。
@@ -99,6 +109,7 @@ Halo 仅豁免上文的根文档、`docs/**/*.md`、两份文档格式配置，�
 | --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Cargo 依赖边界                    | `bun test tools/check-dependencies.test.ts`                                                                                                                            |
 | 输入分类、package、CI、缓存或 Bun | `bun test tools/check-inputs.test.ts tools/check-packages.test.ts tools/rust-workflow.test.ts tools/cache.test.ts tools/check-bun.test.ts tools/halo-ci-image.test.ts` |
+| 原生 Docs 工作流                  | `bun test tools/docs-workflow.test.ts tools/check-bun.test.ts tools/preview-design.test.ts`                                                                            |
 | Halo 指定验收入口                 | `bun test tools/check-halo-test.test.ts tools/check-inputs.test.ts tools/cache.test.ts`                                                                                |
 | Halo 本地运行时准备               | `bun test tools/halo-local.test.ts tools/halo-browser-smoke.test.ts tools/halo-ci-image.test.ts`                                                                       |
 
