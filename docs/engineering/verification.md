@@ -30,6 +30,20 @@ Docs 成功只证明上述文档检查，不代表 Rust、维护工具、Halo、
 
 该状态只证明维护工具验证，不代表 Rust 产品矩阵、Halo、完整 CI、main 提升或部署成功。本地仍按当前分类器执行完整选检或核对相关输入后复用有效证据；新增工作流和测试不会自动获得未知路径豁免。平台所有者负责从真实 PR 回读状态、提供方和候选关联，本工作流不配置保护、批准或合并。
 
+### 原生 Rust 检查
+
+[Rust checks 工作流](../../.github/workflows/rust-checks.yml)运行唯一的 `checks` 作业，显示名为 `Nucleus Rust checks`。它消费面向 `dev` 或 `main` 的原生 PR 合成候选。打开、重开、提交更新和编辑事件均运行。草稿和非 Rust 改动也运行，目标分支编辑不触发成功跳过。日志核对实际检出提交等于 `GITHUB_SHA`。
+
+作业使用 GitHub 托管的 Ubuntu 24.04。Action 固定完整源提交，权限仅为 `contents: read`，检出不保留凭据。Bun 从根版本文件安装并核对一致性。Rust 的版本、profile 和组件归 `rust-toolchain.toml` 拥有；格式工具独立使用 [Rust 规则](rust.md#workspace-validation)固定的 nightly。安装不改变默认工具链，日志记录实际版本。
+
+作业显式准备 `build-essential`、`pkg-config` 和 `zlib1g-dev`。fontsan/WOFF2 与 ring 编译随 crate 发布的 native 源码，libz-sys 消费 zlib。作业直接运行 `cargo +nightly-2026-09-06 fmt --all -- --check`，随后运行 `cargo clippy --workspace --all-targets --locked -- -D warnings`。不恢复缓存，也不准备数据库、网站或浏览器。
+
+任一准备或检查失败都保留失败。后续步骤的跳过不提供成功证据。同一 PR 的新运行取消旧运行，其他 PR 相互独立。失败、取消、超时、缺失运行和旧候选成功都不能证明当前候选通过。修复后在当前候选重跑，保留原失败关联。真实 PR 验收分别核对成功、格式拒绝、Clippy 拒绝和恢复；本地回归不代替托管结果。
+
+工具回归使用离线小型 Rust workspace，实际验证格式与 Clippy 的成功、拒绝和退出传播。维护工具作业消费这些回归，因此也显式安装相同 nightly。两处安装与检查命令共同核对 Rust 规则的固定日期，不另建配置所有者。
+
+该状态证明格式和 workspace Clippy。Clippy 编译 dev/test 目标，但不执行测试函数。它不代替独立 package 构建、测试、doctest/rustdoc 或 Halo 验收。本地仍按实际分类及输入证据执行或复用必要检查。平台所有者负责当前候选的状态、审查和交付；本工作流不恢复旧 aggregate、缓存控制器或自动准入。
+
 ## 检查范围
 
 旧 GitHub Actions CI、审查关卡、镜像发布及 dev/main 准入入口已停用，两个分支均已移除旧保护。签名规则继续约束其他分支。本地检查、业务验收及当前候选审查继续执行，历史绿灯不提供新候选的验收结论。Dependabot 与独立托管审查不随这组工作流删除。
@@ -123,6 +137,7 @@ Halo 仅豁免上文的根文档、`docs/**/*.md`、两份文档格式配置，�
 | 输入分类、package、CI、缓存或 Bun | `bun test tools/check-inputs.test.ts tools/check-packages.test.ts tools/rust-workflow.test.ts tools/cache.test.ts tools/check-bun.test.ts tools/halo-ci-image.test.ts` |
 | 原生 Docs 工作流                  | `bun test tools/docs-workflow.test.ts tools/check-bun.test.ts tools/preview-design.test.ts`                                                                            |
 | 原生维护工具工作流                | `bun test tools/maintenance-tools-workflow.test.ts`                                                                                                                    |
+| 原生 Rust 检查                    | `bun test tools/native-rust-checks-workflow.test.ts`                                                                                                                   |
 | Halo 指定验收入口                 | `bun test tools/check-halo-test.test.ts tools/check-inputs.test.ts tools/cache.test.ts`                                                                                |
 | Halo 本地运行时准备               | `bun test tools/halo-local.test.ts tools/halo-browser-smoke.test.ts tools/halo-ci-image.test.ts`                                                                       |
 
