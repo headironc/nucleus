@@ -524,8 +524,12 @@ mod tests {
                             assert!(
                                 method.sig.inputs.len() == 1
                                     && method.sig.receiver().is_some_and(|receiver| {
-                                        receiver.colon_token.is_none()
-                                            && receiver.mutability.is_none()
+                                        receiver.mutability.is_none()
+                                            && matches!(
+                                                &receiver.kind,
+                                                syn::ReceiverKind::Value
+                                                    | syn::ReceiverKind::Reference(_, _, None)
+                                            )
                                     })
                                     && reads_field,
                                 "receipt method {} must be a read-only field accessor or stay private",
@@ -664,6 +668,19 @@ mod tests {
             pub struct Receipt { value: u8 }
             impl Receipt {
                 pub fn value(self: &Self) -> u8 { self.value }
+            }
+            "#,
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "must be a read-only field accessor or stay private")]
+    fn receipt_guard_rejects_mutable_owned_receivers_even_for_direct_reads() {
+        assert_receipt_visibility(
+            r#"
+            pub struct Receipt { value: u8 }
+            impl Receipt {
+                pub fn value(mut self) -> u8 { self.value }
             }
             "#,
         );

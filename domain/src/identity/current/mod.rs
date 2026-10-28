@@ -577,9 +577,11 @@ mod tests {
                             continue;
                         }
                         let borrowed = method.sig.receiver().is_some_and(|receiver| {
-                            receiver.reference.is_some()
-                                && receiver.mutability.is_none()
-                                && receiver.colon_token.is_none()
+                            receiver.mutability.is_none()
+                                && matches!(
+                                    &receiver.kind,
+                                    syn::ReceiverKind::Reference(_, _, None)
+                                )
                         });
                         let field = match method.block.stmts.as_slice() {
                             [syn::Stmt::Expr(expression, None)] => match expression {
@@ -731,6 +733,7 @@ mod tests {
             "pub fn set(&mut self, value: u8) { self.value = value; }",
             "pub fn with(&self, value: u8) -> Self { Self { value } }",
             "pub fn value_mut(&mut self) -> &mut u8 { &mut self.value }",
+            "pub fn mutable(&mut self) -> u8 { self.value }",
             "pub fn typed(self: &Self) -> u8 { self.value }",
             "pub fn owned(self) -> u8 { self.value }",
             "pub fn fake(&self) -> u8 { 0 }",
