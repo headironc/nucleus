@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
+fixture = { path = "fixture" }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "macros", "matched-path", "query", "tokio"] }
 chrono = { version = "0.4.45", default-features = false, features = ["std", "serde"] }
 clap = { version = "4.6.7", default-features = false, features = ["derive", "std", "help", "usage"] }
