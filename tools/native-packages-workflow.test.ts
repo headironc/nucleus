@@ -1,4 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
+import { data, Evaluator, Lexer, Parser } from "@actions/expressions";
+import { truthy } from "@actions/expressions/result";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
@@ -24,6 +26,7 @@ type Step = {
   uses?: string;
   if?: string;
   with?: Record<string, unknown>;
+  env?: Record<string, string>;
   "continue-on-error"?: unknown;
 };
 type Job = {
@@ -177,6 +180,71 @@ test("only all selected successes or an explicit non-full plan can pass the stab
   expect(() =>
     packageResult({ ...skipped, POSTGRESQL_RESULT: "success" }),
   ).toThrow();
+});
+
+test("actual final steps reject cancellation before or after ordinary result validation", () => {
+  const steps = workflow.jobs.finalcheck!.steps;
+  const finish = steps.find(
+    (step) => step.name === "Require complete package results",
+  )!;
+  const reject = steps.find(
+    (step) => step.name === "Reject cancelled package workflow",
+  )!;
+  expect(steps.indexOf(reject)).toBeGreaterThan(steps.indexOf(finish));
+  function enabled(step: Step, cancelled: boolean) {
+    const fn = {
+      name: "cancelled",
+      minArgs: 0,
+      maxArgs: 0,
+      call: () => new data.BooleanData(cancelled),
+    };
+    const parsed = new Parser(
+      new Lexer(step.if!.slice(3, -2)).lex().tokens,
+      [],
+      [fn],
+    ).parse();
+    return truthy(
+      new Evaluator(
+        parsed,
+        new data.Dictionary(),
+        new Map([[fn.name, fn]]),
+      ).evaluate(),
+    );
+  }
+  const head = spawnSync("git", ["rev-parse", "HEAD"], {
+    cwd: root,
+    encoding: "utf8",
+  });
+  expect(head.status).toBe(0);
+  function execute(step: Step, extra: NodeJS.ProcessEnv = {}) {
+    return spawnSync(
+      "bash",
+      ["--noprofile", "--norc", "-eo", "pipefail", "-c", step.run!],
+      {
+        cwd: root,
+        encoding: "utf8",
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          ...success,
+          CANCELLED: finish.env!.CANCELLED,
+          GITHUB_SHA: head.stdout.trim(),
+          ...extra,
+        },
+      },
+    );
+  }
+  expect(enabled(finish, false)).toBe(true);
+  expect(enabled(reject, false)).toBe(false);
+  expect(execute(finish).status).toBe(0);
+  expect(execute(finish, { PLAN_RESULT: "failure" }).status).toBe(1);
+  // Cancellation can arrive after the normal result step; the last step still rejects it.
+  expect(enabled(finish, true)).toBe(false);
+  expect(enabled(reject, true)).toBe(true);
+  const cancelled = execute(reject);
+  expect(cancelled.error).toBeUndefined();
+  expect(cancelled.status).toBe(1);
+  expect(cancelled.stderr).toContain("Package workflow cancelled");
 });
 
 test("actual metadata discovery produces a complete plan and refuses unknown packages", () => {

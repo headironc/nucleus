@@ -186,8 +186,9 @@ jobs:
         with:
           bun-version-file: .tool-versions
       - name: Require complete package results
+        if: ${{ !cancelled() }}
         env:
-          CANCELLED: ${{ cancelled() }}
+          CANCELLED: "false"
           PLAN_RESULT: ${{ needs.plan.result }}
           POSTGRESQL_RESULT: ${{ needs.postgresql.result }}
           PACKAGES_RESULT: ${{ needs.packages.result }}
@@ -198,3 +199,8 @@ jobs:
         run: |
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           bun tools/native-packages.ts finish
+      - name: Reject cancelled package workflow
+        if: ${{ cancelled() }}
+        run: |
+          echo 'Package workflow cancelled; no successful package result' >&2
+          exit 1
