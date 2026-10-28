@@ -85,6 +85,7 @@ test("the repository pins one Bun version for mise, CI, runtime and types", () =
   // Every setup-bun step reads the same file.
   for (const path of [
     ".github/actions/rust-setup/action.yml",
+    ".github/workflows/docs.yml",
     "tools/fixtures/retired-workflows/docs.yml",
   ]) {
     const source = read(path);
