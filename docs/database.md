@@ -186,6 +186,8 @@ Access、Center、Workforce 与文件所有者接入时仍使用部署与运行�
 
 共享测试设施由独立的 `fixture` crate 提供，仅通过 `dev-dependencies` 引入。测试 PostgreSQL 固定为 18.4，版本由 [fixture/postgresql.version](../fixture/postgresql.version) 维护。[构建脚本](../fixture/postgresql.ts)从 PostgreSQL 官方下载源码，校验固定的 SHA-256，再使用主机开发库编译。`postgresql_embedded` 只管理这份本地构建的临时实例，不再下载第三方二进制。启动前核对实际二进制版本，缺失、版本不符或动态库不兼容均使测试失败。
 
+[原生 package CI](engineering/verification.md#原生-package-检查) 在单个 Ubuntu 24.04 作业构建这份安装，并以同次运行的 artifact 供矩阵消费。tar 保留执行权限与符号链接；消费者核对摘要、候选、运行编号、版本和相同安装前缀，再实际执行四个程序的版本检查。产物只含安装，不含临时集群、证书或口令。矩阵使用非 root 用户、私有 TMPDIR、随机 loopback 端口与虚构数据，不读取真实 `.env` 或启动系统数据库服务。fixture 正常生命周期之外的 CI 泄漏检查只操作自己可核身份的实例；取消硬杀时不保证清理步骤执行。
+
 隔离服务只监听回环地址并要求 TLS。fixture 拥有临时证书、管理员密码和服务清理，不依赖工作区业务或连接库。Platform、nucleus 和部署测试复用该设施，各自构造连接、准备角色并验证自身行为。
 
 启动失败时，fixture 在清理前报告原始错误。上下文包括固定版本、回环地址和临时集群路径。诊断从 `data/start.log` 末尾最多读取 16 KiB 正文。截断时另读前一字节，判断窗口是否从完整行开始。完整行保留，不完整行舍弃，并隐藏 fixture 密码。日志缺失或无法读取时，同时保留启动错误和读取错误。诊断不读取密码文件或私钥，也不保留临时集群。`cargo test -p fixture --locked` 覆盖真实配置错误、日志不可用、截断与脱敏。测试还检查正常停止及启动失败后的目录清理。

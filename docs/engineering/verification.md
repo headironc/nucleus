@@ -44,6 +44,20 @@ Docs 成功只证明上述文档检查，不代表 Rust、维护工具、Halo、
 
 该状态证明格式和 workspace Clippy。Clippy 编译 dev/test 目标，但不执行测试函数。它不代替独立 package 构建、测试、doctest/rustdoc 或 Halo 验收。本地仍按实际分类及输入证据执行或复用必要检查。平台所有者负责当前候选的状态、审查和交付；本工作流不恢复旧 aggregate、缓存控制器或自动准入。
 
+### 原生 package 检查
+
+[Packages 工作流](../../.github/workflows/packages.yml)消费面向 `dev` 或 `main` 的原生 PR 合成候选。打开、重开、提交更新和编辑事件均执行 plan；草稿不豁免。检出核对 HEAD 与 `GITHUB_SHA`，权限仅为 `contents: read`，不保留 Git 凭据。同一 PR 的新运行取消旧运行。
+
+plan 直接调用现分类器。无法核实比较时保守选择 full/all；畸形选择失败。full 使用 package 检查器的 `--list` 与 `--matrix`，核对选中包及完整分片。当前 Domain 为四个 shard，Nucleus 为 rest/http 两组，其他包各一行。空矩阵、遗漏整包、缺少分片、重复或未知行均失败。非 full 计划明确记录 package 不执行的原因。
+
+作业使用 Ubuntu 24.04、根目录固定 Bun 与 Rust 工具链，不恢复缓存。PostgreSQL 作业按[数据库交付验证](../database.md#交付验证)从官方固定摘要源码构建 18.4，普通用户编译，sudo 只安装临时 runner 的开发库。安装经 tar 保留权限和符号链接，再由本次运行的原生 artifact 传给矩阵。消费者仅下载 producer 给出的 artifact ID，核对 tar 摘要、候选、run/attempt、版本、主机环境及安装前缀，重新执行四个真实程序的版本核查。缺失产物不能由隐式重编译掩盖。
+
+矩阵直接调用 `bun tools/check-packages.ts --package <name> --test-threads 2`，按发现行追加 shard/group。所有选中行共同完成独立 build、普通 tests、doctest 与 fatal-warning rustdoc，任一命令失败均传播。每行以非 root 用户在 workspace 外的私有规范 TMPDIR 运行隔离 PostgreSQL。fixture 拥有正常 stop、启动失败脱敏、端口与目录清理；CI 另核本 job 私有实例泄漏，并只对身份可核的自有实例有界停止。泄漏即使兜底成功仍失败；身份或终态不明时保留目录并失败。
+
+稳定状态 `Nucleus Packages` 始终汇总 plan、PostgreSQL 与矩阵。full 只有完整计划及全部选中作业成功才通过；失败、取消、超时、缺失及意外跳过均拒绝。已核非 full 计划只允许对应的两个下游作业跳过。清理使用 `always()`，但 runner 硬终止可能阻止执行，不保证取消时优雅关闭。真实托管验收保留完整正例、PG 准备拒绝、实际 package 测试失败与清理、取消及恢复的终态。本地编排回归不代替真实九行产品矩阵。
+
+该状态只证明 package 责任，不包含 Halo、main 晋级、部署或自动准入。HTTP 中要求 Halo/Node/浏览器的测试仍明确 ignored，本状态不声称浏览器覆盖。本地继续按当前 classifier 的完整选检执行或核对输入后复用有效证据，不因托管范围排除 Halo 而免检。
+
 ## 检查范围
 
 旧 GitHub Actions CI、审查关卡、镜像发布及 dev/main 准入入口已停用，两个分支均已移除旧保护。签名规则继续约束其他分支。本地检查、业务验收及当前候选审查继续执行，历史绿灯不提供新候选的验收结论。Dependabot 与独立托管审查不随这组工作流删除。
@@ -138,6 +152,7 @@ Halo 仅豁免上文的根文档、`docs/**/*.md`、两份文档格式配置，�
 | 原生 Docs 工作流                  | `bun test tools/docs-workflow.test.ts tools/check-bun.test.ts tools/preview-design.test.ts`                                                                            |
 | 原生维护工具工作流                | `bun test tools/maintenance-tools-workflow.test.ts`                                                                                                                    |
 | 原生 Rust 检查                    | `bun test tools/native-rust-checks-workflow.test.ts`                                                                                                                   |
+| 原生 package 编排                 | `bun test tools/native-packages-workflow.test.ts`                                                                                                                      |
 | Halo 指定验收入口                 | `bun test tools/check-halo-test.test.ts tools/check-inputs.test.ts tools/cache.test.ts`                                                                                |
 | Halo 本地运行时准备               | `bun test tools/halo-local.test.ts tools/halo-browser-smoke.test.ts tools/halo-ci-image.test.ts`                                                                       |
 
