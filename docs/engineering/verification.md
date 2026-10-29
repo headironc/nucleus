@@ -60,11 +60,11 @@ plan 直接调用现分类器。无法核实比较时保守选择 full/all；畸
 
 ## CI 触发与选检
 
-本节区分当前自动行为与建议目标。当前事实以五份原生工作流及实际调用为准；下表的建议尚未实现。分类器的 `skip` 只描述其所属检查，不能让未接入分类器的工作流跳过。检查范围由本页维护，镜像内部协议见 [Halo CI 镜像](../../halo/README.md#ci-依赖镜像)。
+本节区分当前自动行为与建议目标。下表覆盖 Docs、Rust checks、Maintenance tools、Packages 和 OCI producer 五份基础工作流；首次私有包发布及其专用 PR 检查另见 [Halo 合同](../../halo/README.md#首次私有包发布与冷拉取)。下表的建议尚未实现。分类器的 `skip` 只描述其所属检查，不能让未接入分类器的工作流跳过。检查范围由本页维护，镜像内部协议见 [Halo CI 镜像](../../halo/README.md#ci-依赖镜像)。
 
 ### 当前事件与执行阶段
 
-四个 PR 检查分别为 Docs、Rust checks、Maintenance tools 和 Packages。它们都面向 `dev/main`，订阅 opened、reopened、synchronize、edited，包括草稿。前三者没有路径过滤或实际输入选检，直接执行全部步骤。Packages 每次执行 plan，且在分类前安装 Rust。只有 `full` 才执行 PostgreSQL producer 和 package 矩阵。四者均按 PR 取消旧运行，没有当前部署的 merge queue 或 push 入口。
+基础 PR 检查分别为 Docs、Rust checks、Maintenance tools 和 Packages。它们都面向 `dev/main`，订阅 opened、reopened、synchronize、edited，包括草稿。前三者没有路径过滤或实际输入选检，直接执行全部步骤。Packages 每次执行 plan，且在分类前安装 Rust。只有 `full` 才执行 PostgreSQL producer 和 package 矩阵。四者均按 PR 取消旧运行，没有当前部署的 merge queue 或 push 入口。
 
 OCI 工作流另有 PR 和 `dev` push 路径过滤，以及受限手动入口。启动不等于构建：`halo-image-artifact.ts plan` 先绑定来源，再比较环境摘要与验收源码。PR 比较事件 base 与合成候选，父提交必须准确匹配 base/head；push 比较 before 与 after。来源身份不符直接失败。来源已绑定但比较历史不可读时保守构建；手动补建核对完整 revision 和原因后构建。
 
