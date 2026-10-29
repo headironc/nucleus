@@ -3,16 +3,22 @@ import { createHash, randomBytes } from "node:crypto";
 import {
   appendFileSync,
   chmodSync,
+  closeSync,
+  constants,
   copyFileSync,
   createReadStream,
   existsSync,
+  fstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
+  readSync,
   readFileSync,
   readdirSync,
   rmSync,
   statSync,
   writeFileSync,
+  writeSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -309,10 +315,28 @@ export function buildIdentity(
   metadata: unknown,
   archive?: DockerArchive,
   rawManifest?: Uint8Array,
-) {
+): {
+  configDigest: string;
+  binding: string;
+  descriptor?: ReturnType<typeof imageDescriptor>;
+} {
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata))
+    throw new Error("Build metadata object required");
   const value = metadata as Record<string, unknown>;
   const direct = value?.["containerimage.config.digest"];
   const supplied = Object.hasOwn(value, "containerimage.config.digest");
+  if (!Object.hasOwn(value, "containerimage.descriptor")) {
+    if (
+      !supplied ||
+      typeof direct !== "string" ||
+      !digest.test(direct) ||
+      !archive ||
+      direct !== archive.configDigest ||
+      rawManifest
+    )
+      throw new Error("Direct build config binding unavailable or conflicting");
+    return { configDigest: direct, binding: "config-digest" };
+  }
   const manifestDigest = value?.["containerimage.digest"];
   const descriptor = imageDescriptor(value?.["containerimage.descriptor"]);
   if (
@@ -606,6 +630,74 @@ export async function verifyArtifact(
   )
     throw new Error("Unexpected artifact files");
   return { tar, identity };
+}
+
+export function importRuntimeEvidence(directory: string, output: string) {
+  const files = [
+    "licenses.json",
+    "licenses.tar.gz",
+    "packages.tsv",
+    "pg-ready.json",
+    "runtime.json",
+  ];
+  const descriptors: number[] = [];
+  try {
+    const directoryFlags =
+      constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW;
+    const source = openSync(directory, directoryFlags);
+    descriptors.push(source);
+    const destination = openSync(output, directoryFlags);
+    descriptors.push(destination);
+    // The pipeline runs on Linux. Anchor every child to the opened directory,
+    // rather than resolving a container-controlled path again.
+    const sourcePath = `/proc/self/fd/${source}`;
+    const destinationPath = `/proc/self/fd/${destination}`;
+    if (
+      JSON.stringify(readdirSync(sourcePath).sort()) !== JSON.stringify(files)
+    )
+      throw new Error("Unexpected runtime evidence files");
+    const inputs = files.map((file) => {
+      const descriptor = openSync(
+        `${sourcePath}/${file}`,
+        constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK,
+      );
+      descriptors.push(descriptor);
+      const stat = fstatSync(descriptor);
+      if (!stat.isFile() || stat.nlink !== 1)
+        throw new Error(
+          `Runtime evidence must be a regular file with one link: ${file}`,
+        );
+      return { file, descriptor };
+    });
+    const buffer = Buffer.alloc(64 * 1024);
+    for (const { file, descriptor } of inputs) {
+      const target = openSync(
+        `${destinationPath}/${file}`,
+        constants.O_WRONLY |
+          constants.O_CREAT |
+          constants.O_EXCL |
+          constants.O_NOFOLLOW,
+        0o600,
+      );
+      try {
+        let bytes: number;
+        while (
+          (bytes = readSync(descriptor, buffer, 0, buffer.length, null)) > 0
+        ) {
+          let offset = 0;
+          while (offset < bytes) {
+            const written = writeSync(target, buffer, offset, bytes - offset);
+            if (!written) throw new Error("Runtime evidence copy stalled");
+            offset += written;
+          }
+        }
+      } finally {
+        closeSync(target);
+      }
+    }
+  } finally {
+    for (const descriptor of descriptors.reverse()) closeSync(descriptor);
+  }
 }
 
 export async function buildArtifact(output: string, source: Source) {
@@ -984,7 +1076,7 @@ export async function buildArtifact(output: string, source: Source) {
       ...defaultUser,
       reference: runtimeReference,
     });
-    for (const dir of ["target", "root-modules", "home"])
+    for (const dir of ["target", "root-modules", "home", "runtime-evidence"])
       mkdirSync(join(scratch, dir));
     const modules = prepareHaloDependencies(
       root,
@@ -1039,7 +1131,7 @@ export async function buildArtifact(output: string, source: Source) {
           `${mount.source}:${mount.target}:ro`,
         ]),
         "-v",
-        `${output}:/evidence`,
+        `${join(scratch, "runtime-evidence")}:/evidence`,
         runtimeReference,
         "bun",
         "tools/halo-image-runtime.ts",
@@ -1066,6 +1158,7 @@ export async function buildArtifact(output: string, source: Source) {
       requestedImage !== runtimeReference
     )
       throw new Error("Container used a different runtime reference");
+    importRuntimeEvidence(join(scratch, "runtime-evidence"), output);
     runtimeBinding = {
       reference: runtimeReference,
       descriptor: restoredInspect.Descriptor

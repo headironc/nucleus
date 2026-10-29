@@ -90,11 +90,20 @@ def docker_archive(path, metadata_path=None, manifest_output=None):
                 if digest(uncompressed) != diff_ids[index]:
                     raise ValueError("Docker archive diff ID mismatch")
             layers.append({"path": name, "size": member.size, "digest": compressed_digest, "diffId": diff_ids[index]})
-        if metadata_path:
-            metadata = json.loads(Path(metadata_path).read_text())
+        metadata = json.loads(Path(metadata_path).read_text()) if metadata_path else None
+        if metadata_path and not isinstance(metadata, dict):
+            raise ValueError("Build metadata object required")
+        if metadata is not None:
+            direct = metadata.get("containerimage.config.digest")
+            if "containerimage.config.digest" in metadata:
+                if not isinstance(direct, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", direct) or direct != config_digest:
+                    raise ValueError("Direct build config binding invalid or conflicting")
+            elif "containerimage.descriptor" not in metadata:
+                raise ValueError("Direct build config binding missing")
+        if metadata is not None and "containerimage.descriptor" in metadata:
             descriptor = metadata["containerimage.descriptor"]
             manifest_digest = metadata["containerimage.digest"]
-            if (not isinstance(manifest_digest, str) or len(manifest_digest) != 71
+            if (not isinstance(descriptor, dict) or not isinstance(manifest_digest, str) or len(manifest_digest) != 71
                     or not manifest_digest.startswith("sha256:")
                     or any(c not in "0123456789abcdef" for c in manifest_digest[7:])
                     or descriptor["digest"] != manifest_digest

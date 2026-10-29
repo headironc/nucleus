@@ -242,7 +242,7 @@ bun run test -- app/protocol/affiliation.test.ts app/affiliation/marker.test.ts 
 
 ## CI 依赖镜像
 
-[镜像产物工作流](../.github/workflows/halo-image.yml)在面向 `dev/main` 的 PR、`dev` push 和受限手动补建时，按实际环境输入和验收源码判断是否构建。手动补建只接纳 `dev` 历史中的完整提交 SHA，并记录原因。PR 绑定 head、base 与实际合成提交；首次加入或修改验收逻辑也会运行。根与 Halo 锁文件、React/Vite 或 Cargo.lock 单独变化不重建环境。
+[镜像产物工作流](../.github/workflows/halo-image.yml)在面向 `dev/main` 的 PR、`dev` push 和受限手动补建时，按实际环境输入和验收源码判断是否构建。手动补建只接纳 `dev` 历史中的完整提交 SHA，并记录原因；可信工作流在检出后、读取候选版本文件或执行候选脚本前，独立核对实际 HEAD 和 `dev` 祖先关系。PR 绑定 head、base 与实际合成提交；首次加入或修改验收逻辑也会运行。根与 Halo 锁文件、React/Vite 或 Cargo.lock 单独变化不重建环境。
 
 镜像定义在 [Dockerfile](../.github/halo-ci/Dockerfile)。官方 Playwright 基础镜像固定版本与 digest，提供浏览器及系统依赖。派生镜像安装经 SHA-256 核对的准确 Node、Bun 和 rustup，增加 Nginx、Rust 工具链及组件，并编译固定 PostgreSQL。Node 的路径优先于基础镜像自带版本，Linux 运行依赖包含 `libatomic1`。构建上下文仅含镜像定义、忽略文件和 PostgreSQL 构建器及版本文件。
 
@@ -262,11 +262,11 @@ bun tools/halo-image-artifact.ts build /absolute/path/to/new-artifact
 
 工具把经固定 SHA 校验的 standalone Buildx 放到本次私有目录，使用原 default Docker driver 的内置 BuildKit。它复用原 builder 的四文件 context，执行单平台 load 并保存构建 metadata，随后核 Docker archive 中实际 config 和全部层。它不安装宿主插件、不创建 builder 服务。已有同字节工具可通过 `NUCLEUS_IMAGE_BUILDX_BINARY` 和 `NUCLEUS_IMAGE_GITLEAKS_ARCHIVE` 只读复用，校验规则不变。
 
-构建 metadata 的 config 摘要真正缺省时，工具用 metadata 指定的原始单 manifest 字节闭合 config 和有序层的引用链；非法或冲突的已提供字段仍拒绝。原始 `build-manifest.json` 随产物保留，下载端重新核其类型、大小、摘要及实际 OCI config。经典 Docker archive 若没有原 manifest，只能使用合法的直接 config 摘要，不能重建 manifest 代替原件。
+构建 metadata 的 config 摘要真正缺省时，工具用 metadata 指定的原始单 manifest 字节闭合 config 和有序层的引用链；非法或冲突的已提供字段仍拒绝。原始 `build-manifest.json` 随该路线的产物保留，下载端重新核其类型、大小、摘要及实际 OCI config。descriptor 真正缺省或经典 Docker archive 没有原 manifest 时，只能使用与独立读取的完整归档字节相符的直接 config 摘要，不声称原 manifest 证据，不重建或猜造 descriptor。提供了 null 或畸形 descriptor 仍拒绝。
 
 固定 Skopeo 用 `copy --format v2s2 --dest-compress-format gzip --dest-force-compress-format` 生成单平台 `linux/amd64` OCI layout 归档，冻结字节后用 `--preserve-digests` 恢复。显式生成 gzip 可避免 Docker archive 传输把未压缩 tar 声明为 gzip。内部严格支持配对的 OCI manifest/config/tar 或 gzip 层，以及 Docker schema 2 manifest/config/diff.tar 或 gzip 层；当前来源使用后者。报告保留真实 media type，不代表任意 OCI 消费者均兼容。Docker 的 `.Id` 可能表示 manifest/index；工具分别保存实际运行引用与 config 摘要。恢复后按准确运行引用再次完整导出，核 config 原字节、平台、RootFS diff IDs 与冻结归档一致，单独核默认用户的实际 UID，再以宿主非 root 身份运行消费者，并核容器实际使用的引用。
 
-源码和已按锁文件、禁脚本准备的 Halo 依赖只读，`target` 和 HOME 私有可写。验收容器禁止外网，执行准确版本、输入摘要、非 root、无 TCP 的私有 PG 查询、双 Chromium 实际页面 smoke 及 `tools/check-inputs.test.ts` 薄消费者。PG fast-stop、进程终态、私有目录删除和容器移除分别核对；清理失败不产生成功结论。首次导出兼容预检使用无网络的 scratch 小镜像；它不替代完整 OCI 的恢复后验收。
+源码和已按锁文件、禁脚本准备的 Halo 依赖只读，`target` 和 HOME 私有可写。运行证据写入独立私有目录，容器不能写 host artifact output。确认容器终止后，host 只从已打开的目录 fd 导入固定普通文件，不跟随链接或未知目录，拒绝特殊文件和额外文件，再执行 host 扫描。验收容器禁止外网，执行准确版本、输入摘要、非 root、无 TCP 的私有 PG 查询、双 Chromium 实际页面 smoke 及 `tools/check-inputs.test.ts` 薄消费者。PG fast-stop、进程终态、私有目录删除和容器移除分别核对；清理失败不产生成功结论。首次导出兼容预检使用无网络的 scratch 小镜像；它不替代完整 OCI 的恢复后验收。
 
 产物包含 `image.oci.tar`、来源、config、完整 history、层内容清单、脱敏扫描报告、实际系统包和 copyright 材料。Python `tarfile` 逐层读取，包括后层删除或覆盖的内容；只把普通文件复制为私有编号文件，不跟随链接或创建设备。固定 Gitleaks 扫描全部普通文件、路径及链接元数据，禁用行内放行和整路径豁免。嵌套归档与编码扫描深度为 2；加密、更深层或不受支持格式不展开。二进制字节也交给模式扫描，但任意二进制秘密未必能命中。扫描和许可材料不证明无秘密、无漏洞或法律审批。
 

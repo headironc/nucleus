@@ -5,10 +5,13 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  linkSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,6 +22,7 @@ import {
   buildIdentity,
   assertRestoredArchive,
   inspectDockerArchive,
+  importRuntimeEvidence,
   fileDigest,
   shouldBuild,
   validationInput,
@@ -37,6 +41,216 @@ function temporary() {
   return path;
 }
 const read = (path: string) => readFileSync(join(root, path), "utf8");
+
+const evidenceFiles = [
+  "runtime.json",
+  "pg-ready.json",
+  "packages.tsv",
+  "licenses.tar.gz",
+  "licenses.json",
+];
+function evidenceFixture() {
+  const directory = temporary();
+  const source = join(directory, "runtime");
+  const output = join(directory, "artifact");
+  const outside = join(temporary(), "outside");
+  mkdirSync(source);
+  mkdirSync(output);
+  writeFileSync(outside, "protected host file");
+  for (const file of evidenceFiles)
+    writeFileSync(join(source, file), Buffer.alloc(150000, file.length));
+  return { directory, source, output, outside };
+}
+
+test.skipIf(process.platform !== "linux")(
+  "runtime evidence imports only fixed regular files into a host-owned output",
+  () => {
+    const fixture = evidenceFixture();
+    importRuntimeEvidence(fixture.source, fixture.output);
+    expect(readdirSync(fixture.output).sort()).toEqual(
+      [...evidenceFiles].sort(),
+    );
+    for (const file of evidenceFiles)
+      expect(readFileSync(join(fixture.output, file))).toEqual(
+        readFileSync(join(fixture.source, file)),
+      );
+    expect(readFileSync(fixture.outside, "utf8")).toBe("protected host file");
+  },
+);
+
+test.skipIf(process.platform !== "linux")(
+  "runtime evidence rejects links, special files and substituted directories before copying",
+  () => {
+    for (const attack of [
+      "symlink",
+      "hardlink",
+      "directory",
+      "fifo",
+      "extra",
+      "source-directory",
+      "output-directory",
+    ]) {
+      const fixture = evidenceFixture();
+      const target = join(fixture.source, "runtime.json");
+      if (["symlink", "hardlink", "directory", "fifo"].includes(attack))
+        rmSync(target);
+      if (attack === "symlink") symlinkSync(fixture.outside, target);
+      if (attack === "hardlink") linkSync(fixture.outside, target);
+      if (attack === "directory") mkdirSync(target);
+      if (attack === "fifo")
+        expect(spawnSync("mkfifo", [target]).status).toBe(0);
+      if (attack === "extra")
+        symlinkSync(fixture.outside, join(fixture.source, "config.json"));
+      let source = fixture.source,
+        output = fixture.output;
+      if (attack === "source-directory") {
+        source = join(fixture.directory, "source-link");
+        symlinkSync(fixture.source, source);
+      }
+      if (attack === "output-directory") {
+        output = join(fixture.directory, "output-link");
+        symlinkSync(fixture.output, output);
+      }
+      expect(() => importRuntimeEvidence(source, output), attack).toThrow();
+      expect(readdirSync(fixture.output), attack).toEqual([]);
+      expect(readFileSync(fixture.outside, "utf8"), attack).toBe(
+        "protected host file",
+      );
+    }
+  },
+);
+
+test.skipIf(!process.env.NUCLEUS_IMAGE_EVIDENCE_TEST)(
+  "real containers cannot redirect host artifact writes through runtime evidence",
+  () => {
+    const retained = process.env.NUCLEUS_IMAGE_EVIDENCE_TEST_EVIDENCE;
+    if (!retained) throw new Error("Retained evidence path required");
+    const image = JSON.parse(
+      read(".github/halo-ci/artifact-tools.json"),
+    ).skopeo;
+    const records: unknown[] = [];
+    const docker = (args: string[]) => {
+      const result = spawnSync("docker", args, {
+        encoding: "utf8",
+        timeout: 30000,
+      });
+      if (result.error || result.status !== 0)
+        throw new Error(
+          `Docker evidence fixture failed: ${result.error ?? result.stderr}`,
+        );
+      return result.stdout;
+    };
+    for (const attack of ["normal", "config-link", "runtime-link"]) {
+      const fixture = evidenceFixture();
+      const name = `nucleus-evidence-${process.pid}-${attack}`;
+      let created = false;
+      try {
+        const script =
+          attack === "normal"
+            ? ":"
+            : `rm -f /evidence/${attack === "config-link" ? "config.json" : "runtime.json"}; ln -s "$HOST_TARGET" /evidence/${attack === "config-link" ? "config.json" : "runtime.json"}`;
+        docker([
+          "create",
+          "--name",
+          name,
+          "--pull=never",
+          "--network=none",
+          "--read-only",
+          "--user",
+          `${process.getuid!()}:${process.getgid!()}`,
+          "-e",
+          `HOST_TARGET=${fixture.outside}`,
+          "-v",
+          `${fixture.source}:/evidence`,
+          "-v",
+          `${fixture.outside}:/protected-source:ro`,
+          "--entrypoint",
+          "sh",
+          image,
+          "-c",
+          script,
+        ]);
+        created = true;
+        docker(["start", "--attach", name]);
+        const state = JSON.parse(
+          docker(["inspect", "--format", "{{json .State}}", name]),
+        );
+        expect(state.Running).toBe(false);
+        expect(state.ExitCode).toBe(0);
+        if (attack === "normal")
+          importRuntimeEvidence(fixture.source, fixture.output);
+        else {
+          expect(() =>
+            importRuntimeEvidence(fixture.source, fixture.output),
+          ).toThrow();
+          expect(readdirSync(fixture.output)).toEqual([]);
+          expect(existsSync(join(fixture.output, "validation.json"))).toBe(
+            false,
+          );
+          expect(existsSync(join(fixture.output, "provenance.json"))).toBe(
+            false,
+          );
+        }
+        // Exercise the host writer named by the original finding after isolation.
+        const write = spawnSync(
+          "python3",
+          [
+            "-B",
+            "-c",
+            "import importlib.util,sys; s=importlib.util.spec_from_file_location('oci',sys.argv[1]); m=importlib.util.module_from_spec(s); s.loader.exec_module(m); m.write_json(sys.argv[2],{'host':True})",
+            join(root, "tools/halo-image-oci.py"),
+            join(fixture.output, "config.json"),
+          ],
+          { encoding: "utf8" },
+        );
+        expect(write.status, write.stderr).toBe(0);
+        expect(readFileSync(fixture.outside, "utf8")).toBe(
+          "protected host file",
+        );
+        records.push({
+          attack,
+          state,
+          outsideUnchanged: true,
+          imported: attack === "normal",
+        });
+      } finally {
+        if (created) {
+          const state = JSON.parse(
+            docker(["inspect", "--format", "{{json .State}}", name]),
+          );
+          if (state.Running) {
+            docker(["stop", "--time", "10", name]);
+            docker(["wait", name]);
+          }
+          docker(["rm", name]);
+          const absent = spawnSync("docker", ["inspect", name], {
+            encoding: "utf8",
+          });
+          expect(absent.status).not.toBe(0);
+          expect(absent.stderr).toMatch(/no such (container|object)/i);
+        }
+        rmSync(fixture.directory, { recursive: true });
+        expect(existsSync(fixture.directory)).toBe(false);
+        expect(readFileSync(fixture.outside, "utf8")).toBe(
+          "protected host file",
+        );
+      }
+    }
+    writeFileSync(
+      retained,
+      JSON.stringify(
+        {
+          cases: records,
+          containersAbsent: true,
+          privateDirectoriesRemoved: true,
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+  },
+  30000,
+);
 
 test("semantic selection skips unrelated dependency changes and covers every environment input", () => {
   for (const path of ["bun.lock", "halo/bun.lock", "Cargo.lock", "README.md"])
@@ -507,6 +721,46 @@ test("Buildx metadata and restored archives preserve separate config and runtime
       { ...original, config: { ...original.config, config: { User: "root" } } },
       oci,
     ),
+  ).toThrow();
+});
+
+test("direct config metadata permits a truly absent descriptor only with verified archive bytes", () => {
+  const directory = fixture("docker");
+  const archive = inspectDockerArchive(join(directory, "image.oci.tar"));
+  const metadataPath = join(directory, "direct-metadata.json");
+  const manifestPath = join(directory, "unavailable-manifest.json");
+  const metadata = { "containerimage.config.digest": archive.configDigest };
+  const inspect = (value: unknown) => {
+    writeFileSync(metadataPath, JSON.stringify(value));
+    return inspectDockerArchive(
+      join(directory, "image.oci.tar"),
+      metadataPath,
+      manifestPath,
+    );
+  };
+  expect(inspect(metadata).configDigest).toBe(archive.configDigest);
+  expect(existsSync(manifestPath)).toBe(false);
+  expect(buildIdentity(metadata, archive)).toEqual({
+    configDigest: archive.configDigest,
+    binding: "config-digest",
+  });
+  expect(() => buildIdentity(metadata)).toThrow();
+  for (const invalid of [null, [], "metadata"]) {
+    expect(() => inspect(invalid)).toThrow();
+    expect(() => buildIdentity(invalid, archive)).toThrow();
+  }
+  for (const direct of [undefined, null, "", 42, `sha256:${"f".repeat(64)}`]) {
+    const invalid = { "containerimage.config.digest": direct };
+    expect(() => inspect(invalid)).toThrow();
+    expect(() => buildIdentity(invalid, archive)).toThrow();
+  }
+  for (const descriptor of [null, {}, { digest: archive.configDigest }]) {
+    const invalid = { ...metadata, "containerimage.descriptor": descriptor };
+    expect(() => inspect(invalid)).toThrow();
+    expect(() => buildIdentity(invalid, archive)).toThrow();
+  }
+  expect(() =>
+    buildIdentity(metadata, archive, Buffer.from("unbound proof")),
   ).toThrow();
 });
 
@@ -1072,6 +1326,46 @@ test("download verification cross-checks external identities, archive bytes and 
   expect(
     (await verifyArtifact(directory, expected)).identity.config.digest,
   ).toBe(identity.config.digest);
+  const originalBuild = provenance.build;
+  const originalManifestSha = materials["build-manifest.json"]!;
+  const originalMetadataSha = materials["build-metadata.json"]!;
+  const directMetadata = {
+    "containerimage.config.digest": identity.config.digest,
+  };
+  rmSync(join(directory, "build-manifest.json"));
+  delete materials["build-manifest.json"];
+  writeFileSync(
+    join(directory, "build-metadata.json"),
+    JSON.stringify(directMetadata),
+  );
+  materials["build-metadata.json"] = await fileDigest(
+    join(directory, "build-metadata.json"),
+  );
+  provenance.build = {
+    ...buildIdentity(directMetadata, archived),
+    runtimeReference: originalBuild.runtimeReference,
+    daemonDescriptor: originalBuild.daemonDescriptor,
+  };
+  writeFileSync(join(directory, "provenance.json"), JSON.stringify(provenance));
+  expect(
+    (await verifyArtifact(directory, expected)).identity.config.digest,
+  ).toBe(identity.config.digest);
+  expect(
+    Object.hasOwn(
+      JSON.parse(readFileSync(join(directory, "provenance.json"), "utf8"))
+        .build,
+      "descriptor",
+    ),
+  ).toBe(false);
+  provenance.build = originalBuild;
+  writeFileSync(join(directory, "build-manifest.json"), rawManifest);
+  materials["build-manifest.json"] = originalManifestSha;
+  writeFileSync(
+    join(directory, "build-metadata.json"),
+    JSON.stringify(metadata),
+  );
+  materials["build-metadata.json"] = originalMetadataSha;
+  writeFileSync(join(directory, "provenance.json"), JSON.stringify(provenance));
   for (const change of [
     { source: head },
     { run: "124" },
@@ -1175,6 +1469,84 @@ test("download verification cross-checks external identities, archive bytes and 
   await expect(verifyArtifact(directory, expected)).rejects.toThrow(
     "material mismatch",
   );
+});
+
+test("trusted workflow rejects non-dev revisions before candidate execution", () => {
+  const workflow = Bun.YAML.parse(
+    read(".github/workflows/halo-image.yml"),
+  ) as any;
+  const steps = workflow.jobs.build.steps;
+  const guardIndex = steps.findIndex(
+    (step: any) => step.name === "Validate manual revision ancestry",
+  );
+  expect(guardIndex).toBeGreaterThan(
+    steps.findIndex((step: any) => step.uses?.startsWith("actions/checkout@")),
+  );
+  for (const step of steps.filter(
+    (step: any) => step.uses?.includes("setup-") || step.id === "plan",
+  ))
+    expect(guardIndex).toBeLessThan(steps.indexOf(step));
+  expect(steps[guardIndex].if).toBe("github.event_name == 'workflow_dispatch'");
+  const directory = temporary();
+  const env = {
+    ...Object.fromEntries(
+      Object.entries(process.env).filter(([name]) => !name.startsWith("GIT_")),
+    ),
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_AUTHOR_NAME: "Fixture",
+    GIT_AUTHOR_EMAIL: "fixture@example.invalid",
+    GIT_COMMITTER_NAME: "Fixture",
+    GIT_COMMITTER_EMAIL: "fixture@example.invalid",
+  };
+  const git = (...args: string[]) => {
+    const result = spawnSync("git", ["-c", "commit.gpgsign=false", ...args], {
+      cwd: directory,
+      env,
+      encoding: "utf8",
+    });
+    if (result.status !== 0) throw new Error(result.stderr);
+    return result.stdout.trim();
+  };
+  git("init", "--initial-branch=dev");
+  writeFileSync(join(directory, "file"), "base");
+  git("add", "file");
+  git("commit", "-m", "base");
+  const ancestor = git("rev-parse", "HEAD");
+  writeFileSync(join(directory, "file"), "dev");
+  git("commit", "-am", "dev");
+  const dev = git("rev-parse", "HEAD");
+  git("update-ref", "refs/remotes/origin/dev", dev);
+  git("checkout", "-b", "outside", ancestor);
+  writeFileSync(join(directory, "file"), "outside");
+  git("commit", "-am", "outside");
+  const outside = git("rev-parse", "HEAD");
+  const marker = join(directory, "candidate-executed");
+  for (const [checkout, revision, ref, success] of [
+    [ancestor, ancestor, "refs/heads/dev", true],
+    [dev, dev, "refs/heads/dev", true],
+    [outside, outside, "refs/heads/dev", false],
+    [dev, ancestor, "refs/heads/dev", false],
+    [dev, dev, "refs/heads/outside", false],
+  ] as const) {
+    git("checkout", "--detach", checkout);
+    rmSync(marker, { force: true });
+    const result = spawnSync(
+      "bash",
+      [
+        "-e",
+        "-c",
+        steps[guardIndex].run + "\nprintf reached > candidate-executed\n",
+      ],
+      {
+        cwd: directory,
+        env: { ...env, REVISION: revision, GITHUB_REF: ref },
+        encoding: "utf8",
+      },
+    );
+    expect(result.status === 0).toBe(success);
+    expect(existsSync(marker)).toBe(success);
+  }
 });
 
 test("workflow permissions, source binding, immutable upload and hard download digest failure", () => {
