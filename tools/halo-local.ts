@@ -333,22 +333,44 @@ export function createPreparation(input: {
   assertImageInputs(input.docker, image, input.digest);
   const accounts = input.docker.accounts(image.id);
   const workspace = prepareWorkspace(input.root, input.runId);
-  const user = `nucleus-halo-${input.identity.uid}`;
-  const group = `nucleus-halo-${input.identity.gid}`;
+  workspace.mounts.push(
+    ...prepareAccounts(
+      accounts,
+      input.identity,
+      workspace.environment.HOME!,
+      workspace.run,
+    ),
+  );
+  return {
+    image,
+    workspace,
+    steps: planSteps(input.options.mode),
+  };
+}
+
+export function prepareAccounts(
+  accounts: { passwd: string; group: string },
+  identity: Identity,
+  home: string,
+  directory: string,
+): Mount[] {
+  const mounts: Mount[] = [];
+  const user = `nucleus-halo-${identity.uid}`;
+  const group = `nucleus-halo-${identity.gid}`;
   for (const [file, original, id, name, entry] of [
     [
       "passwd",
       accounts.passwd,
-      input.identity.uid,
+      identity.uid,
       user,
-      `${user}:x:${input.identity.uid}:${input.identity.gid}::${workspace.environment.HOME}:/bin/sh`,
+      `${user}:x:${identity.uid}:${identity.gid}::${home}:/bin/sh`,
     ],
     [
       "group",
       accounts.group,
-      input.identity.gid,
+      identity.gid,
       group,
-      `${group}:x:${input.identity.gid}:`,
+      `${group}:x:${identity.gid}:`,
     ],
   ] as const) {
     const lines = original.split("\n").filter(Boolean);
@@ -360,18 +382,14 @@ export function createPreparation(input: {
     const contents = present
       ? original
       : `${original}${original.endsWith("\n") ? "" : "\n"}${entry}\n`;
-    const source = join(workspace.run, file);
+    const source = join(directory, file);
     writeFileSync(source, contents, { mode: 0o644, flag: "wx" });
     // These new files contain only public image account records. NSS readers
     // need their usual read mode even when the caller uses a private umask.
     chmodSync(source, 0o644);
-    workspace.mounts.push({ source, target: `/etc/${file}`, readonly: true });
+    mounts.push({ source, target: `/etc/${file}`, readonly: true });
   }
-  return {
-    image,
-    workspace,
-    steps: planSteps(input.options.mode),
-  };
+  return mounts;
 }
 
 export async function runPreparation(

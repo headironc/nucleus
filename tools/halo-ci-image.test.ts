@@ -19,53 +19,73 @@ import { fileURLToPath } from "node:url";
 const read = (path: string) =>
   readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-test("the real builder sends only its four context files and the exact Node argument", () => {
-  const directory = mkdtempSync(join(tmpdir(), "nucleus-build-context-"));
-  const capture = join(directory, "capture.json");
-  writeFileSync(
-    join(directory, "docker"),
-    `#!/usr/bin/env bun
+test.each([false, true])(
+  "the real builder keeps its four-file context with standalone Buildx=%s",
+  (standalone) => {
+    const directory = mkdtempSync(join(tmpdir(), "nucleus-build-context-"));
+    const capture = join(directory, "capture.json");
+    writeFileSync(
+      join(directory, standalone ? "buildx" : "docker"),
+      `#!/usr/bin/env bun
 const args = process.argv.slice(2);
 const context = args.at(-1);
 await Bun.write(process.env.CAPTURE, JSON.stringify({ args, files: [...new Bun.Glob("**/*").scanSync({ cwd: context, dot: true, onlyFiles: true })].sort() }));
 `,
-    { mode: 0o755 },
-  );
-  try {
-    const result = spawnSync(
-      process.execPath,
-      [
-        fileURLToPath(new URL("./halo-ci-image.ts", import.meta.url)),
-        "build",
-        "nucleus-context:test",
-      ],
-      {
-        env: {
-          ...process.env,
-          PATH: `${directory}:${process.env.PATH}`,
-          CAPTURE: capture,
-        },
-        encoding: "utf8",
-        timeout: 10_000,
-      },
+      { mode: 0o755 },
     );
-    expect(result.error).toBeUndefined();
-    expect(result.status, result.stdout + result.stderr).toBe(0);
-    const recorded = JSON.parse(readFileSync(capture, "utf8"));
-    expect(recorded.files).toEqual([
-      ".github/halo-ci/Dockerfile",
-      ".github/halo-ci/Dockerfile.dockerignore",
-      "fixture/postgresql.ts",
-      "fixture/postgresql.version",
-    ]);
-    expect(recorded.args).toContain("NODE_VERSION=26.13.0");
-    expect(recorded.args).toContain("BUN_VERSION=1.4.4");
-    expect(recorded.args).not.toContain("--push");
-    expect(existsSync(recorded.args.at(-1))).toBe(false);
-  } finally {
-    rmSync(directory, { recursive: true, force: true });
-  }
-});
+    try {
+      const result = spawnSync(
+        process.execPath,
+        [
+          fileURLToPath(new URL("./halo-ci-image.ts", import.meta.url)),
+          "build",
+          "nucleus-context:test",
+          ...(standalone
+            ? [
+                "--buildx",
+                join(directory, "buildx"),
+                "--metadata",
+                join(directory, "metadata.json"),
+              ]
+            : []),
+        ],
+        {
+          env: {
+            ...process.env,
+            PATH: `${directory}:${process.env.PATH}`,
+            CAPTURE: capture,
+            BUILDX_CONFIG: join(directory, "private-buildx"),
+          },
+          encoding: "utf8",
+          timeout: 10_000,
+        },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stdout + result.stderr).toBe(0);
+      const recorded = JSON.parse(readFileSync(capture, "utf8"));
+      expect(recorded.files).toEqual([
+        ".github/halo-ci/Dockerfile",
+        ".github/halo-ci/Dockerfile.dockerignore",
+        "fixture/postgresql.ts",
+        "fixture/postgresql.version",
+      ]);
+      expect(recorded.args).toContain("NODE_VERSION=26.13.0");
+      expect(recorded.args).toContain("BUN_VERSION=1.4.4");
+      expect(recorded.args).not.toContain("--push");
+      if (standalone) {
+        expect(recorded.args).toContain("--load");
+        expect(recorded.args).toContain("--metadata-file");
+        expect(recorded.args).toContain("--provenance=false");
+        expect(recorded.args).toContain("--sbom=false");
+        expect(recorded.args).not.toContain("--force-rm");
+        expect(recorded.args.slice(1, 3)).toEqual(["--builder", "default"]);
+      }
+      expect(existsSync(recorded.args.at(-1))).toBe(false);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 test("the dependency image binds actual tool pins and build inputs", () => {
   const original = imageInputs();
