@@ -4,7 +4,7 @@
 
 ## 构建与本地检查
 
-使用 Node 24 和仓库指定的 Bun 版本。依赖由本目录的 `bun.lock` 固定。
+使用 Node 26 和仓库指定的 Bun 版本。准确运行时版本由根目录 `.tool-versions` 固定，Node 支持范围由本目录 `package.json` 的 `engines` 声明。依赖由本目录的 `bun.lock` 固定。
 
 先在仓库根目录运行 `bun tools/check-inputs.ts --base origin/dev`，报告当前完整工作树是否影响 Halo。基线、输入归属及保守运行规则见[检查归属](../docs/engineering/verification.md#仓库与检查归属)。报告选择检查；本节及后续的实际快照和浏览器命令负责执行检查。
 
@@ -21,9 +21,13 @@ bun run build
 
 `app/protocol/build.ts` 负责核对当前页面与 `/build.json` 的构建标识，同时遵守资源失败的重新加载要求。发码、登录、注册和本人检查在业务请求前及页面恢复可见时调用。页面与办理控制器负责处理核对失败，并保留原材料。
 
-协议、恢复和发行校验使用 Vitest。构建、协议生成、资源配置与浏览器夹具采用 TypeScript，由 Node 24 执行，纳入同一类型检查。`server.mjs` 与 `tools/release.mjs` 随生产运行目录交付，不依赖开发工具。浏览器验收另外启动真实后端与 Nginx，命令见下节。格式、类型和单元测试不能替代浏览器或真实环境验收。
+协议、恢复和发行校验使用 Vitest。构建、协议生成、资源配置与浏览器夹具采用 TypeScript，由 Node 26 执行，纳入同一类型检查。`server.mjs` 与 `tools/release.mjs` 随生产运行目录交付，不依赖开发工具。浏览器验收另外启动真实后端与 Nginx，命令见下节。格式、类型和单元测试不能替代浏览器或真实环境验收。
 
 完整单元测试包含真实 Nginx 代理回归。默认使用 `/usr/sbin/nginx`，可通过 `HALO_NGINX` 指定可执行文件。
+
+应用类型检查显式执行 `typescript-compiler` 别名中的 TypeScript 7。`openapi-typescript` 仍依赖 TypeScript 5 的 AST API，因此 `typescript` 保留其支持范围内的最新稳定版 5.9.3。根维护工具也使用 TypeScript 7。生成器支持新版 API 后，再移除这项兼容分离；当前不把生成器的 AST 库宣称为全局最新版本。
+
+构建期依赖链 `@react-router/dev@8.5.1 → @babel/core@7.29.7 → gensync@1.0.0-beta.2` 仍要求 `gensync@^1.0.0-beta.2`。现有稳定版 0.1.0 不满足该范围，因此锁定上游要求的 beta.2，保留这一预发布限制。上游提供可合法解析到稳定 gensync 的兼容构建依赖链，并通过相关验收后，再解除限制。
 
 登录短期材料的直接检查可运行 `bun run test -- app/authentication/material.test.ts`。规则见[恢复材料](../docs/client/recovery.md#恢复材料)。检查覆盖保存与删除回读失败、短信截止、秘密到期关闭、旧办理清理及损坏收据隔离。测试使用可控存储验证材料层；页面触发、HTTP 恢复与离页维护由下述集成验收覆盖。
 
@@ -125,7 +129,7 @@ bun run test:browser -- tests/code.spec.ts
 
 组件夹具在内存中构建真实组件及网站 CSS。Playwright 拦截提供资源，未知请求直接终止。测试不启动监听服务，也不写入正式构建目录。检查覆盖六格受控值、键盘与焦点、粘贴、组合输入和填充；还检查禁用、错误关联及四种宽度。IME、剪贴板与短信填充通过 DOM 事件模拟，不代表系统输入法或真机验收。截图核对需要可正常渲染数字和中文的浏览器字体。缺字时先准备隔离字体运行环境，不修改产品样式代替字形验收。登录提交、缺位提交焦点及组合期间停止登录请求由下述集成验收覆盖。
 
-准备 Node 24、Bun、OpenSSL、带 HTTP SSL 和 rewrite 模块的 Nginx，以及固定 PostgreSQL 夹具。Nginx 通过 `HALO_NGINX` 指定可执行文件。它不读取系统站点配置，不安装或重启系统服务。
+准备 Node 26、Bun、OpenSSL、带 HTTP SSL 和 rewrite 模块的 Nginx，以及固定 PostgreSQL 夹具。Nginx 通过 `HALO_NGINX` 指定可执行文件。它不读取系统站点配置，不安装或重启系统服务。
 
 注册页面可独立运行 `bun run test:browser -- tests/registration.spec.ts`。夹具构建真实页面和样式，使用实际 IndexedDB，并拦截 HTTP 响应。检查覆盖四种宽度、输入焦点、草稿不落盘、保存失败、原请求恢复，以及另一标签页更换选择后的迟到成功。该夹具不验证生产 CSP、真实 Cookie 或数据库效果。下述组合验收承担这些边界。
 
@@ -240,9 +244,9 @@ bun run test -- app/protocol/affiliation.test.ts app/affiliation/marker.test.ts 
 
 旧 Halo、Rust、缓存和镜像发布工作流已停用。以下自动构建、发布和缓存叙述解释[历史夹具](../tools/fixtures/retired-workflows/README.md)中的退役协议，不是当前可调用的部署入口。镜像构建工具和本地容器验证继续保留；新发布流程另行授权和验收。
 
-[Halo 工作流](../tools/fixtures/retired-workflows/halo.yml)、[Rust package 作业](../tools/fixtures/retired-workflows/rust.yml)及两者的[缓存预热](../tools/fixtures/retired-workflows/cache.yml)使用同一镜像 digest。镜像定义在 [Dockerfile](../.github/halo-ci/Dockerfile)。官方 Playwright 基础镜像固定版本与 digest，自带 Node 24、浏览器及系统依赖。派生镜像增加 Nginx、固定 Bun、Rust 工具链及组件，并编译固定 PostgreSQL。最终镜像只保留软件安装，不包含仓库源码、集群、证书或测试数据。
+[Halo 工作流](../tools/fixtures/retired-workflows/halo.yml)、[Rust package 作业](../tools/fixtures/retired-workflows/rust.yml)及两者的[缓存预热](../tools/fixtures/retired-workflows/cache.yml)使用同一镜像 digest。镜像定义在 [Dockerfile](../.github/halo-ci/Dockerfile)。官方 Playwright 基础镜像固定版本与 digest，提供浏览器及系统依赖。派生镜像安装经 SHA-256 核对的准确 Node 和 Bun，增加 Nginx、Rust 工具链及组件，并编译固定 PostgreSQL。Node 的路径优先于基础镜像自带版本，Linux 运行依赖包含 `libatomic1`。最终镜像只保留软件安装，不包含仓库源码、集群、证书或测试数据。
 
-版本来源保持现有归属：Bun 读 `.tool-versions`，Rust 读 `rust-toolchain.toml`，PostgreSQL 读 `fixture/postgresql.version` 及其构建脚本，Playwright 读 `halo/package.json`。镜像记录这些输入、构建定义、构建器及其 Bun 版本解析依赖的摘要。运行前核对摘要、实际工具版本和浏览器可执行文件；不匹配时失败，更新镜像后再验收。普通 PR 与队列不安装系统包、下载工具链或编译 PostgreSQL。
+版本来源保持现有归属：Bun 和 Node 读 `.tool-versions`，Rust 读 `rust-toolchain.toml`，PostgreSQL 读 `fixture/postgresql.version` 及其构建脚本，Playwright 读 `halo/package.json`。构建器同时核对 Halo 的 Bun 声明和 Node 支持范围。镜像记录这些输入、构建定义、构建器及其 Bun 版本解析依赖的摘要。运行前核对摘要、准确工具版本和浏览器可执行文件；不匹配时失败，更新镜像后再验收。普通 PR 与队列不安装系统包、下载工具链或编译 PostgreSQL。
 
 在仓库根目录构建：
 

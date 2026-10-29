@@ -1,10 +1,33 @@
 import { mkdtemp, mkdir, writeFile, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { describe, it, expect } from "vitest";
 import { verifyRelease, digest } from "./release.mjs";
 
 describe("release integrity", () => {
+  it.each(["24.0.0", "25.0.0", "27.0.0"])(
+    "rejects unsupported Node %s before release startup",
+    (version) => {
+      const result = spawnSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "--eval",
+          `Object.defineProperty(process.versions, "node", { value: ${JSON.stringify(version)} }); await import(${JSON.stringify(new URL("../server.mjs", import.meta.url).href)});`,
+        ],
+        {
+          encoding: "utf8",
+          timeout: 10_000,
+          env: { ...process.env, NODE_ENV: "production" },
+        },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Halo requires Node 26");
+      expect(result.stdout).not.toContain("halo_ready");
+    },
+  );
   it.each(["asset", "server", "runtime", "manifest", "extra"])(
     "rejects %s drift before serving",
     async (fault) => {

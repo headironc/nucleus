@@ -218,7 +218,7 @@ mod tests {
 }
 
 #[test]
-#[ignore = "requires the built halo release, Node 24, Playwright Chromium and HALO_NGINX"]
+#[ignore = "requires the built halo release, Node 26, Playwright Chromium and HALO_NGINX"]
 fn browser_c1_preserves_original_send() {
     let mut logs = BrowserEvidence::from_environment().expect("browser evidence configuration");
     let server = server();

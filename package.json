@@ -1,7 +1,7 @@
 {
   "name": "nucleus-docs",
   "private": true,
-  "packageManager": "bun@1.4.2",
+  "packageManager": "bun@1.4.4",
   "scripts": {
     "check:bun": "bun tools/check-bun.ts",
     "check:tools": "bun tools/check-bun.ts && tsc --noEmit",
@@ -12,8 +12,8 @@
   },
   "devDependencies": {
     "@actions/expressions": "0.3.61",
-    "@types/bun": "1.4.2",
-    "@types/node": "26.6.5",
+    "@types/bun": "1.4.4",
+    "@types/node": "26.6.6",
     "@types/serve-handler": "6.1.4",
     "markdownlint-cli2": "0.24.0",
     "markdownlint": "0.42.0",

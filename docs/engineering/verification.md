@@ -12,7 +12,7 @@ Nucleus 独立维护原生 CI、业务选检、依赖环境及结果解释。旧
 
 [Docs 工作流](../../.github/workflows/docs.yml)在面向 `dev` 或 `main` 的原生 `pull_request` 合成候选上运行唯一的 `docs` 作业，显示名为 `Nucleus Docs`。打开、重开、更新提交和编辑 PR 均重新执行；编辑事件包含更换目标分支。非文档改动和草稿 PR 也运行，不使用路径或作业条件跳过。存在合并冲突而没有合成候选时，不形成 Docs 成功证据。
 
-该作业使用 GitHub 托管的 Ubuntu 24.04、根目录固定的 Bun、Node 24 和 lychee 0.24.2。Action 固定到完整源提交，lychee 发布包安装前核对固定摘要。依赖按锁文件安装且禁用安装脚本；检出不保留凭据，权限仅为 `contents: read`。日志记录仓库、PR、运行及尝试编号，并核对实际检出提交等于事件的 `GITHUB_SHA`。
+该作业使用 GitHub 托管的 Ubuntu 24.04、根目录 `.tool-versions` 固定的 Bun 和 Node，以及 lychee 0.24.2。Action 固定到完整源提交，lychee 发布包安装前核对固定摘要。依赖按锁文件安装且禁用安装脚本；检出不保留凭据，权限仅为 `contents: read`。日志记录仓库、PR、运行及尝试编号，并核对实际检出提交等于事件的 `GITHUB_SHA`。
 
 作业直接运行[文档维护](../README.md#文档维护)的预览传输回归、格式、Markdown 和离线链接四项义务。任一准备或检查失败均失败，不忽略错误；超时和取消保留原生终态。同一 PR 的新运行取消旧运行，其他 PR 相互独立。失败、取消、超时、缺失运行及旧候选成功均不能作为当前候选成功。实际 PR 验收还须覆盖成功、断链、预览失败、工具不匹配、取消、非文档改动和候选或目标变化；本地回归不代替托管运行。
 
@@ -22,7 +22,7 @@ Docs 成功只证明上述文档检查，不代表 Rust、维护工具、Halo、
 
 [Maintenance tools 工作流](../../.github/workflows/maintenance-tools.yml)对面向 `dev` 或 `main` 的每个原生 PR 合成候选运行唯一的 `tools` 作业，显示名为 `Nucleus Maintenance tools`。打开、重开、提交更新和编辑事件均执行，包括草稿、非工具改动和目标分支变更；不使用路径过滤或条件跳过。日志核对实际检出提交等于事件的 `GITHUB_SHA`。
 
-作业使用 GitHub 托管的 Ubuntu 24.04、根目录固定的 Bun、Node 24，以及 `rust-toolchain.toml` 指定的 Rust 和 Clippy。完整工具回归实际编译离线 Rust 夹具，并运行 Docs 工作流的真实命令回归，因此还安装经固定摘要核对的 lychee 0.24.2。Action 固定完整源提交，权限仅为 `contents: read`，检出不保留凭据。根依赖按锁文件安装，禁用安装脚本；不恢复缓存。
+作业使用 GitHub 托管的 Ubuntu 24.04、根目录 `.tool-versions` 固定的 Bun 和 Node，以及 `rust-toolchain.toml` 指定的 Rust 和 Clippy。完整工具回归实际编译离线 Rust 夹具，并运行 Docs 工作流的真实命令回归，因此还安装经固定摘要核对的 lychee 0.24.2。Action 固定完整源提交，权限仅为 `contents: read`，检出不保留凭据。根依赖按锁文件安装，禁用安装脚本；不恢复缓存。
 
 作业依次直接运行 `bun run check:tools`、`bun test tools/*.test.ts` 和 `bun tools/check-dependencies.ts`。通配符消费全部现有及新增工具测试；依赖边界入口读取当前工作区的实际 Cargo 元数据和生产依赖树。回归中的小型 Rust 夹具不代替产品 package 验收，工具任务也不需要真实数据库、供应商或浏览器服务。
 

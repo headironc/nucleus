@@ -8,7 +8,7 @@
 
 | 层次     | 选择                                                         |
 | -------- | ------------------------------------------------------------ |
-| 运行     | Node 24，由 systemd 管理网站服务                             |
+| 运行     | Node 26，由 systemd 管理网站服务                             |
 | 框架     | React 19、React Router 8 框架模式（服务端渲染）、Vite 8      |
 | 样式     | Tailwind 4                                                   |
 | 组件     | Base UI；轮播用 Embla Carousel；图标用 lucide-react          |

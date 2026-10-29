@@ -4,6 +4,7 @@ import { truthy } from "@actions/expressions/result";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -13,13 +14,63 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { imageInputs } from "./halo-ci-image";
+import { fileURLToPath } from "node:url";
 
 const read = (path: string) =>
   readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
+test("the real builder sends only its four context files and the exact Node argument", () => {
+  const directory = mkdtempSync(join(tmpdir(), "nucleus-build-context-"));
+  const capture = join(directory, "capture.json");
+  writeFileSync(
+    join(directory, "docker"),
+    `#!/usr/bin/env bun
+const args = process.argv.slice(2);
+const context = args.at(-1);
+await Bun.write(process.env.CAPTURE, JSON.stringify({ args, files: [...new Bun.Glob("**/*").scanSync({ cwd: context, dot: true, onlyFiles: true })].sort() }));
+`,
+    { mode: 0o755 },
+  );
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        fileURLToPath(new URL("./halo-ci-image.ts", import.meta.url)),
+        "build",
+        "nucleus-context:test",
+      ],
+      {
+        env: {
+          ...process.env,
+          PATH: `${directory}:${process.env.PATH}`,
+          CAPTURE: capture,
+        },
+        encoding: "utf8",
+        timeout: 10_000,
+      },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stdout + result.stderr).toBe(0);
+    const recorded = JSON.parse(readFileSync(capture, "utf8"));
+    expect(recorded.files).toEqual([
+      ".github/halo-ci/Dockerfile",
+      ".github/halo-ci/Dockerfile.dockerignore",
+      "fixture/postgresql.ts",
+      "fixture/postgresql.version",
+    ]);
+    expect(recorded.args).toContain("NODE_VERSION=26.13.0");
+    expect(recorded.args).toContain("BUN_VERSION=1.4.4");
+    expect(recorded.args).not.toContain("--push");
+    expect(existsSync(recorded.args.at(-1))).toBe(false);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test("the dependency image binds actual tool pins and build inputs", () => {
   const original = imageInputs();
-  expect(original.bun).toBe("1.4.2");
+  expect(original.bun).toBe("1.4.4");
+  expect(original.node).toBe("26.13.0");
   expect(original.playwright).toBe(
     JSON.parse(read("halo/package.json")).devDependencies["@playwright/test"],
   );
@@ -45,10 +96,20 @@ test("the dependency image binds actual tool pins and build inputs", () => {
 });
 
 test("a tool upgrade cannot silently use the previous image or mismatched browser base", () => {
-  const changedBun = imageInputs((path) =>
-    path === ".tool-versions" ? "bun 99.0.0\n" : read(path),
-  );
+  const changedBun = imageInputs((path) => {
+    if (path === ".tool-versions")
+      return read(path).replace("bun 1.4.4", "bun 99.0.0");
+    if (path === "halo/package.json")
+      return read(path).replace("bun@1.4.4", "bun@99.0.0");
+    return read(path);
+  });
   expect(changedBun.digest).not.toBe(imageInputs().digest);
+  const changedNode = imageInputs((path) =>
+    path === ".tool-versions"
+      ? read(path).replace("26.13.0", "26.14.0")
+      : read(path),
+  );
+  expect(changedNode.digest).not.toBe(imageInputs().digest);
   expect(() =>
     imageInputs((path) =>
       path === "halo/package.json"
@@ -59,6 +120,34 @@ test("a tool upgrade cannot silently use the previous image or mismatched browse
         : read(path),
     ),
   ).toThrow("base image digests");
+});
+
+test("image inputs reject ambiguous runtime pins and incompatible Halo declarations", () => {
+  for (const tools of [
+    "bun 1.4.4\n",
+    "bun 1.4.4\nnodejs 26\n",
+    "bun 1.4.4\nnodejs ^26.13.0\n",
+    "bun 1.4.4\nnodejs 26.13.0\nnodejs 26.14.0\n",
+    "bun 1.4.4\n nodejs 26.13.0\n",
+  ]) {
+    expect(() =>
+      imageInputs((path) => (path === ".tool-versions" ? tools : read(path))),
+    ).toThrow("exact");
+  }
+  expect(() =>
+    imageInputs((path) =>
+      path === ".tool-versions"
+        ? read(path).replace("26.13.0", "24.0.0")
+        : read(path),
+    ),
+  ).toThrow("engines.node");
+  expect(() =>
+    imageInputs((path) =>
+      path === "halo/package.json"
+        ? read(path).replace("bun@1.4.4", "bun@1.4.2")
+        : read(path),
+    ),
+  ).toThrow("packageManager");
 });
 
 test("image publishing isolates source execution from package credentials", () => {

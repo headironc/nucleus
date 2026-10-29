@@ -3,18 +3,26 @@ FROM mcr.microsoft.com/playwright:v1.64.1-noble@sha256:7852dc5a7d72f5fe458a597d6
 ENV DEBIAN_FRONTEND=noninteractive \
     CARGO_HOME=/opt/cargo \
     RUSTUP_HOME=/opt/rustup \
-    PATH=/opt/cargo/bin:$PATH
+    PATH=/opt/node/bin:/opt/cargo/bin:$PATH
 RUN sed -i 's|http://azure.archive.ubuntu.com|https://archive.ubuntu.com|g; s|http://archive.ubuntu.com|https://archive.ubuntu.com|g; s|http://security.ubuntu.com|https://security.ubuntu.com|g' /etc/apt/sources.list.d/ubuntu.sources \
     && apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 update \
     && apt-get -o Acquire::Retries=3 -o Acquire::https::Timeout=30 install --yes --no-install-recommends \
       build-essential bison flex ca-certificates curl git pkg-config openssl unzip \
-      libssl-dev libicu-dev libreadline-dev zlib1g-dev libxml2-dev nginx \
+      libssl-dev libicu-dev libreadline-dev zlib1g-dev libxml2-dev libatomic1 nginx \
     && rm -rf /var/lib/apt/lists/*
+ARG NODE_VERSION
+RUN curl --fail --location --silent --show-error --connect-timeout 10 --max-time 120 \
+      "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz" \
+      --output /tmp/node.tar.xz \
+    && echo 'd28a96af6c38596f6d9d97c0ee531c13d238d757742387d1928de822d959e997  /tmp/node.tar.xz' | sha256sum --check \
+    && mkdir /opt/node \
+    && tar --extract --xz --file /tmp/node.tar.xz --directory /opt/node --strip-components=1 \
+    && rm /tmp/node.tar.xz
 ARG BUN_VERSION
 RUN curl --fail --location --silent --show-error --connect-timeout 10 --max-time 120 \
       "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64.zip" \
       --output /tmp/bun.zip \
-    && echo '36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913  /tmp/bun.zip' | sha256sum --check \
+    && echo 'bf8ccbfb2b0b80159e0f9a6d15c55317add8077534dbc6130a3edb52fccb395c  /tmp/bun.zip' | sha256sum --check \
     && unzip -q /tmp/bun.zip -d /tmp \
     && mv /tmp/bun-linux-x64/bun /usr/local/bin/bun \
     && rm -rf /tmp/bun.zip /tmp/bun-linux-x64
