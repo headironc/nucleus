@@ -276,6 +276,28 @@ test("an API omission is unknown, not permission or producer acceptance", () => 
     expect(() => check(a)).toThrow();
   }
 });
+test("a rejected job-token package response reports only the identity fields needed for recovery", () => {
+  const a: any = accepted();
+  a.pkg.repository = null;
+  a.pkg.credentials = "inactive-secret-fixture";
+  let message = "";
+  try {
+    check(a);
+  } catch (error) {
+    message = (error as Error).message;
+  }
+  expect(message).toStartWith(
+    "Existing private package association is not ready: ",
+  );
+  expect(JSON.parse(message.slice(message.indexOf("{")))).toEqual({
+    id: 16266672,
+    name: "nucleus-ci",
+    visibility: "private",
+    repositoryId: null,
+    repositoryName: null,
+  });
+  expect(message).not.toContain("inactive-secret-fixture");
+});
 test("registry bytes match the original manifest and all changed bytes conflict", () => {
   expect(hash(manifest)).toBe(
     "sha256:80ae416d4bc7287532c0974d25390c5bc9b27cd62defe4e64860b501414b4592",
