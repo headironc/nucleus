@@ -23,16 +23,33 @@ export function imageInputs(readInput: (path: string) => string = read) {
   const rust = Bun.TOML.parse(read("rust-toolchain.toml")) as {
     toolchain: { channel: string; components: string[]; profile: string };
   };
-  const bun = pinnedBun(read(".tool-versions"));
+  const toolVersions = read(".tool-versions");
+  const bun = pinnedBun(toolVersions);
+  const nodeLines = toolVersions
+    .split("\n")
+    .filter((line) => /^\s*nodejs/.test(line));
+  const node =
+    nodeLines.length === 1
+      ? nodeLines[0]!.match(/^nodejs (\d+\.\d+\.\d+)$/)?.[1]
+      : undefined;
   const postgresql = read("fixture/postgresql.version").trim();
   const manifest = JSON.parse(read("halo/package.json"));
   const playwright = manifest.devDependencies["@playwright/test"] as string;
-  for (const version of [rust.toolchain.channel, bun, playwright]) {
+  for (const version of [rust.toolchain.channel, bun, node, playwright]) {
     if (!version || !/^\d+\.\d+\.\d+$/.test(version)) {
       throw new Error(
-        "Halo CI requires exact Rust, Bun and Playwright versions",
+        "Halo CI requires exact Rust, Bun, Node and Playwright versions",
       );
     }
+  }
+  if (manifest.packageManager !== `bun@${bun}`) {
+    throw new Error("Halo packageManager must match the pinned Bun version");
+  }
+  if (
+    typeof manifest.engines?.node !== "string" ||
+    !Bun.semver.satisfies(node!, manifest.engines.node)
+  ) {
+    throw new Error("The pinned Node version must satisfy Halo engines.node");
   }
   if (!/^\d+\.\d+$/.test(postgresql) || rust.toolchain.profile !== "minimal") {
     throw new Error("Unsupported Halo CI PostgreSQL version or Rust profile");
@@ -63,6 +80,7 @@ export function imageInputs(readInput: (path: string) => string = read) {
   hash.update(playwright).update("\0").update(manifest.engines.node);
   return {
     bun,
+    node,
     playwright,
     postgresql,
     rust: rust.toolchain,
@@ -91,8 +109,12 @@ function verifyImage() {
   if (Bun.version !== inputs.bun)
     throw new Error("Halo CI Bun version mismatch");
   const node = spawnSync("node", ["--version"], { encoding: "utf8" });
-  if (node.error || node.status !== 0 || !/^v24\./.test(node.stdout)) {
-    throw new Error("Halo CI requires Node 24");
+  if (
+    node.error ||
+    node.status !== 0 ||
+    node.stdout.trim() !== `v${inputs.node}`
+  ) {
+    throw new Error(`Halo CI requires Node ${inputs.node}`);
   }
   run("rustup", ["show", "active-toolchain"]);
   const compiler = spawnSync("rustc", ["--version"], { encoding: "utf8" });
@@ -163,6 +185,8 @@ if (import.meta.main) {
         resolve(context, ".github/halo-ci/Dockerfile"),
         "--build-arg",
         `BUN_VERSION=${inputs.bun}`,
+        "--build-arg",
+        `NODE_VERSION=${inputs.node}`,
         "--build-arg",
         `RUST_VERSION=${inputs.rust.channel}`,
         "--build-arg",

@@ -140,7 +140,7 @@ test("candidate code has only read access and uses the event checkout with pinne
     job.steps.find((step) => step.uses?.startsWith("actions/setup-node@"))
       ?.with,
   ).toEqual({
-    "node-version": "24",
+    "node-version-file": ".tool-versions",
     "package-manager-cache": false,
   });
 });

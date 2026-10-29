@@ -3,8 +3,8 @@ import { fileURLToPath } from "node:url";
 import { createRequestListener } from "@react-router/node";
 import { verifyRelease } from "./tools/release.mjs";
 
-if (Number(process.versions.node.split(".")[0]) !== 24)
-  throw new Error("Halo requires Node 24");
+if (Number(process.versions.node.split(".")[0]) !== 26)
+  throw new Error("Halo requires Node 26");
 if (process.env.NODE_ENV !== "production")
   throw new Error("Start Halo with NODE_ENV=production");
 const root = fileURLToPath(new URL(".", import.meta.url));

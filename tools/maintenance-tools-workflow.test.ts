@@ -112,6 +112,13 @@ test("all dev/main PR changes and retarget edits execute one read-only job witho
     expect(step["continue-on-error"]).toBeUndefined();
   }
   expect(job.steps[0]!.with).toEqual({ "persist-credentials": false });
+  expect(
+    job.steps.find((step) => step.uses?.startsWith("actions/setup-node@"))
+      ?.with,
+  ).toEqual({
+    "node-version-file": ".tool-versions",
+    "package-manager-cache": false,
+  });
   for (const step of job.steps.filter((step) => step.uses))
     expect(step.uses).toMatch(/^[\w-]+\/[\w-]+@[0-9a-f]{40}$/);
   expect(commands).toEqual([
