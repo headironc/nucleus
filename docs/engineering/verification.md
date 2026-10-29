@@ -32,7 +32,9 @@ Docs 成功只证明上述文档检查，不代表 Rust、维护工具、Halo、
 
 ### 原生 Rust 检查
 
-[Rust checks 工作流](../../.github/workflows/rust-checks.yml)运行唯一的 `checks` 作业，显示名为 `Nucleus Rust checks`。它消费面向 `dev` 或 `main` 的原生 PR 合成候选。打开、重开、提交更新和编辑事件均运行。草稿和非 Rust 改动也运行，目标分支编辑不触发成功跳过。日志核对实际检出提交等于 `GITHUB_SHA`。
+[Rust checks 工作流](../../.github/workflows/rust-checks.yml)运行唯一的 `checks` 作业，显示名为 `Nucleus Rust checks`。它消费面向 `dev` 或 `main` 的原生 PR 合成候选。打开、重开、提交更新和编辑事件均运行，包括草稿和非 Rust 改动。分类前无条件核对实际检出提交等于 `GITHUB_SHA`，记录候选及运行身份，并检查固定 Bun。
+
+作业直接消费[输入分类器](../../tools/check-inputs.ts)的四档结果。`skip` 和 `tools` 跳过 native 依赖、Rust 安装、格式与 Clippy，日志说明跳过原因。`checks` 和 `full` 执行原检查。比较协议沿[检查范围](#仓库与检查归属)读取合成提交第一父到候选的差异。第二父核对 PR 头提交；事件中的旧 base SHA 不替代实际第一父。无法可靠比较时保守运行 `full`。候选不匹配、输出接口失败及缺失或未知档位均使作业失败。
 
 作业使用 GitHub 托管的 Ubuntu 24.04。Action 固定完整源提交，权限仅为 `contents: read`，检出不保留凭据。Bun 从根版本文件安装并核对一致性。Rust 的版本、profile 和组件归 `rust-toolchain.toml` 拥有；格式工具独立使用 [Rust 规则](rust.md#workspace-validation)固定的 nightly。安装不改变默认工具链，日志记录实际版本。
 
@@ -42,7 +44,7 @@ Docs 成功只证明上述文档检查，不代表 Rust、维护工具、Halo、
 
 工具回归使用离线小型 Rust workspace，实际验证格式与 Clippy 的成功、拒绝和退出传播。维护工具作业消费这些回归，因此也显式安装相同 nightly。两处安装与检查命令共同核对 Rust 规则的固定日期，不另建配置所有者。
 
-该状态证明格式和 workspace Clippy。Clippy 编译 dev/test 目标，但不执行测试函数。它不代替独立 package 构建、测试、doctest/rustdoc 或 Halo 验收。本地仍按实际分类及输入证据执行或复用必要检查。平台所有者负责当前候选的状态、审查和交付；本工作流不恢复旧 aggregate、缓存控制器或自动准入。
+`checks` 和 `full` 的成功证明格式和 workspace Clippy 通过；`skip` 和 `tools` 的成功只证明当前候选无需这些检查。Clippy 编译 dev/test 目标，但不执行测试函数。该状态不代替独立 package 构建、测试、doctest/rustdoc 或 Halo 验收。本地仍按实际分类及输入证据执行或复用必要检查。真实托管验收分别绑定轻量跳过与实际 Rust 执行的候选，并核对失败和取消边界。平台所有者负责当前候选的状态、审查和交付；本工作流不恢复旧 aggregate、缓存控制器或自动准入。
 
 ### 原生 package 检查
 
