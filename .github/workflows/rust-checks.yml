@@ -2,7 +2,7 @@ name: Rust checks
 
 on:
   pull_request:
-    branches: [dev, main]
+    branches: [dev, main, codex/rust-selection-acceptance-base]
     types: [opened, reopened, synchronize, edited]
 
 concurrency:
