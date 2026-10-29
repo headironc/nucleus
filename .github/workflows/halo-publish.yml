@@ -24,8 +24,9 @@ jobs:
       packages: read
     env:
       GH_TOKEN: ${{ github.token }}
-      PUBLICATION_EVIDENCE: ${{ runner.temp }}/preflight-evidence
     steps:
+      - name: Bind runner-owned evidence path
+        run: printf 'PUBLICATION_EVIDENCE=%s/preflight-evidence\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.workflow_sha }}
@@ -72,9 +73,11 @@ jobs:
       packages: write
     env:
       GH_TOKEN: ${{ github.token }}
-      PUBLICATION_EVIDENCE: ${{ runner.temp }}/publication-evidence
-      PUBLICATION_AUTH_ROOT: ${{ runner.temp }}/nucleus-first-publication-auth
     steps:
+      - name: Bind runner-owned evidence and authentication paths
+        run: |
+          printf 'PUBLICATION_EVIDENCE=%s/publication-evidence\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'PUBLICATION_AUTH_ROOT=%s/nucleus-first-publication-auth\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       # Only the reviewed publisher code at this trusted workflow revision.
       # The producer checkout, candidate scripts and image are never executed here.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -126,8 +129,9 @@ jobs:
       packages: read
     env:
       GH_TOKEN: ${{ github.token }}
-      PUBLICATION_AUTH_ROOT: ${{ runner.temp }}/nucleus-first-publication-auth
     steps:
+      - name: Bind runner-owned authentication path
+        run: printf 'PUBLICATION_AUTH_ROOT=%s/nucleus-first-publication-auth\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.workflow_sha }}

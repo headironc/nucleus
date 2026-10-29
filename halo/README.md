@@ -292,7 +292,7 @@ bun tools/halo-image-artifact.ts build /absolute/path/to/new-artifact
 
 冷拉取使用另一台全新 hosted runner，先记录 Docker 镜像缓存为空，再用仅 `packages: read` 的 Nucleus 短期 job token 按准确 digest 拉取。权限失败不改用匿名或 PAT。认证文件删除后，核 registry 与本地平台、config、RootFS 及实际运行引用，复用现有隔离运行入口验证非 root、私有 PG、双 Chromium 和薄消费者。源码和依赖只读、容器禁外网且不挂 Docker socket，finally 核容器、PG、目录及本次拉取引用的清理。Docker 运行引用与 config 摘要分别记录。
 
-publisher 的类型、拒绝/恢复及权限回归由[专用检查](../.github/workflows/halo-publish-checks.yml)执行：`./node_modules/.bin/tsc -p .github/halo-publish/tsconfig.json --noEmit` 和 `bun test ./.github/halo-publish/publication.test.ts`。新增工具独立于 producer 的验收输入集合。单元检查和源码合并不证明包设置、真实发布或冷拉取已完成；这些结果由交付负责人结合实际运行、摘要、权限和清理原件接纳。此入口不自动持续发布、不迁移生产消费者，也不提供 VM 接入证明。
+publisher 的类型、拒绝/恢复及权限回归由[专用检查](../.github/workflows/halo-publish-checks.yml)执行：`./node_modules/.bin/tsc -p .github/halo-publish/tsconfig.json --noEmit` 和 `bun test ./.github/halo-publish/publication.test.ts`。固定 SHA 的 actionlint 1.7.12 另核两份发布工作流的语法与表达式上下文。新增工具独立于 producer 的验收输入集合。单元检查和源码合并不证明包设置、真实发布或冷拉取已完成；这些结果由交付负责人结合实际运行、摘要、权限和清理原件接纳。此入口不自动持续发布、不迁移生产消费者，也不提供 VM 接入证明。
 
 ## 启动与发布配置
 

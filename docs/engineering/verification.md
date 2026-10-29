@@ -107,7 +107,7 @@ OCI 工作流另有 PR 和 `dev` push 路径过滤，以及受限手动入口。
 
 [OCI 产物工作流](../../.github/workflows/halo-image.yml)按[镜像输入与产物验收](../../halo/README.md#ci-依赖镜像)运行原生构建、恢复后消费者验收和独立下载校验。它只有源码读取权限，不提供包发布、消费者迁移或 VM 接入证据。
 
-[首次私有包发布](../../.github/workflows/halo-publish.yml)独立消费固定已验产物，权限、未知写入读回和冷拉取边界见 [Halo 合同](../../halo/README.md#首次私有包发布与冷拉取)。[专用 PR 检查](../../.github/workflows/halo-publish-checks.yml)负责 `.github/halo-publish/` 的类型与发布回归，不改变 producer 的源码及扫描输入。实际发布和全新 hosted runner 的 job-token 冷消费另取真实原件；单元绿灯不替代这些验收，也不证明 VM 已接入。
+[首次私有包发布](../../.github/workflows/halo-publish.yml)独立消费固定已验产物，权限、未知写入读回和冷拉取边界见 [Halo 合同](../../halo/README.md#首次私有包发布与冷拉取)。[专用 PR 检查](../../.github/workflows/halo-publish-checks.yml)负责 `.github/halo-publish/` 的类型、发布回归及两份工作流的 Actions 语法，不改变 producer 的源码及扫描输入。实际发布和全新 hosted runner 的 job-token 冷消费另取真实原件；单元绿灯不替代这些验收，也不证明 VM 已接入。
 
 旧 GitHub Actions CI、审查关卡和镜像发布入口已停用。dev/main 旧自动准入入口也已停用。两条长期分支采用[普通分支保护](delivery.md#普通分支保护)，其他分支保留原签名规则。适用本地检查、原生 CI、业务验收及当前候选审查继续执行。这些结果由交付负责人验收，不由普通保护的 required checks 强制。历史绿灯不提供新候选的验收结论。Dependabot 与独立托管审查不随旧工作流删除。
 
