@@ -96,11 +96,11 @@ These rules apply to Nucleus SQL design, implementation and review. This reposit
 - Put writes that must succeed or fail together in the same transaction.
 - Keep transactions short and avoid waiting for external network requests inside them.
 - Choose constraints, locks, or isolation levels for the actual concurrency risk.
-- Retry only when the owning use case permits it, rerunning the complete affected transaction with the original operation identity and bounded attempts. Follow [write coordination](../architecture.md#并发协调) to resolve an unknown commit before deciding whether to retry. A database rollback or retry never authorizes repeating a supplier call or another external effect; follow that operation's own recovery contract.
+- Follow the owning use case's failure contract. New ordinary writes do not automatically retry or use an independent connection to resolve an unknown commit; the user refreshes current state. SMS keeps its dedicated deduplication and rate-limit contract. Existing consumers retain their current coordination until migrated. A rollback or retry never authorizes repeating a supplier call.
 
 ## Database failures
 
-Apply the [project error and redaction contract](../architecture.md#类型构造与查询) and [unknown-commit recovery](../architecture.md#未知提交) to database failures:
+Apply the [project error and redaction contract](../architecture.md#类型构造与查询) and the applicable [unknown-commit handling](../architecture.md#未知提交) to database failures. Distinguishing an unknown outcome from a confirmed rollback does not require implementing a recovery protocol for ordinary writes:
 
 - Convert a constraint error into a business rejection only at the boundary that owns that constraint's known business meaning. Keep the conversion in one place; ordinary callers propagate it, and handlers match it when an action depends on that outcome.
 - Identify PostgreSQL constraints by SQLSTATE and the exact constraint identity, using schema and table information when needed. Never classify by message text; unavailable identity fields do not justify guessing a business rejection.
