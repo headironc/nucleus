@@ -280,6 +280,20 @@ bun tools/halo-image-artifact.ts build /absolute/path/to/new-artifact
 
 本地容器验证以可写工作副本挂载仓库，使用镜像的非 root 用户及 `--init --ipc=host`。init 回收测试退出后留下的孤儿进程，使进程组终态可观察。本地完整验收可运行 `bun tools/halo-local.ts`；该入口按本节镜像、输入摘要和非 root 约束准备环境，并在类型与业务执行前核对两种浏览器运行时。底层操作仍先运行 `bun tools/halo-ci-image.ts verify`，再执行本页的协议快照核对、类型与单元测试、正式构建和浏览器验收。将大型 Cargo 产物挂载到磁盘目录，避免占满临时文件系统。容器的源码挂载、缓存及临时数据库均不进入发布镜像。
 
+### 首次私有包发布与冷拉取
+
+[首次发布工作流](../.github/workflows/halo-publish.yml)只接受默认 `dev` 的手动派发，固定消费已经验收的 artifact `12938521777`（producer run `40964056245` / attempt 1）。先核平台仓库、来源、成功作业、artifact 归属、有效期和摘要，再用准确 producer 源码的已审验证器复核完整协议。产物中的脚本不会执行。producer 的构建、原层扫描及成功证据继续复用。
+
+发布目标固定为现有私有包 `ghcr.io/headironc/nucleus-ci`（包 ID `16266672`）。平台操作先保存可见性、仓库关联、继承及 Actions access 前态，保持 private 和已有用户访问；连接准确 `headironc/nucleus`，在 Manage Actions access 给该仓库 Write，不授 Admin 或增加其他仓库，也不自动开启宽泛继承。设置后逐项回读；仓库关联不等于权限已经继承。原 config 中的旧仓库 source 标签作为已验字节保留，平台关联承担当前包的准确绑定。
+
+只有独立发布作业有 `packages: write`。它仅检出本次可信工作流修订中的 publisher 工具，不检出或执行 producer 候选，也不运行候选镜像。再次核平台身份及冻结归档后，固定 Skopeo 用 `--preserve-digests` 发布不可变标签 `source-55506adfd5c4ba8e34632d2cc2eadcfd189c75e8-run-40964056245-attempt-1`。同标签同 manifest 读回复用，冲突拒绝；不转换、重建或移动 `latest/dev`。认证文件私有且不进入证据，正常、失败和 `always` 收尾均删除并核 absent。
+
+上传进程及其工具容器终态明确后，按固定标签读回原 manifest 字节，并按 digest 读回 config 原字节和有序层描述。上传报错但内容相同则接续验收，不再上传。401/403、限流、网络失败和清理未知均保留未决状态；只有明确的 `MANIFEST_UNKNOWN` 表示不存在。工作流不自动重试。负责人先核原 run/job、上传 journal 与外部状态；原操作终态且确认不存在后，原授权内最多另派一次相同内容的恢复，不能反复 dispatch 或用新构建掩盖未知结果。
+
+冷拉取使用另一台全新 hosted runner，先记录 Docker 镜像缓存为空，再用仅 `packages: read` 的 Nucleus 短期 job token 按准确 digest 拉取。权限失败不改用匿名或 PAT。认证文件删除后，核 registry 与本地平台、config、RootFS 及实际运行引用，复用现有隔离运行入口验证非 root、私有 PG、双 Chromium 和薄消费者。源码和依赖只读、容器禁外网且不挂 Docker socket，finally 核容器、PG、目录及本次拉取引用的清理。Docker 运行引用与 config 摘要分别记录。
+
+publisher 的类型、拒绝/恢复及权限回归由[专用检查](../.github/workflows/halo-publish-checks.yml)执行：`./node_modules/.bin/tsc -p .github/halo-publish/tsconfig.json --noEmit` 和 `bun test ./.github/halo-publish/publication.test.ts`。固定 SHA 的 actionlint 1.7.12 另核两份发布工作流的语法与表达式上下文。新增工具独立于 producer 的验收输入集合。单元检查和源码合并不证明包设置、真实发布或冷拉取已完成；这些结果由交付负责人结合实际运行、摘要、权限和清理原件接纳。此入口不自动持续发布、不迁移生产消费者，也不提供 VM 接入证明。
+
 ## 启动与发布配置
 
 正式访问入口是同源 HTTPS Nginx。`bun run start` 启动只监听 `127.0.0.1` 的 Node 服务，端口由 `HALO_PORT` 指定，默认 `3080`。Node 交付页面；静态资源由 Nginx 交付，业务请求交给 nucleus。直接打开 Node 端口不构成完整网站预览。

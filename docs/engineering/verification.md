@@ -62,11 +62,11 @@ plan 直接调用现分类器。无法核实比较时保守选择 full/all；畸
 
 ## CI 触发与选检
 
-本节区分当前自动行为与建议目标。当前事实以五份原生工作流及实际调用为准；下表的建议尚未实现。分类器的 `skip` 只描述其所属检查，不能让未接入分类器的工作流跳过。检查范围由本页维护，镜像内部协议见 [Halo CI 镜像](../../halo/README.md#ci-依赖镜像)。
+本节区分当前自动行为与建议目标。下表覆盖 Docs、Rust checks、Maintenance tools、Packages 和 OCI producer 五份基础工作流；首次私有包发布及其专用 PR 检查另见 [Halo 合同](../../halo/README.md#首次私有包发布与冷拉取)。下表的建议尚未实现。分类器的 `skip` 只描述其所属检查，不能让未接入分类器的工作流跳过。检查范围由本页维护，镜像内部协议见 [Halo CI 镜像](../../halo/README.md#ci-依赖镜像)。
 
 ### 当前事件与执行阶段
 
-四个 PR 检查分别为 Docs、Rust checks、Maintenance tools 和 Packages。它们都面向 `dev/main`，订阅 opened、reopened、synchronize、edited，包括草稿，没有路径过滤。Docs 和 Maintenance tools 执行全部步骤。Rust checks 无条件核候选和 Bun，再分类；只有 `checks/full` 才准备 native/Rust 并执行 fmt/Clippy。Packages 每次执行 plan，且在分类前安装 Rust。只有 `full` 才执行 PostgreSQL producer 和 package 矩阵。四者均按 PR 取消旧运行，没有当前部署的 merge queue 或 push 入口。
+四个基础 PR 检查分别为 Docs、Rust checks、Maintenance tools 和 Packages。它们都面向 `dev/main`，订阅 opened、reopened、synchronize、edited，包括草稿，没有路径过滤。Docs 和 Maintenance tools 执行全部步骤。Rust checks 无条件核候选和 Bun，再分类；只有 `checks/full` 才准备 native/Rust 并执行 fmt/Clippy。Packages 每次执行 plan，且在分类前安装 Rust。只有 `full` 才执行 PostgreSQL producer 和 package 矩阵。四者均按 PR 取消旧运行，没有当前部署的 merge queue 或 push 入口。
 
 OCI 工作流另有 PR 和 `dev` push 路径过滤，以及受限手动入口。启动不等于构建：`halo-image-artifact.ts plan` 先绑定来源，再比较环境摘要与验收源码。PR 比较事件 base 与合成候选，父提交必须准确匹配 base/head；push 比较 before 与 after。来源身份不符直接失败。来源已绑定但比较历史不可读时保守构建；手动补建核对完整 revision 和原因后构建。
 
@@ -108,6 +108,8 @@ Rust checks 已消费现有档位，执行边界见[原生 Rust 检查](#原生-
 ## 检查范围
 
 [OCI 产物工作流](../../.github/workflows/halo-image.yml)按[镜像输入与产物验收](../../halo/README.md#ci-依赖镜像)运行原生构建、恢复后消费者验收和独立下载校验。它只有源码读取权限，不提供包发布、消费者迁移或 VM 接入证据。
+
+[首次私有包发布](../../.github/workflows/halo-publish.yml)独立消费固定已验产物，权限、未知写入读回和冷拉取边界见 [Halo 合同](../../halo/README.md#首次私有包发布与冷拉取)。[专用 PR 检查](../../.github/workflows/halo-publish-checks.yml)负责 `.github/halo-publish/` 的类型、发布回归及两份工作流的 Actions 语法，不改变 producer 的源码及扫描输入。实际发布和全新 hosted runner 的 job-token 冷消费另取真实原件；单元绿灯不替代这些验收，也不证明 VM 已接入。
 
 旧 GitHub Actions CI、审查关卡和镜像发布入口已停用。dev/main 旧自动准入入口也已停用。两条长期分支采用[普通分支保护](delivery.md#普通分支保护)，其他分支保留原签名规则。适用本地检查、原生 CI、业务验收及当前候选审查继续执行。这些结果由交付负责人验收，不由普通保护的 required checks 强制。历史绿灯不提供新候选的验收结论。Dependabot 与独立托管审查不随旧工作流删除。
 

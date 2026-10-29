@@ -1,0 +1,164 @@
+name: First private Halo publication
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nucleus-ci-first-private-publication
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Bind runner-owned evidence path
+        run: printf 'PUBLICATION_EVIDENCE=%s/preflight-evidence\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .tool-versions
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version-file: .tool-versions
+          package-manager-cache: false
+      - name: Validate selected platform identities before download
+        run: bun -e 'import { assertContext, platform } from "./.github/halo-publish/publication"; assertContext(); platform();'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 55506adfd5c4ba8e34632d2cc2eadcfd189c75e8
+          path: producer
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: "12938521777"
+          run-id: "40964056245"
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/accepted-artifact
+          digest-mismatch: error
+      - name: Verify original protocol, source bytes and complete OCI
+        run: bun .github/halo-publish/registry.ts preflight "$RUNNER_TEMP/accepted-artifact" "$GITHUB_WORKSPACE/producer"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: first-private-preflight-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/preflight-evidence
+          retention-days: 7
+          if-no-files-found: warn
+
+  publish:
+    needs: preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Bind runner-owned evidence and authentication paths
+        run: |
+          printf 'PUBLICATION_EVIDENCE=%s/publication-evidence\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'PUBLICATION_AUTH_ROOT=%s/nucleus-first-publication-auth\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      # Only the reviewed publisher code at this trusted workflow revision.
+      # The producer checkout, candidate scripts and image are never executed here.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/halo-publish
+            .tool-versions
+          sparse-checkout-cone-mode: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .tool-versions
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version-file: .tool-versions
+          package-manager-cache: false
+      - name: Recheck selected platform identities
+        run: bun -e 'import { assertContext, platform } from "./.github/halo-publish/publication"; assertContext(); platform();'
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: "12938521777"
+          run-id: "40964056245"
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/accepted-artifact
+          digest-mismatch: error
+      - name: Publish original bytes once and read back immutable identity
+        run: bun .github/halo-publish/registry.ts publish "$RUNNER_TEMP/accepted-artifact"
+      - name: Remove job registry credentials
+        if: always()
+        run: |
+          rm -rf -- "$PUBLICATION_AUTH_ROOT"
+          test ! -e "$PUBLICATION_AUTH_ROOT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: first-private-publication-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/publication-evidence
+          retention-days: 7
+          if-no-files-found: warn
+
+  cold:
+    needs: publish
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: read
+      packages: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Bind runner-owned authentication path
+        run: printf 'PUBLICATION_AUTH_ROOT=%s/nucleus-first-publication-auth\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: 55506adfd5c4ba8e34632d2cc2eadcfd189c75e8
+          path: producer
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .tool-versions
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version-file: .tool-versions
+          package-manager-cache: false
+      - name: Cold job-token pull and real isolated consumers
+        run: bun .github/halo-publish/cold.ts "$GITHUB_WORKSPACE/producer" "$RUNNER_TEMP/cold-evidence"
+      - name: Remove job registry credentials
+        if: always()
+        run: |
+          rm -rf -- "$PUBLICATION_AUTH_ROOT"
+          test ! -e "$PUBLICATION_AUTH_ROOT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: first-private-cold-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/cold-evidence
+          retention-days: 7
+          if-no-files-found: warn
