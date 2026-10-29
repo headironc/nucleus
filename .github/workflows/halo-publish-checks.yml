@@ -1,0 +1,36 @@
+name: Halo publication checks
+
+on:
+  pull_request:
+    branches: [dev, main]
+    types: [opened, reopened, synchronize, edited]
+    paths:
+      - .github/halo-publish/**
+      - .github/workflows/halo-publish*.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .tool-versions
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version-file: .tool-versions
+          package-manager-cache: false
+      - run: bun install --frozen-lockfile --ignore-scripts
+      - run: ./node_modules/.bin/tsc -p .github/halo-publish/tsconfig.json --noEmit
+      - run: bun test ./.github/halo-publish/publication.test.ts
+      - run: ./node_modules/.bin/prettier --check '.github/halo-publish/*.ts' .github/halo-publish/tsconfig.json '.github/workflows/halo-publish*.yml'
