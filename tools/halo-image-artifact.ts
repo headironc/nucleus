@@ -17,9 +17,11 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  statfsSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
+import { copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -632,6 +634,23 @@ export async function verifyArtifact(
   return { tar, identity };
 }
 
+export async function retainArchive(
+  source: string,
+  destination: string,
+  expected: string,
+) {
+  await copyFile(
+    source,
+    destination,
+    constants.COPYFILE_EXCL | constants.COPYFILE_FICLONE,
+  );
+  chmodSync(destination, 0o444);
+  if ((await fileDigest(destination)) !== expected)
+    throw new Error("Retained OCI bytes differ from the frozen archive");
+  // Keep the original on any failed or unverified copy.
+  rmSync(source);
+}
+
 export function importRuntimeEvidence(directory: string, output: string) {
   const files = [
     "licenses.json",
@@ -775,7 +794,7 @@ export async function buildArtifact(output: string, source: Source) {
       throw new Error(`${command} failed (${status}, cancelled=${cancelled})`);
   };
   const identity = `${hostIdentity.uid}:${hostIdentity.gid}`;
-  const skopeo = async (args: string[], serial: string) => {
+  const skopeo = async (args: string[], serial: string, input?: string) => {
     const name = `nucleus-artifact-${nonce}-${serial}`;
     await run(
       "docker",
@@ -792,6 +811,7 @@ export async function buildArtifact(output: string, source: Source) {
         "/tmp:rw,nosuid,nodev,mode=1777",
         "-v",
         `${work}:/data`,
+        ...(input ? ["-v", `${input}:/frozen-image.oci.tar:ro`] : []),
         "--entrypoint",
         "skopeo",
         pins.skopeo,
@@ -816,6 +836,27 @@ export async function buildArtifact(output: string, source: Source) {
   let failure: unknown;
   let versions: Record<string, string> = {};
   let archiveSha: string | undefined;
+  const disk = (stage: string) => {
+    const space = statfsSync(work);
+    console.log(
+      "[image-disk]",
+      JSON.stringify({
+        stage,
+        availableBytes: space.bavail * space.bsize,
+        temporaryArchives: Object.fromEntries(
+          ["built.tar", "image.oci.tar", "restored.tar", "roundtrip.tar"]
+            .filter((file) => existsSync(join(work, file)))
+            .map((file) => [file, statSync(join(work, file)).size]),
+        ),
+        retainedBytes: existsSync(join(output, "image.oci.tar"))
+          ? statSync(join(output, "image.oci.tar")).size
+          : 0,
+        archiveSha256: archiveSha,
+        manifest: oci?.manifest.digest,
+        config: oci?.config.digest,
+      }),
+    );
+  };
   try {
     const inputs = imageInputs();
     if (
@@ -998,6 +1039,7 @@ export async function buildArtifact(output: string, source: Source) {
     if (builtArchive.configDigest !== builtIdentity.configDigest)
       throw new Error("Buildx/export config mismatch");
     json(join(output, "build-archive.json"), builtArchive);
+    disk("before-export");
     await skopeo(
       [
         "copy",
@@ -1011,26 +1053,27 @@ export async function buildArtifact(output: string, source: Source) {
       ],
       "export",
     );
-    const archive = join(work, "image.oci.tar");
-    oci = inspect(archive);
+    const exported = join(work, "image.oci.tar");
+    oci = inspect(exported);
     if (oci.config.digest !== builtIdentity.configDigest)
       throw new Error("OCI export changed image config");
+    chmodSync(exported, 0o444);
+    archiveSha = await fileDigest(exported);
     rmSync(join(work, "built.tar"));
-    chmodSync(archive, 0o444);
-    archiveSha = await fileDigest(archive);
-    await run("cp", ["--reflink=auto", archive, join(output, "image.oci.tar")]);
-    chmodSync(join(output, "image.oci.tar"), 0o444);
+    const archive = join(output, "image.oci.tar");
+    await retainArchive(exported, archive, archiveSha);
+    disk("before-restore");
     await skopeo(
       [
         "copy",
         "--preserve-digests",
-        "oci-archive:/data/image.oci.tar",
+        "oci-archive:/frozen-image.oci.tar",
         `docker-archive:/data/restored.tar:${restoredTag}`,
       ],
       "restore",
+      archive,
     );
     await run("docker", ["load", "--input", join(work, "restored.tar")]);
-    rmSync(join(work, "restored.tar"));
     const restoredInspect = JSON.parse(
       capture("docker", [
         "image",
@@ -1043,6 +1086,8 @@ export async function buildArtifact(output: string, source: Source) {
     runtimeReference = restoredInspect.Id;
     if (!runtimeReference || !digest.test(runtimeReference))
       throw new Error("Invalid restored runtime reference");
+    rmSync(join(work, "restored.tar"));
+    disk("before-roundtrip");
     await run("docker", [
       "save",
       "--output",
@@ -1183,8 +1228,6 @@ export async function buildArtifact(output: string, source: Source) {
     ]);
     if ((await fileDigest(archive)) !== archiveSha)
       throw new Error("Frozen OCI bytes changed during acceptance");
-    if ((await fileDigest(join(output, "image.oci.tar"))) !== archiveSha)
-      throw new Error("Retained OCI bytes changed during acceptance");
     if (JSON.stringify(validationSources()) !== JSON.stringify(sourceFiles))
       throw new Error("Validation source changed during acceptance");
   } catch (error) {
@@ -1237,11 +1280,16 @@ export async function buildArtifact(output: string, source: Source) {
       ])
         if (existsSync(join(work, name))) {
           try {
-            capture("cp", [
-              "--reflink=auto",
+            capture("mv", [
+              "--",
               join(work, name),
               join(output, `failed-${name}`),
             ]);
+            if (
+              existsSync(join(work, name)) ||
+              !existsSync(join(output, `failed-${name}`))
+            )
+              throw new Error("Failed archive transfer outcome unknown");
           } catch (error) {
             cleanupErrors.push(`Failed archive preservation: ${String(error)}`);
           }

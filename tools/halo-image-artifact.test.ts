@@ -10,6 +10,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  statSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -23,6 +24,7 @@ import {
   assertRestoredArchive,
   inspectDockerArchive,
   importRuntimeEvidence,
+  retainArchive,
   fileDigest,
   shouldBuild,
   validationInput,
@@ -41,6 +43,37 @@ function temporary() {
   return path;
 }
 const read = (path: string) => readFileSync(join(root, path), "utf8");
+
+test("archive retention releases a temporary copy only after verifying retained bytes", async () => {
+  for (const outcome of ["success", "occupied", "mismatch"]) {
+    const directory = temporary();
+    const source = join(directory, "exported.tar");
+    const destination = join(directory, "image.oci.tar");
+    const bytes = Buffer.from("independently known frozen archive bytes");
+    writeFileSync(source, bytes);
+    chmodSync(source, 0o444);
+    const expected = await fileDigest(source);
+    if (outcome === "occupied") writeFileSync(destination, "existing artifact");
+    if (outcome === "success") {
+      await retainArchive(source, destination, expected);
+      expect(existsSync(source)).toBe(false);
+      expect(readFileSync(destination)).toEqual(bytes);
+      expect(statSync(destination).mode & 0o777).toBe(0o444);
+      expect(await fileDigest(destination)).toBe(expected);
+    } else {
+      await expect(
+        retainArchive(
+          source,
+          destination,
+          outcome === "mismatch" ? `sha256:${"f".repeat(64)}` : expected,
+        ),
+      ).rejects.toThrow();
+      expect(readFileSync(source)).toEqual(bytes);
+      if (outcome === "occupied")
+        expect(readFileSync(destination, "utf8")).toBe("existing artifact");
+    }
+  }
+});
 
 const evidenceFiles = [
   "runtime.json",
