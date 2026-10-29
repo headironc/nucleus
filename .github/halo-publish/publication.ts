@@ -110,7 +110,16 @@ export function assertPlatform(
     pkg.repository?.id !== selected.repositoryId ||
     pkg.repository?.full_name !== selected.repository
   )
-    throw new Error("Existing private package association is not ready");
+    throw new Error(
+      "Existing private package association is not ready: " +
+        JSON.stringify({
+          id: pkg.id ?? null,
+          name: pkg.name ?? null,
+          visibility: pkg.visibility ?? null,
+          repositoryId: pkg.repository?.id ?? null,
+          repositoryName: pkg.repository?.full_name ?? null,
+        }),
+    );
   if (
     !comparison ||
     !["ahead", "identical"].includes(comparison.status) ||
