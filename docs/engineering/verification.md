@@ -58,13 +58,58 @@ plan 直接调用现分类器。无法核实比较时保守选择 full/all；畸
 
 该状态只证明 package 责任，不包含 Halo、main 晋级、部署或自动准入。HTTP 中要求 Halo/Node/浏览器的测试仍明确 ignored，本状态不声称浏览器覆盖。本地继续按当前 classifier 的完整选检执行或核对输入后复用有效证据，不因托管范围排除 Halo 而免检。
 
+## CI 触发与选检
+
+本节区分当前自动行为与建议目标。当前事实以五份原生工作流及实际调用为准；下表的建议尚未实现。分类器的 `skip` 只描述其所属检查，不能让未接入分类器的工作流跳过。检查范围由本页维护，镜像内部协议见 [Halo CI 镜像](../../halo/README.md#ci-依赖镜像)。
+
+### 当前事件与执行阶段
+
+四个 PR 检查分别为 Docs、Rust checks、Maintenance tools 和 Packages。它们都面向 `dev/main`，订阅 opened、reopened、synchronize、edited，包括草稿。前三者没有路径过滤或实际输入选检，直接执行全部步骤。Packages 每次执行 plan，且在分类前安装 Rust。只有 `full` 才执行 PostgreSQL producer 和 package 矩阵。四者均按 PR 取消旧运行，没有当前部署的 merge queue 或 push 入口。
+
+OCI 工作流另有 PR 和 `dev` push 路径过滤，以及受限手动入口。启动不等于构建：`halo-image-artifact.ts plan` 先绑定来源，再比较环境摘要与验收源码。PR 比较事件 base 与合成候选，父提交必须准确匹配 base/head；push 比较 before 与 after。来源身份不符直接失败。来源已绑定但比较历史不可读时保守构建；手动补建核对完整 revision 和原因后构建。
+
+| 阶段          | 当前决定与证据                                                                                                   |
+| ------------- | ---------------------------------------------------------------------------------------------------------------- |
+| 启动 workflow | 由事件、目标分支及 OCI 的 paths 决定；启动本身没有验收结论                                                       |
+| 选择重任务    | Packages 由 `check-inputs.ts` → `native-packages.ts plan` 决定；其他三个检查工作流当前无选检                     |
+| 构建镜像      | `imageInputs` 比较环境摘要，`validationInput` 检查验收源码，`shouldBuild` 给出原因；普通业务 PR 不因 PR 身份构建 |
+| 导出与上传    | 仅在 OCI plan 要求构建时执行；冻结、恢复后验收、完整再导出校验及扫描通过后上传一次                               |
+| 独立下载验收  | 使用 producer 返回的 artifact ID 下载，核来源、run/attempt、归档与完整 OCI 身份；上传成功不能代替此阶段          |
+
+`imageInputs` 包含 Dockerfile、忽略文件、Bun/Node/Rust 版本、PG 构建器与版本、镜像和 Bun 检查工具。它还包含后端/Buildx、Playwright 版本和 Node 支持范围。`validationInput` 当前覆盖整个 `tools/`、`halo/tools/`、`.github/halo-ci/`，以及镜像 workflow、根 package.json 和两份 tsconfig。普通维护工具也可能触发完整 OCI 验收；此范围尚未按真实消费者收窄。
+
+### 变更与检查矩阵
+
+下表按单类输入说明，混合改动合并各项责任。当前四个 PR 检查 workflow 均启动；“全跑”指前三者执行全部原步骤。Packages 的档位取当前分类器，包范围再由 Cargo 消费者扩展。建议目标改变执行条件，不免除必要检查或正式审查。
+
+| 输入或事件                                                | 当前实际行为                                                                                                    | 建议目标行为                                                                                                             |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| 根 README/AGENTS、`docs/**/*.md` 纯说明                   | 前三者全跑；Packages `skip`，仅计划与汇总；OCI 不启动                                                           | 文档格式、Markdown、离线链接；预览实现与材料未变时复用有效结果，不准备 Rust/PG/镜像                                      |
+| 设计预览、脚本与素材                                      | 已知设计后缀为 `skip`；`tools/preview-design.ts` 为 `tools` 且触发 OCI；前三者全跑                              | 文档、真实预览回归与受影响视觉验收；三份 Halo 共享素材另验网站消费者；无镜像消费者的预览工具不触发 OCI                   |
+| Rust 业务源码、测试及运行资源                             | 前三者全跑；Packages `full`，按直接包及传递消费者运行；通常不触发 OCI                                           | Rust 格式、Clippy、依赖边界、完整受影响包及 Halo 相关集成；按消费者选择文档/工具检查                                     |
+| Cargo 清单、锁、build.rs、`.cargo/`、Rust 工具链          | Packages `full/all`；前三者全跑；Rust 工具链触发 OCI，Cargo.lock 单独变化不触发                                 | 保留全部包及环境消费者；工具链改变保留完整环境验收，依赖变化不自动等于重建镜像                                           |
+| 迁移、数据库准备与夹具                                    | SQL 显式选择 Domain/Deployment；fixture 源码或 PG 构建器选择 Fixture，再扩展消费者；PG 构建器/版本还触发 OCI    | 保留 SQL 直接嵌入与全部夹具消费者，验证隔离数据库、失败恢复及清理；PG 环境改变保留 OCI 验收                              |
+| 普通 `tools/`、根 JS 清单、锁、tsconfig、`.tool-versions` | 通常 `tools`；前三者全跑；`tools/`、清单、tsconfig 触发 OCI，版本按环境摘要判断；根 bun.lock 单独变化不触发 OCI | 类型、实际工具回归、依赖边界及真实消费者；共享运行时改变覆盖全部消费者，按已核依赖缩小 OCI 验收输入                      |
+| `tools/check-inputs.ts`、`tools/check-packages.ts`        | `full/all`，并触发 OCI；`native-packages.ts` 仍为普通 `tools`                                                   | 分类与 package 编排保留完整相关回归；收窄前证明选择完整、失败传播与未知输入保守行为                                      |
+| 镜像配方、环境版本与构建工具                              | 按环境摘要或验收输入构建；`.github/halo-ci/` 在 Rust 分类中为未知 `full/all`                                    | 环境变化完整构建、恢复、真实消费者、扫描、上传与独立下载；产品矩阵按真实消费者另验                                       |
+| 镜像验收、导出、扫描与下载工具                            | 环境摘要不变也会因验收输入改变而完整构建验收                                                                    | 保留准确候选的完整产物链；验证实现改变后不能复用它自己的旧成功结论                                                       |
+| `halo/package.json` 与网站依赖                            | Rust `skip`；前三者全跑；该清单使 OCI 启动，仅 Playwright/Node 等环境语义变化才构建；Halo 锁单独变化不触发 OCI  | 网站依赖按 Halo 契约验收；区分应用依赖安装与镜像环境，保留环境变化的完整验收                                             |
+| `.github/rulesets/*.json`                                 | 未知路径为 `full/all`，前三者全跑；OCI 不启动                                                                   | 静态核 JSON 结构、准确目标与保护语义；平台启用及阻断/允许行为另按配置授权验收                                            |
+| PR 标题、描述或目标分支编辑                               | `edited` 启动四个检查；机器人改描述也可重跑并取消旧运行；OCI 仍受路径和 plan 限制                               | 保留 edited；仅元数据变化可在证明验证输入未变后复用。目标、合成候选或实际消费的元数据变化时重新核覆盖                    |
+| 合入基线、仅解决说明文档冲突                              | synchronize 仍启动；分类查看基线到完整 PR 候选，可能仍为 `full`，OCI 也可能仍命中原 PR 镜像改动                 | 与上次已验候选比较相关输入，补文档检查并复用有效计算；共享代码、依赖或环境改变时补验                                     |
+| 缺历史、未知路径、改名或删除                              | 无法核实比较时 `full/all` 且 Halo `run`；未知路径保守 full；分类器按改名两端处理                                | 保留保守规则与明确原因，覆盖旧、新消费者；OCI 只有已启动且来源绑定有效时才对比较失败保守构建，paths 外未知输入不保证启动 |
+
+### 后续优化验收
+
+每片分别验收明确的工作流或分类责任。优先让 Rust checks 消费已有档位。`skip/tools` 省略 Rust 准备与 fmt/Clippy，`checks/full` 执行原检查。随后分别处理纯配置分类、Docs/Maintenance 消费者和过宽的镜像验收输入。每片保留准确候选绑定、edited、未知比较、改名/删除、失败与取消语义。以真实托管运行核对执行或跳过。本文不实现这些建议，不建立缓存或证据服务，也不恢复旧准入控制器。
+
 ## 检查范围
 
 [OCI 产物工作流](../../.github/workflows/halo-image.yml)按[镜像输入与产物验收](../../halo/README.md#ci-依赖镜像)运行原生构建、恢复后消费者验收和独立下载校验。它只有源码读取权限，不提供包发布、消费者迁移或 VM 接入证据。
 
 旧 GitHub Actions CI、审查关卡和镜像发布入口已停用。dev/main 旧自动准入入口也已停用。两条长期分支采用[普通分支保护](delivery.md#普通分支保护)，其他分支保留原签名规则。适用本地检查、原生 CI、业务验收及当前候选审查继续执行。这些结果由交付负责人验收，不由普通保护的 required checks 强制。历史绿灯不提供新候选的验收结论。Dependabot 与独立托管审查不随旧工作流删除。
 
-工作流原件移至[历史测试夹具](../../tools/fixtures/retired-workflows/README.md)，保留分类、缓存、镜像和恢复回归。下文涉及工作流、队列、缓存预热及自动任务的描述均解释这些离线测试中的旧协议，不表示当前有相应部署。保留的本地分类、package、Halo 与维护工具命令仍按实际输入选择执行。新 CI 的选择、部署和强制机制另行验收。
+旧工作流原件移至[历史测试夹具](../../tools/fixtures/retired-workflows/README.md)，保留分类、缓存、镜像和恢复回归。下文明确标注的旧 Rust 汇总、Halo workflow、队列与缓存预热只解释离线协议。当前原生执行见[触发与选检](#ci-触发与选检)；本地分类、package、Halo 与维护工具命令仍按实际输入选择执行。新的选检与平台强制机制分别验收。
 
 文档与设计材料改动运行[文档维护](../README.md#文档维护)规定的检查。设计稿还按[页面验收](../client/pages.md#验收)核对实际视觉与交互。实现改动验证当前选定结果及其失败边界，按 [Rust 工作区规则](rust.md#workspace-validation)执行受影响包及消费者的检查。
 
@@ -81,7 +126,7 @@ plan 直接调用现分类器。无法核实比较时保守选择 full/all；畸
 | `src/`、`tests/`、`domain/`、`platform/`、`deployment/`、`fixture/`、`assets/`                                           | Rust 格式、Clippy、依赖边界，以及独立 package 构建、测试和 rustdoc；迁移及夹具也是后端输入                        |
 | `halo/`、Halo 工作流、网站消费的共享设计素材                                                                             | Halo 工作流检查协议同步、类型、单元测试、构建和隔离浏览器链路                                                     |
 | `tools/check-inputs.ts`、`tools/check-packages.ts`、Rust 工作流与缓存工作流、Action、Cargo 清单和锁文件、Rust 工具链配置 | 分类、package 矩阵与构建环境的输入，保留完整检查                                                                  |
-| 其余 `tools/`、`.tool-versions`、根 `package.json` 与 `bun.lock`、`tsconfig.json`、Docs 工作流、现有三份审查工作流       | Rust 工作流只运行维护工具任务 `tools`；Docs 工作流另运行预览传输回归及文档检查                                    |
+| 其余 `tools/`、`.tool-versions`、根 `package.json` 与 `bun.lock`、`tsconfig.json`、Docs 工作流、旧三份审查工作流路径     | 分类器返回 `tools`；本地按实际消费者验证，当前原生工作流并未全部消费该档位                                        |
 | `rustfmt.toml`                                                                                                           | 运行 `tools` 及 Rust 格式和工作区 Clippy，不运行 package 矩阵                                                     |
 | 根 `README.md`、`AGENTS.md`、`halo/README.md`、`docs/**/*.md`、`design/**/*.md`                                          | Docs 工作流执行格式、Markdown 结构和本地链接检查                                                                  |
 | `design/**/*.html`、CSS、预览脚本、图片与许可文本                                                                        | Docs 工作流运行预览传输回归，检查本地链接、图片引用和锚点；视觉、样式、脚本交互、字体及业务正确性仍由设计验收负责 |
@@ -95,7 +140,7 @@ Rust 分类豁免上表列出的 Markdown、三份根配置、`halo/` 和 Halo �
 
 本地在仓库根目录运行 `bun tools/check-inputs.ts --base origin/dev`。分类器解析显式基线与 `HEAD`，以两者唯一的最佳共同祖先比较当前候选。路径取共同祖先到暂存区、暂存区到工作树的并集，再纳入未忽略的未跟踪文件。因此已提交、已暂存和未暂存改动均在范围内，两层改动不会互相抵消。被跟踪的忽略文件仍在范围内。分类器隔离调用者的 Git 环境覆盖，并核对脚本、工作目录与仓库根一致。分类器不会 fetch、安装或修改源码和配置。基线或历史不可用、存在多个最佳共同祖先时保守运行。报告给出 Rust 档位、直接受影响的包及 Halo 的运行或跳过决定。Rust 完整检查还给出包含消费者的 package 检查命令；其他检查使用所属文档的命令。
 
-Rust 工作流对每个 PR 和队列候选运行分类，并报告最终 `rust` 状态。两种事件与本地分类共用上述四档规则。最终状态核对下表的成功或跳过结果；失败、取消、未知档位及意外跳过都使检查失败。
+旧 Rust 工作流夹具对 PR 和队列候选分类，并报告最终 `rust` 状态。它与本地分类共用下列四档规则。表中组合描述旧汇总协议，不表示当前 Rust checks 已接入选检。当前 Packages 只消费其中的 package 执行决定。
 
 | 档位     | 维护工具 `tools` | Rust 格式与工作区 Clippy `checks` | 独立 package 矩阵 |
 | -------- | ---------------- | --------------------------------- | ----------------- |
@@ -104,13 +149,13 @@ Rust 工作流对每个 PR 和队列候选运行分类，并报告最终 `rust` 
 | `checks` | 通过             | 通过                              | 跳过              |
 | `full`   | 通过             | 通过                              | 通过              |
 
-Docs 工作流始终运行。必需工作流入口不使用路径过滤：未上报的状态会阻止合并，见 [GitHub 的说明](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#handling-skipped-but-required-checks)。
+当前 Docs 始终运行。普通保护没有 required status checks；未来如增加强制检查，先保证必要状态始终上报。路径过滤导致 required 检查缺失时可能阻止合并，见 [GitHub 的说明](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#handling-skipped-but-required-checks)。
 
 CI 分类与最终状态的实现和验收见 [Rust 工作区验证](rust.md#workspace-validation)。自动代码与安全审查保持现有触发方式。通过轻量检查不表示设计稿已经完成页面、真机或生产验收。
 
 ### Rust 包选择
 
-`full` 档由 `changes` 在分类后准备固定 Rust 工具链，并发现独立 package 矩阵。发现只读取元数据，不构建。package、维护工具和格式及 Clippy 检查随后并行运行；最终 `rust` 等待并核对全部结果。其他三档不准备发现所需的 Rust 工具链。发现失败、空或畸形矩阵使 `changes` 失败，最终状态仍拒绝失败、取消和意外跳过。
+当前 Packages 的 plan 先安装 Rust，再分类。只有 `full` 才通过 `native-packages.ts` 调用 package 检查器发现完整矩阵；发现读取元数据，不构建。其他三档输出明确的空计划，由 `Nucleus Packages` 核对下游跳过。发现失败、空或畸形 full 矩阵均失败。旧夹具中的 `changes` 与最终 `rust` 汇总不属于当前部署。
 
 分类器只确定直接受影响的包；[package 检查器](../../tools/check-packages.ts)读取当前 Cargo 元数据，扩展全部传递消费者。生产、开发、构建、可选及目标平台限定的路径依赖都参与扩展。依赖别名不改变包的路径身份，同名注册表依赖不构成工作区依赖。
 
@@ -129,7 +174,7 @@ SQL 的范围包含 Domain 测试的直接嵌入，不能仅靠 Cargo 依赖方�
 
 每个选中包保留独立交付构建、自身测试、doctest 和 rustdoc。选中 Nucleus 时，矩阵生成 `rest` 与 `http` 两组。`http` 运行完整 HTTP 普通集成测试，保留忽略语义；`rest` 负责独立交付构建、其余启用的普通测试、doctest 和 rustdoc。两组都成功才完成该包验证。新增 bin 或集成测试按 Cargo 元数据纳入；禁用测试和 doctest 保持禁用。示例、benchmark、带必需特性的目标或其他不支持的目标形状使发现及分组执行失败，先更新覆盖计划。
 
-选中 Domain 时运行全部四个库测试分片；未选中时不添加分片。Domain 出现无法由现有分片命令覆盖的新测试目标时，矩阵发现失败，先更新验证方式。发现还拒绝重复项、缺失分组及不完整分片。缓存预热继续准备全部成员，不按某个 PR 的影响范围缩小。
+选中 Domain 时运行全部四个库测试分片；未选中时不添加分片。Domain 出现无法由现有分片命令覆盖的新测试目标时，矩阵发现失败，先更新验证方式。发现还拒绝重复项、缺失分组及不完整分片。旧缓存预热协议准备全部成员；当前原生 Packages 不恢复缓存。
 
 本地使用分类器报告的 `--affected` 命令。例如 `bun tools/check-packages.ts --affected '["domain"]'` 检查 Domain 及其传递消费者；追加 `--list` 可先查看集合。原有 `--package` 仍只选择显式指定的包，并执行完整验证。CI 的 `--package nucleus --group http|rest` 每次只运行指定组，必须执行两组才能覆盖完整包。选检不省略已知的跨目录输入或语义交互验收；新增消费者时，同片更新归属和回归。
 
@@ -232,7 +277,21 @@ Rust 缓存沿用已固定版本的 [rust-cache 契约](https://github.com/Swati
 
 把能稳定、准确判定的约束落实到类型、数据库保护、测试或现有检查器。选择设施时核对真实误用和现有覆盖，不为每条偏好增加文字扫描或与实现同构的测试。涉及职责、缺席含义和库契约的判断继续读取源码与权威依据。
 
-在现有任务或 PR 中保留候选、基线、检查范围、结果及必要来源。区分本次运行、复用结果、源码自检和审查结论，说明未覆盖事项。复用证据前核对代码、依赖、配置及测试环境等相关输入；有变化时补做受影响检查。完整验收的项目准备入口见[开发循环](delivery.md#开发循环)。证据复用仍以本节的相关输入边界为准。无需另建逐项打勾台账，也不以通过数量宣称生产就绪。
+在现有任务或 PR 中保留候选、基线、检查范围、结果及必要来源。区分本次运行、复用结果、源码自检和审查结论，说明未覆盖事项。完整验收的项目准备入口见[开发循环](delivery.md#开发循环)。无需另建逐项打勾台账，也不以通过数量宣称生产就绪。
+
+### 输入等价与失效
+
+复用前核对相关源码、测试、验证工具及命令、配置、锁定依赖、工具链与运行环境。记录新候选与原证据的覆盖关系。保留原 source/base/head 和实际合成提交，以及 run/attempt、job 和 artifact 身份。不同 SHA 不必重算全部输入，但旧成功不能改标成新 SHA 已执行。缓存命中或相同环境摘要也不能单独证明全部输入等价。
+
+相关输入改变、无法证明等价或新证据推翻结果时，补做受影响验证。改名或删除包含旧、新消费者；基线更新先核实际组合差异。检查自身实现变化后，原结果不证明新实现有效。输入分类失败、未知路径与不完整历史按[当前选检边界](#ci-触发与选检)处理，不转成成功跳过。
+
+独立审查也保留原候选、基线、提供方、完成结论及发现处置。仅对实际未变的覆盖复用，变更部分补齐审查；没有新线程不能证明新审查完成。正式审查和平台保护继续按[交付规则](delivery.md#审查关卡与证据复用)验收。取消只改变准确运行的终态，不生成替代成功；处置冗余运行前确认相关性、有效覆盖及操作授权。
+
+### 文档冲突验收例
+
+[PR #36](https://github.com/headironc/nucleus/pull/36) 的镜像 head `340b6f33` 合入 [PR #37](https://github.com/headironc/nucleus/pull/37) 后的 dev `ecb3be02`，形成文档整合 head `73ad8b5c`。差异是两份已审 ruleset JSON 和三份文档，唯一冲突位于本页一个段落。其余 748 个跟踪条目的对象与模式未变，环境摘要和验收输入也未变。该实例补做文档格式、Markdown、离线链接、prose 与编号检查，并核对段落整合及两份原审查的有效覆盖。
+
+复用的 [OCI run 40958514715](https://github.com/headironc/nucleus/actions/runs/40958514715) 完成构建、恢复后验收及独立下载。它的实际 source 仍是 `ce5633ac5b243dc0b9db158ddd52a753151c2f88`，artifact 为 `12936560844`，不能记成文档 head 的新执行。新触发的八个冗余重任务保留 `cancelled`。合并后的首次 dev run `40964056245` 绑定 `55506adf`。其构建与下载是工作流自身的集成验收，另由原运行负责者收束。本例不宣称该运行已成功或镜像已发布。
 
 ## 故障注入与证据
 
