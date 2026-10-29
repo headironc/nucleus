@@ -242,11 +242,11 @@ bun run test -- app/protocol/affiliation.test.ts app/affiliation/marker.test.ts 
 
 ## CI 依赖镜像
 
-旧 Halo、Rust、缓存和镜像发布工作流已停用。以下自动构建、发布和缓存叙述解释[历史夹具](../tools/fixtures/retired-workflows/README.md)中的退役协议，不是当前可调用的部署入口。镜像构建工具和本地容器验证继续保留；新发布流程另行授权和验收。
+[镜像产物工作流](../.github/workflows/halo-image.yml)在面向 `dev/main` 的 PR、`dev` push 和受限手动补建时，按实际环境输入和验收源码判断是否构建。手动补建只接纳 `dev` 历史中的完整提交 SHA，并记录原因。PR 绑定 head、base 与实际合成提交；首次加入或修改验收逻辑也会运行。根与 Halo 锁文件、React/Vite 或 Cargo.lock 单独变化不重建环境。
 
-[Halo 工作流](../tools/fixtures/retired-workflows/halo.yml)、[Rust package 作业](../tools/fixtures/retired-workflows/rust.yml)及两者的[缓存预热](../tools/fixtures/retired-workflows/cache.yml)使用同一镜像 digest。镜像定义在 [Dockerfile](../.github/halo-ci/Dockerfile)。官方 Playwright 基础镜像固定版本与 digest，提供浏览器及系统依赖。派生镜像安装经 SHA-256 核对的准确 Node 和 Bun，增加 Nginx、Rust 工具链及组件，并编译固定 PostgreSQL。Node 的路径优先于基础镜像自带版本，Linux 运行依赖包含 `libatomic1`。最终镜像只保留软件安装，不包含仓库源码、集群、证书或测试数据。
+镜像定义在 [Dockerfile](../.github/halo-ci/Dockerfile)。官方 Playwright 基础镜像固定版本与 digest，提供浏览器及系统依赖。派生镜像安装经 SHA-256 核对的准确 Node、Bun 和 rustup，增加 Nginx、Rust 工具链及组件，并编译固定 PostgreSQL。Node 的路径优先于基础镜像自带版本，Linux 运行依赖包含 `libatomic1`。构建上下文仅含镜像定义、忽略文件和 PostgreSQL 构建器及版本文件。
 
-版本来源保持现有归属：Bun 和 Node 读 `.tool-versions`，Rust 读 `rust-toolchain.toml`，PostgreSQL 读 `fixture/postgresql.version` 及其构建脚本，Playwright 读 `halo/package.json`。构建器同时核对 Halo 的 Bun 声明和 Node 支持范围。镜像记录这些输入、构建定义、构建器及其 Bun 版本解析依赖的摘要。运行前核对摘要、准确工具版本和浏览器可执行文件；不匹配时失败，更新镜像后再验收。普通 PR 与队列不安装系统包、下载工具链或编译 PostgreSQL。
+版本来源保持现有归属：Bun 和 Node 读 `.tool-versions`，Rust 读 `rust-toolchain.toml`，PostgreSQL 读 `fixture/postgresql.version` 及其构建脚本，Playwright 读 `halo/package.json`。构建器核对 Halo 的 Bun 声明和 Node 支持范围。构建后端和固定 Buildx 客户端也进入环境摘要；导出与扫描工具的变化强制重新验收。输入摘要、构建 config、daemon 运行引用、OCI manifest、归档 SHA 和 GitHub ZIP digest 分别记录。滚动 APT 来源使相同输入的重建仍可能产生不同字节。
 
 在仓库根目录构建：
 
@@ -254,17 +254,27 @@ bun run test -- app/protocol/affiliation.test.ts app/affiliation/marker.test.ts 
 bun tools/halo-ci-image.ts build nucleus-halo-ci:local
 ```
 
-构建器只发送镜像定义和 PostgreSQL 构建脚本及版本文件。PostgreSQL 从官方源码校验摘要后构建，安装固定在 `/opt/nucleus/target/postgresql/<version>`。运行前在仓库 `target/postgresql/<version>` 建立指向该安装的链接，避免移动后的动态库路径失效。任务使用 UID/GID 1001；`initdb`、数据库、真实后端、Node 和隔离 Nginx 在同一容器内通信，保留回环与 TLS 验收。
+完整可下载产物可在 Linux 非 root 宿主运行以下命令。使用仓库固定的 Node/Bun、Docker 和 Python 3。输出目录必须不存在；大型临时文件使用磁盘目录，避免占满 `/tmp`。工具为自己的私有目录承担 `finally` 清理，失败证据保留在输出目录。
 
-[镜像发布工作流](../tools/fixtures/retired-workflows/halo-image.yml)仅接受新仓库 ID `1432619931` 从 `dev` 手动执行。输入已审阅的完整提交 SHA，选择 `build` 后只构建并上传 `nucleus-ci-image` artifact，保留一天。构建作业只有源码读取权限；产物包含完整镜像 tar、配置、history 和来源记录。先下载准确 artifact，检查全部层，包括后层删除或覆盖的文件，再核对配置、history、依赖许可及敏感内容。源码检查与文件名清单不能代替实际内容检查。
+```bash
+bun tools/halo-image-artifact.ts build /absolute/path/to/new-artifact
+```
 
-检查通过后另行触发 `publish`，提供相同修订、成功的 build run ID、不可变 artifact ID 和已检查的 `nucleus-ci.tar` SHA-256。发布作业使用临时 `GITHUB_TOKEN` 的 `actions: read` 下载原产物，先核对仓库、工作流、运行状态及来源，再核对实际字节摘要。跨运行下载的权限要求见 [download-artifact](https://github.com/actions/download-artifact#download-artifacts-from-other-workflow-runs-or-repositories)。发布作业不检出或执行源码、不运行镜像、不重建产物；核对来源标签后推送 `ghcr.io/silence-force/nucleus-ci`。包写权限仅在发布作业内。
+工具把经固定 SHA 校验的 standalone Buildx 放到本次私有目录，使用原 default Docker driver 的内置 BuildKit。它复用原 builder 的四文件 context，执行单平台 load 并保存构建 metadata，随后核 Docker archive 中实际 config 和全部层。它不安装宿主插件、不创建 builder 服务。已有同字节工具可通过 `NUCLEUS_IMAGE_BUILDX_BINARY` 和 `NUCLEUS_IMAGE_GITLEAKS_ARCHIVE` 只读复用，校验规则不变。
 
-首次发布选择预期 `private`；包公开后的更新选择 `public`。这个输入只核对结果，不改变可见性。发布后核对包名、预期可见性、仓库 ID 和完整仓库名；缺失或不同的关联都使验证失败。首次公开另行执行，只公开已检查的新包全部版本，并验证准确 digest 的匿名拉取。[公开 package 不能改回 private](https://docs.github.com/en/packages/learn-github-packages/configuring-a-packages-access-control-and-visibility#configuring-visibility-of-packages-for-an-organization)。发布报错或结果未知时先回读原 run 和准确 tag，确认实际结果后再决定修复，不直接重复触发推送。
+构建 metadata 的 config 摘要真正缺省时，工具用 metadata 指定的原始单 manifest 字节闭合 config 和有序层的引用链；非法或冲突的已提供字段仍拒绝。原始 `build-manifest.json` 随产物保留，下载端重新核其类型、大小、摘要及实际 OCI config。经典 Docker archive 若没有原 manifest，只能使用合法的直接 config 摘要，不能重建 manifest 代替原件。
 
-消费者现已固定公开包 `nucleus-ci` 的真实 digest，并移除包拉取凭据；Halo、Rust 与缓存工作流按公开包匿名拉取。切换须经 PR、队列和缓存验收。旧包 `nucleus-halo-ci` 保持私有；旧包对新仓库的 Actions Read 单独撤销并读回后，才完成访问隔离。镜像发布成功不代表消费者切换或仓库公开条件已完成。
+固定 Skopeo 用 `copy --format v2s2 --dest-compress-format gzip --dest-force-compress-format` 生成单平台 `linux/amd64` OCI layout 归档，冻结字节后用 `--preserve-digests` 恢复。显式生成 gzip 可避免 Docker archive 传输把未压缩 tar 声明为 gzip。内部严格支持配对的 OCI manifest/config/tar 或 gzip 层，以及 Docker schema 2 manifest/config/diff.tar 或 gzip 层；当前来源使用后者。报告保留真实 media type，不代表任意 OCI 消费者均兼容。Docker 的 `.Id` 可能表示 manifest/index；工具分别保存实际运行引用与 config 摘要。恢复后按准确运行引用再次完整导出，核 config 原字节、平台、RootFS diff IDs 与冻结归档一致，单独核默认用户的实际 UID，再以宿主非 root 身份运行消费者，并核容器实际使用的引用。
 
-更新依赖时，先更新所属版本源和相关下载摘要。Playwright 升级还须更新 Dockerfile 的官方镜像版本与 digest。构建并完成容器验收后，使用发布工作流发布已审阅修订。从发布日志回读实际 digest，再同时替换 Halo、Rust 与缓存工作流所有消费者中的镜像及 `HALO_CI_IMAGE`。提交前运行维护工具回归，并在 PR 和队列上确认实际验收。镜像 digest 变化时使用新的缓存身份，缓存缺失仍执行完整检查。
+源码和已按锁文件、禁脚本准备的 Halo 依赖只读，`target` 和 HOME 私有可写。验收容器禁止外网，执行准确版本、输入摘要、非 root、无 TCP 的私有 PG 查询、双 Chromium 实际页面 smoke 及 `tools/check-inputs.test.ts` 薄消费者。PG fast-stop、进程终态、私有目录删除和容器移除分别核对；清理失败不产生成功结论。首次导出兼容预检使用无网络的 scratch 小镜像；它不替代完整 OCI 的恢复后验收。
+
+产物包含 `image.oci.tar`、来源、config、完整 history、层内容清单、脱敏扫描报告、实际系统包和 copyright 材料。Python `tarfile` 逐层读取，包括后层删除或覆盖的内容；只把普通文件复制为私有编号文件，不跟随链接或创建设备。固定 Gitleaks 扫描全部普通文件、路径及链接元数据，禁用行内放行和整路径豁免。嵌套归档与编码扫描深度为 2；加密、更深层或不受支持格式不展开。二进制字节也交给模式扫描，但任意二进制秘密未必能命中。扫描和许可材料不证明无秘密、无漏洞或法律审批。
+
+扫描处置列表 `.github/halo-ci/scan-exceptions.json` 绑定完整来源字节、准确路径、规则、位置和次数，并绑定检测器及配置摘要；额外或变化的命中仍失败。报告区分检测、已处置和未决。当前列表含上游代码、示例、公钥，以及 Chromium 长期公开分发、用作组件 ID 输入的固定 DER 私钥材料；后者按准确原件接纳，不归类为公钥，也不推广到其他私钥。列表只保值摘要，不含私钥字面量。
+
+只有运行验收、层扫描和清理成功后才上传 `nucleus-ci-<run_id>-<run_attempt>`，保留 7 天。独立下载作业按上传的 artifact ID 下载，摘要不符直接失败，再交叉核源码、repository、run/attempt、内部 tar SHA 与 manifest/config/layers，并核扫描处置列表属于当前候选。artifact ID 和 ZIP digest 在上传后记入输出与 summary，内部来源不虚构未来 ID。本地执行的 CI 身份明确为 null。
+
+工作流只有 `contents: read`，不登录 registry、不传包凭据、不把 Docker socket 挂入候选容器。它不发布 GHCR，也不切换消费者。私有包关联、Actions 访问、发布与冷拉取，以及 Runner 的 VM 接入分别验收；本片产物不能证明这些后续条件。旧发布、Halo 和缓存流程仅保留为[历史夹具](../tools/fixtures/retired-workflows/README.md)。
 
 本地容器验证以可写工作副本挂载仓库，使用镜像的非 root 用户及 `--init --ipc=host`。init 回收测试退出后留下的孤儿进程，使进程组终态可观察。本地完整验收可运行 `bun tools/halo-local.ts`；该入口按本节镜像、输入摘要和非 root 约束准备环境，并在类型与业务执行前核对两种浏览器运行时。底层操作仍先运行 `bun tools/halo-ci-image.ts verify`，再执行本页的协议快照核对、类型与单元测试、正式构建和浏览器验收。将大型 Cargo 产物挂载到磁盘目录，避免占满临时文件系统。容器的源码挂载、缓存及临时数据库均不进入发布镜像。
 

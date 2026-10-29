@@ -1,0 +1,149 @@
+name: Halo image artifact
+
+on:
+  pull_request:
+    branches: [dev, main]
+    types: [opened, reopened, synchronize, edited]
+    paths:
+      - .github/halo-ci/**
+      - .github/workflows/halo-image.yml
+      - .tool-versions
+      - rust-toolchain.toml
+      - fixture/postgresql.ts
+      - fixture/postgresql.version
+      - halo/package.json
+      - halo/tools/**
+      - halo/tsconfig.json
+      - tools/**
+      - package.json
+      - tsconfig.json
+  push:
+    branches: [dev]
+    paths:
+      - .github/halo-ci/**
+      - .github/workflows/halo-image.yml
+      - .tool-versions
+      - rust-toolchain.toml
+      - fixture/postgresql.ts
+      - fixture/postgresql.version
+      - halo/package.json
+      - halo/tools/**
+      - halo/tsconfig.json
+      - tools/**
+      - package.json
+      - tsconfig.json
+  workflow_dispatch:
+    inputs:
+      revision:
+        description: Full commit SHA in dev history
+        required: true
+        type: string
+      reason:
+        description: Reason for rebuilding this exact source
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Nucleus OCI build and acceptance
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      source: ${{ steps.plan.outputs.source }}
+      tar: ${{ steps.build.outputs.tar }}
+      manifest: ${{ steps.build.outputs.manifest }}
+      config: ${{ steps.build.outputs.config }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      artifact-digest: ${{ steps.upload.outputs.artifact-digest }}
+    steps:
+      - name: Validate manual checkout input
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: |
+          test "$GITHUB_REF" = refs/heads/dev
+          [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.revision || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .tool-versions
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version-file: .tool-versions
+          package-manager-cache: false
+      - name: Bind event and compare actual inputs
+        id: plan
+        run: bun tools/halo-image-artifact.ts plan "$RUNNER_TEMP/image-source.json"
+      - name: Build, freeze, restore and accept the OCI bytes
+        id: build
+        if: steps.plan.outputs.build == 'true'
+        env:
+          TMPDIR: ${{ runner.temp }}
+        run: bun tools/halo-image-artifact.ts build "$RUNNER_TEMP/nucleus-ci"
+      - name: Upload accepted bytes once
+        id: upload
+        if: steps.plan.outputs.build == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: nucleus-ci-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nucleus-ci
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
+      - name: Record immutable artifact receipt
+        if: steps.plan.outputs.build == 'true'
+        env:
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        run: |
+          printf 'artifact_id=%s artifact_zip_sha256=%s run=%s attempt=%s\n' "$ARTIFACT_ID" "$ARTIFACT_DIGEST" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_STEP_SUMMARY"
+
+  download:
+    name: Nucleus OCI independent download verification
+    needs: build
+    if: needs.build.outputs.build == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ needs.build.outputs.source }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .tool-versions
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact-id }}
+          path: ${{ runner.temp }}/downloaded
+          digest-mismatch: error
+      - name: Cross-check source, run, attempt and complete OCI identities
+        env:
+          EXPECT_SOURCE: ${{ needs.build.outputs.source }}
+          EXPECT_TAR: ${{ needs.build.outputs.tar }}
+          EXPECT_MANIFEST: ${{ needs.build.outputs.manifest }}
+          EXPECT_CONFIG: ${{ needs.build.outputs.config }}
+          ARTIFACT_ID: ${{ needs.build.outputs.artifact-id }}
+          ARTIFACT_DIGEST: ${{ needs.build.outputs.artifact-digest }}
+        run: |
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ARTIFACT_DIGEST" =~ ^(sha256:)?[0-9a-f]{64}$ ]]
+          bun tools/halo-image-artifact.ts verify "$RUNNER_TEMP/downloaded"
+          printf 'download_verified artifact_id=%s artifact_zip_sha256=%s source=%s run=%s attempt=%s\n' "$ARTIFACT_ID" "$ARTIFACT_DIGEST" "$EXPECT_SOURCE" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_STEP_SUMMARY"

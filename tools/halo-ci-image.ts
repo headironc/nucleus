@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   copyFileSync,
@@ -77,6 +77,14 @@ export function imageInputs(readInput: (path: string) => string = read) {
   ]) {
     hash.update(path).update("\0").update(read(path)).update("\0");
   }
+  const { backend, buildx } = JSON.parse(
+    read(".github/halo-ci/artifact-tools.json"),
+  );
+  hash
+    .update("build-backend")
+    .update("\0")
+    .update(JSON.stringify({ backend, buildx }))
+    .update("\0");
   hash.update(playwright).update("\0").update(manifest.engines.node);
   return {
     bun,
@@ -93,6 +101,34 @@ function run(command: string, args: string[]) {
   if (result.error) throw result.error;
   if (result.status !== 0)
     throw new Error(`${command} failed (${result.signal ?? result.status})`);
+}
+
+async function build(command: string, args: string[]) {
+  const child = spawn(command, args, { cwd: root, stdio: "inherit" });
+  let cancelled = false;
+  const interrupt = () => {
+    cancelled = true;
+    child.kill("SIGINT");
+  };
+  const terminate = () => {
+    cancelled = true;
+    child.kill("SIGTERM");
+  };
+  process.on("SIGINT", interrupt);
+  process.on("SIGTERM", terminate);
+  try {
+    const status = await new Promise<number | null>((done, reject) => {
+      child.once("error", reject);
+      child.once("exit", done);
+    });
+    if (status !== 0 || cancelled)
+      throw new Error(
+        `Docker image build failed (${status}, cancelled=${cancelled})`,
+      );
+  } finally {
+    process.off("SIGINT", interrupt);
+    process.off("SIGTERM", terminate);
+  }
 }
 
 function verifyImage() {
@@ -155,13 +191,21 @@ function verifyImage() {
 
 if (import.meta.main) {
   const [command, tag, ...extra] = process.argv.slice(2);
+  const buildx =
+    extra.length === 4 && extra[0] === "--buildx" && extra[2] === "--metadata"
+      ? { path: extra[1]!, metadata: extra[3]! }
+      : undefined;
   if (
-    extra.length ||
+    (extra.length && !buildx) ||
     !["build", "verify"].includes(command ?? "") ||
     (command === "build" ? !tag : tag)
   ) {
-    throw new Error("Usage: bun tools/halo-ci-image.ts build IMAGE | verify");
+    throw new Error(
+      "Usage: bun tools/halo-ci-image.ts build IMAGE [--buildx BINARY --metadata FILE] | verify",
+    );
   }
+  if (buildx && !process.env.BUILDX_CONFIG)
+    throw new Error("Buildx requires private BUILDX_CONFIG state");
   if (command === "verify") verifyImage();
   else {
     const inputs = imageInputs();
@@ -177,8 +221,19 @@ if (import.meta.main) {
         mkdirSync(dirname(destination), { recursive: true });
         copyFileSync(resolve(root, path), destination);
       }
-      run("docker", [
+      await build(buildx?.path ?? "docker", [
         "build",
+        ...(buildx
+          ? [
+              "--builder",
+              "default",
+              "--load",
+              "--metadata-file",
+              buildx.metadata,
+              "--provenance=false",
+              "--sbom=false",
+            ]
+          : ["--force-rm"]),
         "--platform",
         "linux/amd64",
         "--file",
