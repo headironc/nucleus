@@ -260,7 +260,7 @@ bun tools/halo-ci-image.ts build nucleus-halo-ci:local
 bun tools/halo-image-artifact.ts build /absolute/path/to/new-artifact
 ```
 
-大型归档按消费者寿命释放：OCI 已验证并冻结后释放构建 tar；产物目录的 OCI 字节校验通过后释放工作副本，恢复步骤只读挂载这份成品。load 成功并回读实际镜像引用后释放恢复 tar，再执行完整独立再导出。失败仅移动仍需诊断的本任务原件，未确认的原件继续保留。日志记录导出、恢复和再导出前的实际剩余磁盘量；工具不清共享缓存或其他任务镜像。
+大型归档按消费者寿命释放：OCI 已验证并冻结后释放构建 tar；产物目录的 OCI 字节校验通过后释放工作副本，恢复步骤只读挂载这份成品。load 成功并回读实际镜像引用后释放恢复 tar，再执行完整独立再导出。再导出的标准输出流式压缩为私有 `roundtrip.tar.gz`，Docker 成功退出且压缩文件关闭后，原严格解析器核对 config、全部层与 diff ID。取消或输出失败时终止并等待 Docker 子进程，失败仅移动仍需诊断的本任务原件。日志记录导出、恢复和再导出前的实际剩余磁盘量；工具不清共享缓存或其他任务镜像。
 
 工具把经固定 SHA 校验的 standalone Buildx 放到本次私有目录，使用原 default Docker driver 的内置 BuildKit。它复用原 builder 的四文件 context，执行单平台 load 并保存构建 metadata，随后核 Docker archive 中实际 config 和全部层。它不安装宿主插件、不创建 builder 服务。已有同字节工具可通过 `NUCLEUS_IMAGE_BUILDX_BINARY` 和 `NUCLEUS_IMAGE_GITLEAKS_ARCHIVE` 只读复用，校验规则不变。
 

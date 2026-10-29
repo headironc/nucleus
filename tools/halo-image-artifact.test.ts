@@ -18,6 +18,7 @@ import {
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { gunzipSync } from "node:zlib";
 import {
   bindSource,
   buildIdentity,
@@ -43,6 +44,139 @@ function temporary() {
   return path;
 }
 const read = (path: string) => readFileSync(join(root, path), "utf8");
+
+test("restored export compresses complete stdout and settles Docker and file failures before returning", async () => {
+  for (const mode of [
+    "success",
+    "docker-failure",
+    "output-failure",
+    "cancel",
+    "spawn-failure",
+  ]) {
+    const directory = temporary();
+    const output = join(directory, "roundtrip.tar.gz");
+    const ready = join(directory, "ready");
+    const signalled = join(directory, "signalled");
+    const release = join(directory, "release");
+    const result = join(directory, "result.json");
+    writeFileSync(
+      join(directory, "docker"),
+      `#!/usr/bin/env python3
+import os,pathlib,signal,sys,time
+d=pathlib.Path(os.environ['EXPORT_LIFECYCLE'])
+mode=os.environ['EXPORT_MODE']
+assert sys.argv[1:]==['save','sha256:'+'a'*64]
+stopped=False
+def stop(*args):
+    global stopped
+    stopped=True
+    (d/'signalled').write_text('SIGTERM')
+signal.signal(signal.SIGTERM,stop)
+(d/'ready').write_text(str(os.getpid()))
+if mode in ('success','docker-failure'):
+    sys.stdout.buffer.write(b'complete archive stdout\\n'*65536)
+    sys.stdout.buffer.flush()
+    (d/'terminal').write_text(mode)
+    sys.exit(37 if mode=='docker-failure' else 0)
+try:
+    while not stopped:
+        sys.stdout.buffer.write(os.urandom(65536))
+        sys.stdout.buffer.flush()
+except (BrokenPipeError,ConnectionResetError): pass
+while not (d/'release').exists(): time.sleep(.01)
+(d/'terminal').write_text(mode)
+os._exit(0)
+`,
+      { mode: 0o755 },
+    );
+    const worker = join(directory, "worker.ts");
+    writeFileSync(
+      worker,
+      `
+import { saveRestoredArchive } from ${JSON.stringify(join(root, "tools/halo-image-artifact.ts"))};
+import { readdirSync, readlinkSync, writeFileSync } from "node:fs";
+const controller = new AbortController();
+process.once("SIGTERM", () => controller.abort());
+let outcome;
+try {
+  await saveRestoredArchive(${JSON.stringify(`sha256:${"a".repeat(64)}`)}, ${JSON.stringify(output)}, controller.signal);
+  outcome = {success:true};
+} catch (error) { outcome = {success:false, error:String(error), code:error.code}; }
+const openOutput = readdirSync("/proc/self/fd").some(fd => { try { return readlinkSync("/proc/self/fd/"+fd) === ${JSON.stringify(output)}; } catch {return false;} });
+writeFileSync(${JSON.stringify(result)}, JSON.stringify({...outcome, openOutput}));
+`,
+    );
+    const env = {
+      ...process.env,
+      PATH:
+        mode === "spawn-failure"
+          ? directory
+          : `${directory}:${process.env.PATH}`,
+      EXPORT_LIFECYCLE: directory,
+      EXPORT_MODE: mode,
+    };
+    if (mode === "spawn-failure") rmSync(join(directory, "docker"));
+    const child =
+      mode === "output-failure"
+        ? spawn(
+            "python3",
+            [
+              "-c",
+              "import os,resource,signal,sys; signal.signal(signal.SIGXFSZ,signal.SIG_IGN); resource.setrlimit(resource.RLIMIT_FSIZE,(1024,1024)); os.execve(sys.argv[1],sys.argv[1:],os.environ)",
+              process.execPath,
+              worker,
+            ],
+            { env, stdio: "inherit" },
+          )
+        : spawn(process.execPath, [worker], { env, stdio: "inherit" });
+    const exit = new Promise<number | null>((done, reject) => {
+      child.once("close", done);
+      child.once("error", reject);
+    });
+    let ended = false;
+    void exit.then(() => {
+      ended = true;
+    });
+    const until = async (path: string) => {
+      const deadline = Date.now() + 5000;
+      while (!existsSync(path) && !ended && Date.now() < deadline)
+        await delay(10);
+      expect(existsSync(path)).toBe(true);
+    };
+    try {
+      if (mode === "cancel" || mode === "output-failure") {
+        await until(ready);
+        if (mode === "cancel") child.kill("SIGTERM");
+        await until(signalled);
+        expect(ended).toBe(false);
+        expect(existsSync(result)).toBe(false);
+        writeFileSync(release, "finish");
+      }
+      expect(await exit).toBe(0);
+      const outcome = JSON.parse(readFileSync(result, "utf8"));
+      expect(outcome.openOutput).toBe(false);
+      expect(outcome.success).toBe(mode === "success");
+      if (mode === "success" || mode === "docker-failure") {
+        expect(gunzipSync(readFileSync(output))).toEqual(
+          Buffer.from("complete archive stdout\n".repeat(65536)),
+        );
+        expect(statSync(output).mode & 0o777).toBe(0o600);
+      }
+      if (mode === "docker-failure") expect(outcome.error).toContain("37");
+      if (mode === "output-failure") expect(outcome.code).toBe("EFBIG");
+      if (mode === "cancel") expect(outcome.code).toBe("ABORT_ERR");
+      if (mode !== "spawn-failure") {
+        expect(existsSync(join(directory, "terminal"))).toBe(true);
+        const pid = Number(readFileSync(ready, "utf8"));
+        expect(() => process.kill(pid, 0)).toThrow();
+      }
+    } finally {
+      writeFileSync(release, "finish");
+      if (!ended) child.kill("SIGTERM");
+      await exit;
+    }
+  }
+}, 20000);
 
 test("archive retention releases a temporary copy only after verifying retained bytes", async () => {
   for (const outcome of ["success", "occupied", "mismatch"]) {

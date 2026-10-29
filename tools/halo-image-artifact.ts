@@ -7,6 +7,7 @@ import {
   constants,
   copyFileSync,
   createReadStream,
+  createWriteStream,
   existsSync,
   fstatSync,
   mkdirSync,
@@ -24,7 +25,9 @@ import {
 import { copyFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
+import { createGzip } from "node:zlib";
 import { imageInputs } from "./halo-ci-image";
 import { createDocker, currentIdentity, prepareAccounts } from "./halo-local";
 import { prepareHaloDependencies } from "./halo-image-runtime";
@@ -651,6 +654,60 @@ export async function retainArchive(
   rmSync(source);
 }
 
+export async function saveRestoredArchive(
+  reference: string,
+  output: string,
+  signal: AbortSignal,
+) {
+  signal.throwIfAborted();
+  const child = spawn("docker", ["save", reference], {
+    cwd: root,
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  let closed = false;
+  let spawnError: Error | undefined;
+  let killTimer: ReturnType<typeof setTimeout> | undefined;
+  const terminal = new Promise<number | null>((done) => {
+    child.once("error", (error) => {
+      spawnError = error;
+    });
+    child.once("close", (status) => {
+      closed = true;
+      done(status);
+    });
+  });
+  const stop = () => {
+    if (closed || killTimer) return;
+    child.kill("SIGTERM");
+    // Bound termination of this CLI; retain the archive until it has closed.
+    killTimer = setTimeout(() => {
+      child.kill("SIGKILL");
+    }, 10000);
+  };
+  signal.addEventListener("abort", stop, { once: true });
+  try {
+    await pipeline(
+      child.stdout,
+      createGzip(),
+      createWriteStream(output, { flags: "wx", mode: 0o600 }),
+      { signal },
+    );
+    const status = await terminal;
+    if (spawnError) throw spawnError;
+    if (status !== 0 || signal.aborted)
+      throw new Error(
+        `Docker archive export failed (${status}, cancelled=${signal.aborted})`,
+      );
+  } catch (error) {
+    stop();
+    await terminal;
+    throw error;
+  } finally {
+    signal.removeEventListener("abort", stop);
+    clearTimeout(killTimer);
+  }
+}
+
 export function importRuntimeEvidence(directory: string, output: string) {
   const files = [
     "licenses.json",
@@ -737,9 +794,11 @@ export async function buildArtifact(output: string, source: Source) {
   const completed: { name: string; state: unknown }[] = [];
   const cleanupErrors: string[] = [];
   let cancelled = false;
+  const archiveCancellation = new AbortController();
   let current: ReturnType<typeof spawn> | null = null;
   const cancel = () => {
     cancelled = true;
+    archiveCancellation.abort();
     current?.kill("SIGTERM");
   };
   process.on("SIGINT", cancel);
@@ -844,7 +903,7 @@ export async function buildArtifact(output: string, source: Source) {
         stage,
         availableBytes: space.bavail * space.bsize,
         temporaryArchives: Object.fromEntries(
-          ["built.tar", "image.oci.tar", "restored.tar", "roundtrip.tar"]
+          ["built.tar", "image.oci.tar", "restored.tar", "roundtrip.tar.gz"]
             .filter((file) => existsSync(join(work, file)))
             .map((file) => [file, statSync(join(work, file)).size]),
         ),
@@ -1088,16 +1147,15 @@ export async function buildArtifact(output: string, source: Source) {
       throw new Error("Invalid restored runtime reference");
     rmSync(join(work, "restored.tar"));
     disk("before-roundtrip");
-    await run("docker", [
-      "save",
-      "--output",
-      join(work, "roundtrip.tar"),
+    await saveRestoredArchive(
       runtimeReference,
-    ]);
-    restoredArchive = inspectDockerArchive(join(work, "roundtrip.tar"));
+      join(work, "roundtrip.tar.gz"),
+      archiveCancellation.signal,
+    );
+    restoredArchive = inspectDockerArchive(join(work, "roundtrip.tar.gz"));
     assertRestoredArchive(builtArchive, restoredArchive, oci);
     json(join(output, "restored-archive.json"), restoredArchive);
-    rmSync(join(work, "roundtrip.tar"));
+    rmSync(join(work, "roundtrip.tar.gz"));
     const defaultName = `nucleus-artifact-${nonce}-default-user`;
     await run(
       "docker",
@@ -1275,7 +1333,7 @@ export async function buildArtifact(output: string, source: Source) {
       for (const name of [
         "built.tar",
         "restored.tar",
-        "roundtrip.tar",
+        "roundtrip.tar.gz",
         "image.oci.tar",
       ])
         if (existsSync(join(work, name))) {
