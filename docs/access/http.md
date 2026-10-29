@@ -1,5 +1,7 @@
 # Access 管理 HTTP 目标设计
 
+本页保留已有管理接口的迁移前合同。简化目标由[角色与作用范围](roles.md#简化目标)拥有，迁移时同步更新 HTTP、客户端和 OpenAPI。当前等级、版本确认及原结果要求不扩展到新工牌。
+
 本文拥有这些管理入口共同的候选身份、入口选择和拒绝顺序。具体业务资格、结果字段与历史由[角色与指派](roles.md)、[授权生命周期](grants.md)和[邀请码](invitations.md)拥有。普通协议见 [HTTP 入口](../http/api.md)。
 
 [本人机构角色读取](roles.md#原请求与读取)沿当前网站身份协议，不属于管理入口，也不要求管理权限。`GET /api/v1/roles`、`GET /api/v1/roles/changes` 及 HEAD 则要求当前 `institution.roles`，不接受单独指派权替代。`GET /api/v1/assignments/roles` 与 `GET /api/v1/assignments` 及 HEAD 要求 `institution.assignments`，分别返回可指派的完整定义和永久机构指派历史。管理 GET 共用网站身份与元数据预算；总数和本页来自同一只读快照。范围、分页、历史身份及拒绝规则见[角色读取](roles.md#原请求与读取)。
