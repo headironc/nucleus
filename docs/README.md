@@ -41,6 +41,7 @@
 | 权限目录与系统角色                             | 已交付 | [权限目录](access/capabilities.md)                                                                                                                   |
 | 机构与 Workforce 角色、机构 Holder 及指派      | 已交付 | [角色与指派](access/roles.md)、[状态历史与完整性](architecture.md#状态历史与完整性)                                                                  |
 | Workforce 授权生命周期与 Grant 封印            | 已交付 | [授权生命周期](access/grants.md)                                                                                                                     |
+| Halo 网站机构入口开通员工服务                  | 已交付 | [授权生命周期](access/grants.md)、[页面](client/pages.md#网站机构入口开通员工服务)、[网站检查](../halo/README.md#机构入口开通员工服务)               |
 | Workforce 邀请码与封印状态                     | 已交付 | [邀请](access/invitations.md)                                                                                                                        |
 | 政治面貌与封印状态                             | 已交付 | [政治面貌](center/affiliation.md)、[状态历史与完整性](architecture.md#状态历史与完整性)                                                              |
 | 政治面貌显示名称读取接口                       | 已交付 | [政治面貌固定值](center/values.md)                                                                                                                   |

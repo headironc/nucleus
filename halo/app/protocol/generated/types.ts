@@ -87,6 +87,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/accounts/current/role": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read the current website account's institutional role. Contract: docs/access/roles.md#本人角色与定义列表. */
+        get: operations["currentRole"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/accounts/current/cancellations": {
         parameters: {
             query?: never;
@@ -167,6 +184,40 @@ export interface paths {
         get: operations["currentWorkforceGrant"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workforce/grants/candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Confirm a Workforce admission target and eligible roles through the selected authority. Contract: docs/access/grants.md#http-入口. */
+        post: operations["workforceGrantCandidate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workforce/grants": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Admit the confirmed target to Workforce and retain the original Grant and first assignment. Contract: docs/access/grants.md#http-入口. */
+        post: operations["createWorkforceGrant"];
         delete?: never;
         options?: never;
         head?: never;
@@ -489,6 +540,29 @@ export interface components {
         "person.Id": string;
         /** Format: uuid */
         "person.revision.Id": string;
+        "role.Receipt": {
+            code: string;
+            role: components["schemas"]["role.Role"];
+        };
+        "role.Role": {
+            changeId: components["schemas"]["role.change.Id"];
+            id: components["schemas"]["role.Id"];
+            kind: components["schemas"]["role.Kind"];
+            level: components["schemas"]["role.Level"];
+            name: components["schemas"]["role.Name"];
+            permissions: components["schemas"]["capability.Code"][];
+        };
+        /** Format: uuid */
+        "role.change.Id": string;
+        /** Format: uuid */
+        "role.Id": string;
+        /** @enum {string} */
+        "role.Kind": "default" | "full" | "custom";
+        /** Format: int32 */
+        "role.Level": number;
+        "role.Name": string;
+        /** @enum {string} */
+        "capability.Code": "institution.articles" | "institution.roles" | "institution.assignments" | "institution.workforce" | "institution.accounts" | "institution.corrections" | "institution.affiliations.read" | "institution.affiliations.correct" | "workforce.roles" | "workforce.assignments" | "workforce.admission" | "workforce.suspension" | "workforce.termination" | "workforce.numbers" | "workforce.directory" | "workforce.templates" | "workforce.approval" | "workforce.production" | "workforce.delivery";
         "cancellation.Input": {
             accountId: components["schemas"]["account.Id"];
             personId: components["schemas"]["person.Id"];
@@ -572,6 +646,74 @@ export interface components {
         };
         /** @enum {string} */
         "grant.Status": "active" | "suspended" | "terminated";
+        "grant.Search": {
+            entry: components["schemas"]["access.Entry"];
+            mobile: string;
+        };
+        /** @enum {string} */
+        "access.Entry": "domain" | "institution";
+        "grant.Candidate": {
+            assignmentId: components["schemas"]["appointment.Id"];
+            code: string;
+            /** Format: int64 */
+            count: number;
+            grant: components["schemas"]["grant.Confirmation"] | null;
+            identity: components["schemas"]["account.Subject"];
+            roles: components["schemas"]["role.Role"][];
+            suspensionId: components["schemas"]["suspension.Id"] | null;
+        };
+        /** Format: uuid */
+        "appointment.Id": string;
+        "grant.Confirmation": {
+            id: components["schemas"]["grant.Id"];
+            status: components["schemas"]["grant.Status"];
+        };
+        "account.Subject": {
+            accountId: components["schemas"]["account.Id"];
+            idNumber: components["schemas"]["person.number.Suffix"];
+            name: string;
+            personId: components["schemas"]["person.Id"];
+            revisionId: components["schemas"]["person.revision.Id"];
+        };
+        /** Format: uuid */
+        "suspension.Id": string;
+        "grant.Input": {
+            entry: components["schemas"]["access.Entry"];
+            role: components["schemas"]["role.Selection"];
+            target: components["schemas"]["grant.Target"];
+        };
+        "role.Selection": {
+            changeId: components["schemas"]["role.change.Id"];
+            id: components["schemas"]["role.Id"];
+        };
+        "grant.Target": {
+            accountId: components["schemas"]["account.Id"];
+            assignmentId: components["schemas"]["appointment.Id"];
+            grant?: components["schemas"]["grant.Confirmation"] | null;
+            mobile: string;
+            personId: components["schemas"]["person.Id"];
+            revisionId: components["schemas"]["person.revision.Id"];
+            suspensionId?: components["schemas"]["suspension.Id"] | null;
+        };
+        "grant.Receipt": {
+            assignment: components["schemas"]["assignment.Assignment"];
+            code: string;
+            grant: components["schemas"]["grant.Grant"];
+        };
+        "assignment.Assignment": {
+            /** Format: date-time */
+            assignedAt: string;
+            grantId: components["schemas"]["grant.Id"];
+            id: components["schemas"]["assignment.Id"];
+            operationId: components["schemas"]["operation.Id"];
+            operator: components["schemas"]["person.revision.Identity"];
+            role: components["schemas"]["role.Role"];
+            /** Format: int64 */
+            sequence: number;
+            subject: components["schemas"]["person.revision.Identity"];
+        };
+        /** Format: uuid */
+        "assignment.Id": string;
         /** @description The current number, or null when the person holds none. */
         "number.Current": {
             code: string;
@@ -1416,6 +1558,90 @@ export interface operations {
             };
         };
     };
+    currentRole: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required request UUID; no persistent read operation */
+                "Operation-Id": string;
+                /** @description Required website session UUID; selects its canonical cookie name; Authorization is rejected */
+                "Session-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Complete current institutional role */
+            200: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["role.Receipt"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds before another attempt */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
     cancelCurrentAccount: {
         parameters: {
             query?: never;
@@ -2125,6 +2351,301 @@ export interface operations {
                 };
             };
             /** @description dependency_unavailable */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    workforceGrantCandidate: {
+        parameters: {
+            query?: {
+                /** @description Defaults to 1; (page - 1) * size must fit PostgreSQL bigint */
+                page?: number;
+                /** @description Defaults to 20 */
+                size?: number;
+            };
+            header: {
+                /** @description Required request UUID */
+                "Operation-Id": string;
+                /** @description Required website session UUID */
+                "Session-Id": string;
+                /** @description Required exact configured origin */
+                Origin: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["grant.Search"];
+            };
+        };
+        responses: {
+            /** @description Masked candidate and role choices */
+            200: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["grant.Candidate"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description target_unavailable */
+            404: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            415: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            422: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    createWorkforceGrant: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Original admission UUID */
+                "Operation-Id": string;
+                /** @description Required website session UUID */
+                "Session-Id": string;
+                /** @description Required exact configured origin */
+                Origin: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["grant.Input"];
+            };
+        };
+        responses: {
+            /** @description Original grant and first assignment */
+            201: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["grant.Receipt"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description target_unavailable */
+            404: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description request_mismatch, target_changed, role_changed or already_authorized */
+            409: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            415: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input or account_not_ready */
+            422: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description internal_error */
+            500: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable or outcome_unknown */
             503: {
                 headers: {
                     /** @description no-store */

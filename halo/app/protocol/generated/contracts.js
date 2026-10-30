@@ -344,6 +344,44 @@ export default {
       ]
     }
   },
+  "GET /api/v1/accounts/current/role": {
+    "200": {
+      "validator": "currentRole_200",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "currentRole_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "currentRole_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "currentRole_403",
+      "codes": [
+        "permission_denied"
+      ]
+    },
+    "429": {
+      "validator": "currentRole_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "503": {
+      "validator": "currentRole_503",
+      "codes": [
+        "dependency_unavailable"
+      ]
+    }
+  },
   "POST /api/v1/accounts/current/cancellations": {
     "200": {
       "validator": "cancelCurrentAccount_200",
@@ -681,6 +719,147 @@ export default {
       "validator": "currentWorkforceGrant_503",
       "codes": [
         "dependency_unavailable"
+      ]
+    }
+  },
+  "POST /api/v1/workforce/grants/candidates": {
+    "200": {
+      "validator": "workforceGrantCandidate_200",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "workforceGrantCandidate_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "workforceGrantCandidate_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "workforceGrantCandidate_403",
+      "codes": [
+        "permission_denied"
+      ]
+    },
+    "404": {
+      "validator": "workforceGrantCandidate_404",
+      "codes": [
+        "target_unavailable"
+      ]
+    },
+    "413": {
+      "validator": "workforceGrantCandidate_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "415": {
+      "validator": "workforceGrantCandidate_415",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "422": {
+      "validator": "workforceGrantCandidate_422",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "429": {
+      "validator": "workforceGrantCandidate_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "503": {
+      "validator": "workforceGrantCandidate_503",
+      "codes": [
+        "dependency_unavailable"
+      ]
+    }
+  },
+  "POST /api/v1/workforce/grants": {
+    "201": {
+      "validator": "createWorkforceGrant_201",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "createWorkforceGrant_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "createWorkforceGrant_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "createWorkforceGrant_403",
+      "codes": [
+        "permission_denied"
+      ]
+    },
+    "404": {
+      "validator": "createWorkforceGrant_404",
+      "codes": [
+        "target_unavailable"
+      ]
+    },
+    "409": {
+      "validator": "createWorkforceGrant_409",
+      "codes": [
+        "request_mismatch",
+        "target_changed",
+        "role_changed",
+        "already_authorized"
+      ]
+    },
+    "413": {
+      "validator": "createWorkforceGrant_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "415": {
+      "validator": "createWorkforceGrant_415",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "422": {
+      "validator": "createWorkforceGrant_422",
+      "codes": [
+        "invalid_input",
+        "account_not_ready"
+      ]
+    },
+    "429": {
+      "validator": "createWorkforceGrant_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "createWorkforceGrant_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "createWorkforceGrant_503",
+      "codes": [
+        "dependency_unavailable",
+        "outcome_unknown"
       ]
     }
   },

@@ -1,6 +1,135 @@
 @import "tailwindcss";
 @import "../../design/assets/tokens.css";
 
+@layer components {
+  .admission-layout {
+    width: min(100% - 2.5rem, 52rem);
+    margin: 2.5rem auto 5rem;
+  }
+  .admission-panel {
+    margin-top: 1.75rem;
+  }
+  .admission-form {
+    display: grid;
+    gap: 0.8rem;
+    max-width: 27rem;
+  }
+  .admission-form label {
+    font-weight: 600;
+  }
+  .admission-form input {
+    width: 100%;
+    padding: 0.85rem 1rem;
+    border: 1px solid var(--line);
+    border-radius: 0.65rem;
+    background: var(--paper);
+    color: var(--ink);
+    font: inherit;
+    letter-spacing: 0.08em;
+  }
+  .admission-form .primary {
+    justify-self: start;
+  }
+  .admission-person {
+    margin-bottom: 1.5rem;
+    overflow-wrap: anywhere;
+  }
+  .admission-person h2 {
+    font-size: 1.5rem;
+    margin: 0.5rem 0;
+  }
+  .admission-person p {
+    margin-top: 0.5rem;
+  }
+  .admission-roles {
+    border: 0;
+    margin: 1.75rem 0;
+    padding: 0;
+    min-width: 0;
+  }
+  .admission-roles legend {
+    font-size: 1.1rem;
+    font-weight: 600;
+  }
+  .admission-role {
+    display: flex;
+    align-items: start;
+    gap: 0.8rem;
+    padding: 1rem;
+    border-bottom: 1px solid var(--line);
+    cursor: pointer;
+    overflow-wrap: anywhere;
+  }
+  .admission-role input {
+    margin-top: 0.3rem;
+    width: 1.15rem;
+    height: 1.15rem;
+    accent-color: var(--accent);
+    flex-shrink: 0;
+  }
+  .admission-role small {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--sub);
+    margin-top: 0.25rem;
+  }
+  .admission-notice {
+    padding: 1rem;
+    margin: 1.25rem 0;
+    border-left: 3px solid var(--accent);
+    background: var(--paper);
+    line-height: 1.8;
+    overflow-wrap: anywhere;
+  }
+  .admission-pagination {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    font-size: 0.85rem;
+    margin-top: 1rem;
+  }
+  .admission-pagination button {
+    padding: 0.65rem 0.8rem;
+    border: 1px solid var(--line);
+    border-radius: 0.5rem;
+  }
+  .admission-pagination button:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .admission-guide {
+    margin: 1.5rem 0;
+    padding: 1rem 0;
+    line-height: 1.9;
+    color: var(--sub);
+  }
+  .admission-guide h2 {
+    font-size: 1rem;
+    color: var(--ink);
+    margin-bottom: 0.5rem;
+  }
+  .admission-leave {
+    margin-top: 1.5rem;
+  }
+  @media (max-width: 560px) {
+    .admission-layout {
+      width: calc(100% - 2rem);
+      margin-top: 1.5rem;
+    }
+    .admission-panel {
+      padding: 1.25rem;
+    }
+    .admission-role {
+      padding: 0.9rem 0.2rem;
+    }
+    .admission-pagination {
+      gap: 0.6rem;
+    }
+  }
+}
+
 .workforce-name {
   overflow-wrap: anywhere;
 }

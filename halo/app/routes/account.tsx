@@ -18,6 +18,8 @@ import { reloadRequired } from "../integrity";
 import { History } from "../correction/history";
 import { HistoryPanel } from "../correction/panel";
 import { history } from "../protocol/correction";
+import { institutionRole } from "../protocol/admission";
+import { Institution } from "../workforce/institution";
 
 export function meta() {
   return [
@@ -31,6 +33,7 @@ function useCurrent() {
     current: Current;
     history: History;
     avatar: Avatar;
+    institution: Institution;
   }>();
   useEffect(() => {
     const sessions = new Sessions();
@@ -47,7 +50,18 @@ function useCurrent() {
       now: Date.now,
     });
     const avatar = new Avatar({ current: controller });
-    setControllers({ current: controller, history: records, avatar });
+    const institution = new Institution({
+      current: controller,
+      role: institutionRole,
+      build: currentBuild,
+      now: Date.now,
+    });
+    setControllers({
+      current: controller,
+      history: records,
+      avatar,
+      institution,
+    });
     const hide = () => flushSync(() => controller.suspend());
     const reload = () => flushSync(() => controller.reload());
     const check = () => {
@@ -66,6 +80,7 @@ function useCurrent() {
       controller.suspend();
       records.close();
       avatar.close();
+      institution.close();
       unwatch();
       document.removeEventListener("visibilitychange", check);
       window.removeEventListener("focus", check);
@@ -208,10 +223,12 @@ function Account({
   controller,
   history,
   avatar,
+  institution,
 }: {
   controller: Current;
   history: History;
   avatar: Avatar;
+  institution: Institution;
 }) {
   const state = useSyncExternalStore(
     controller.subscribe,
@@ -219,6 +236,11 @@ function Account({
     controller.snapshot,
   );
   const [now, setNow] = useState(Date.now);
+  const permission = useSyncExternalStore(
+    institution.subscribe,
+    institution.snapshot,
+    institution.snapshot,
+  );
   const heading = useRef<HTMLHeadingElement>(null);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -300,6 +322,30 @@ function Account({
                 注销账户
               </a>
             </div>
+            {permission.kind === "allowed" && (
+              <section className="account-affiliation" aria-label="机构管理">
+                <h2>机构管理</h2>
+                <a className="quiet-link" href="/workforce/grants/new">
+                  开通员工服务
+                </a>
+                <p className="field-hint">
+                  为已注册的同事办理，进入后核对同事及角色。
+                </p>
+              </section>
+            )}
+            {(permission.kind === "unavailable" ||
+              permission.kind === "limited") && (
+              <section className="account-affiliation">
+                <p className="field-hint">暂时无法检查机构管理入口。</p>
+                <Button
+                  className="quiet-link"
+                  disabled={permission.retryAt > now}
+                  onClick={() => void institution.refresh()}
+                >
+                  重新检查管理权限
+                </Button>
+              </section>
+            )}
             <a className="primary send-button" href="/">
               返回首页
             </a>
@@ -369,6 +415,7 @@ export default function AccountPage() {
             controller={controllers.current}
             history={controllers.history}
             avatar={controllers.avatar}
+            institution={controllers.institution}
           />
         ) : (
           <div className="loading-shell">
