@@ -43,6 +43,8 @@
 
 原始授权绑定、原句柄等待和稳定候选接纳沿用所采用的[通用委派规则](https://github.com/silence-force/agents/blob/657629ec7489b4c6817935fc5d078b639a28bee9/delivery/policy/models.md#delegation-and-acceptance)。本节保留项目的实现者安排和审查偏好。
 
+等待与结果接续另采用 [agents 的委派与接纳要求（10ed57fc）](https://github.com/headironc/agents/blob/10ed57fc8a7354df99a0c8c1dcdb9b0270fd6337/delivery/policy/models.md#delegation-and-acceptance)。增量范围仅限三项：按实际动作约束顺序，按具体下游动作判断正式输入就绪，以及跟进原负责人实际接续。既有通用采用基线、项目模型映射、交付授权与最终验收要求不变。
+
 ### 双机职责
 
 采用本机与 `dev` 双机开发时，按下表分工。主机名 `dev` 不代表目标分支；分支和操作仍按[有效交付授权](delivery.md#连续交付与授权)核实。
