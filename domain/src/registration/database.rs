@@ -31,7 +31,7 @@ fn invalid_digest(_: Vec<u8>) -> Error {
 
 pub(super) struct Source {
     pub(super) authentication_id: authentication::Id,
-    pub(super) app_id: website::AppId,
+    pub(super) origin: session::Origin,
     finished_at: DateTime<Utc>,
 }
 
@@ -39,7 +39,6 @@ impl Source {
     fn read(row: &Row) -> Result<Self, Error> {
         if row.try_get::<_, &str>("authentication_status")? != "registrable"
             || row.try_get::<_, &str>("purpose")? != "create_session"
-            || row.try_get::<_, &str>("transport")? != "cookie"
         {
             return Err(facts(
                 "registration source is a registrable website SMS authentication",
@@ -47,13 +46,13 @@ impl Source {
         }
         Ok(Self {
             authentication_id: row.try_get("authentication_id")?,
-            app_id: row.try_get("authentication_app_id")?,
+            origin: authentication_origin(row)?,
             finished_at: row.try_get("finished_at")?,
         })
     }
 
-    fn verify(&self, app_id: &website::AppId) -> Result<(), Error> {
-        if &self.app_id != app_id {
+    fn verify(&self, settings: &session::settings::Settings) -> Result<(), Error> {
+        if !settings.accepts(&self.origin) {
             return Err(Error::Mismatch);
         }
         Ok(())
@@ -67,6 +66,26 @@ impl Source {
         }
         Ok(())
     }
+}
+
+fn authentication_origin(row: &Row) -> Result<session::Origin, Error> {
+    match row.try_get::<_, &str>("transport")? {
+        "cookie" => Ok(session::Origin::WebsiteMessage(
+            row.try_get("authentication_app_id")?,
+        )),
+        "bearer" => Ok(session::Origin::MiniMobile(
+            row.try_get::<_, &str>("authentication_app_id")?
+                .parse()
+                .map_err(invalid_origin)?,
+        )),
+        _ => Err(facts(
+            "registration inherits a supported authentication source",
+        )),
+    }
+}
+
+fn invalid_origin(_: website::Error) -> Error {
+    facts("registration source has a valid application identity")
 }
 
 pub(super) struct Credential {
@@ -98,7 +117,7 @@ impl Credential {
         credentials: &keys::credential::Keys,
         encryption: &keys::encryption::Keys,
         hashes: &keys::mobile::Keys,
-        app_id: &website::AppId,
+        settings: &session::settings::Settings,
         input: &Input,
     ) -> Result<Mobile, Error> {
         let token = credential::Secret::open(
@@ -109,7 +128,10 @@ impl Credential {
         if !input.token.0.matches(&token.hash()) {
             return Err(Error::Proof);
         }
-        self.source.verify(app_id)?;
+        self.source.verify(settings)?;
+        if input.transport != self.source.origin.transport() {
+            return Err(Error::Mismatch);
+        }
         Ok(self
             .mobile
             .open(encryption, hashes, Binding::Registration(self.id))?)
@@ -240,6 +262,9 @@ pub(super) async fn find_attempt_by_operation(
 }
 
 impl Attempt {
+    pub(super) fn origin(&self) -> &session::Origin {
+        &self.source.origin
+    }
     pub(super) fn validate_receipt(
         &self,
         receipt: &Completion,
@@ -248,7 +273,7 @@ impl Attempt {
         if self.status != attempt::Status::Registered
             || self.id != receipt.id
             || self.credential_id != receipt.credential_id
-            || self.source.app_id != receipt.app_id
+            || self.source.origin != receipt.origin
             || self.proof != receipt.proof
             || self.accepted_at != account.created_at()
         {
@@ -261,14 +286,15 @@ impl Attempt {
     pub(super) fn verify(
         &self,
         keys: &keys::request::Keys,
-        app_id: &website::AppId,
+        settings: &session::settings::Settings,
         input: &Input,
     ) -> Result<(), Error> {
         if !input.token.0.matches(&self.proof) {
             return Err(Error::Proof);
         }
-        self.source.verify(app_id)?;
+        self.source.verify(settings)?;
         if self.credential_id != input.credential_id
+            || input.transport != self.source.origin.transport()
             || !keys
                 .fetch(self.key_id)?
                 .verify(&input.encoded()?, &self.hash)
@@ -283,10 +309,10 @@ impl Attempt {
         input: &keys::request::Keys,
         encryption: &keys::encryption::Keys,
         mobile: &keys::mobile::Keys,
-        app_id: &website::AppId,
+        settings: &session::settings::Settings,
         now: DateTime<Utc>,
     ) -> Result<(), Error> {
-        if &self.source.app_id != app_id {
+        if !settings.accepts(&self.source.origin) {
             return Err(facts("attempt retains the running website source"));
         }
         self.source.validate(self.accepted_at, now)?;
@@ -302,7 +328,7 @@ pub(super) struct Completion {
     operation_id: operation::Id,
     person_id: crate::identity::person::Id,
     credential_id: registration::Id,
-    app_id: website::AppId,
+    origin: session::Origin,
     proof: [u8; 32],
     pub(super) account_id: account::Id,
     revision_id: revision::Id,
@@ -312,9 +338,9 @@ impl TryFrom<Row> for Completion {
     type Error = Error;
 
     fn try_from(row: Row) -> Result<Self, Error> {
-        if row.try_get::<_, &str>("method")? != "message"
-            || row.try_get::<_, &str>("transport")? != "cookie"
-        {
+        let origin = session::Origin::restore(row.try_get("method")?, row.try_get("app_id")?)
+            .map_err(invalid_origin)?;
+        if row.try_get::<_, &str>("transport")? != origin.transport() {
             return Err(facts("registration receipt uses website SMS credentials"));
         }
         Ok(Self {
@@ -322,7 +348,7 @@ impl TryFrom<Row> for Completion {
             operation_id: row.try_get("operation_id")?,
             person_id: row.try_get("person_id")?,
             credential_id: row.try_get("credential_id")?,
-            app_id: row.try_get("app_id")?,
+            origin,
             proof: row
                 .try_get::<_, Vec<u8>>("proof")?
                 .try_into()
@@ -341,17 +367,20 @@ pub(super) async fn find_receipt_by_operation(
 }
 
 impl Completion {
+    pub(super) fn origin(&self) -> &session::Origin {
+        &self.origin
+    }
     pub(super) async fn verify(
         &self,
         client: &Client,
         keys: history::Keys<'_>,
-        app_id: &website::AppId,
+        settings: &session::settings::Settings,
         input: &Input,
     ) -> Result<(), Error> {
         if !input.token.0.matches(&self.proof) {
             return Err(Error::Proof);
         }
-        if &self.app_id != app_id {
+        if !settings.accepts(&self.origin) || input.transport != self.origin.transport() {
             return Err(Error::Mismatch);
         }
         let profile = revision::fetch(client, keys, self.revision_id).await?;
@@ -372,7 +401,7 @@ impl Completion {
         client: &Client,
         app: &crate::kernel::App,
         read: history::Read,
-        app_id: &website::AppId,
+        settings: &session::settings::Settings,
         now: DateTime<Utc>,
     ) -> Result<history::Verified<account::state::State>, Error> {
         let account = history::find::<account::state::State>(
@@ -387,7 +416,7 @@ impl Completion {
         .ok_or_else(|| facts("a retained receipt has its account"))?;
         if account.person_id() != self.person_id
             || account.current().is_none()
-            || &self.app_id != app_id
+            || !settings.accepts(&self.origin)
         {
             return Err(facts(
                 "receipt retains its current account, person and running website",
@@ -423,7 +452,7 @@ impl Completion {
         account: &history::Verified<account::state::State>,
     ) -> Result<(), Error> {
         if session.account_id() != self.account_id
-            || session.app_id() != &self.app_id
+            || session.origin() != &self.origin
             || session.created_at() != account.created_at()
         {
             return Err(facts(
@@ -461,7 +490,8 @@ pub(super) async fn insert_receipt(
     admission: &Admission<'_>,
     identity: &account::Creation,
 ) -> Result<(), Error> {
-    client.execute("INSERT INTO identity.receipts (id, operation_id, credential_id, app_id, method, transport, proof, account_id, person_id, revision_id) VALUES ($1, $2, $3, $4, 'message', 'cookie', $5, $6, $7, $8)", &[&admission.id, &input.operation_id, &input.credential_id, &admission.credential.source.app_id, &&input.token.0.hash()[..], &identity.account_id, &identity.person_id, &identity.revision_id]).await?;
+    let origin = &admission.credential.source.origin;
+    client.execute("INSERT INTO identity.receipts (id, operation_id, credential_id, app_id, method, transport, proof, account_id, person_id, revision_id) VALUES ($1, $2, $3, $4, $9, $10, $5, $6, $7, $8)", &[&admission.id, &input.operation_id, &input.credential_id, &origin.app_id(), &&input.token.0.hash()[..], &identity.account_id, &identity.person_id, &identity.revision_id, &origin.method(), &origin.transport()]).await?;
     Ok(())
 }
 
@@ -485,7 +515,7 @@ pub(super) async fn verify_all(
     client: &Client,
     app: &crate::kernel::App,
     keys: &keys::Keys,
-    app_id: &website::AppId,
+    settings: &session::settings::Settings,
     now: DateTime<Utc>,
 ) -> Result<(), Error> {
     let read = crate::history::Read::Snapshot(app.anchors().view()?);
@@ -509,14 +539,14 @@ pub(super) async fn verify_all(
                 .batch(BUDGET, find_attempt_by_operation(client, operation_id))
                 .await??
                 .ok_or_else(|| facts("retained attempt has its source"))?;
-            attempt.source.verify(app_id)?;
-            attempt.validate(input, encryption, mobile, app_id, now)?;
+            attempt.source.verify(settings)?;
+            attempt.validate(input, encryption, mobile, settings, now)?;
             if let Some(receipt) = verification::Stage::RegistrationAttemptReceipt
                 .batch(BUDGET, find_receipt_by_operation(client, operation_id))
                 .await??
             {
                 let account = verification::Stage::RegistrationAttemptReceipt
-                    .batch(BUDGET, receipt.validate(client, app, read, app_id, now))
+                    .batch(BUDGET, receipt.validate(client, app, read, settings, now))
                     .await??;
                 attempt.validate_receipt(&receipt, &account)?;
             }
@@ -539,7 +569,7 @@ pub(super) async fn verify_all(
                     facts("retained receipt has its immutable identity and first assignment")
                 })?;
             let account = verification::Stage::RegistrationReceipt
-                .batch(BUDGET, receipt.validate(client, app, read, app_id, now))
+                .batch(BUDGET, receipt.validate(client, app, read, settings, now))
                 .await??;
             if let Some(session) = verification::Stage::RegistrationSession
                 .batch(

@@ -29,19 +29,19 @@ pub(super) fn router(context: &Context) -> OpenApiRouter<Context> {
         .routes(routes!(revoke).map(|router| {
             router.route_layer(middleware::from_fn_with_state(
                 context.clone(),
-                current::authenticate,
+                current::authenticate_mobile,
             ))
         }))
         .routes(routes!(revoke_all).map(|router| {
             router.route_layer(middleware::from_fn_with_state(
                 context.clone(),
-                current::authenticate,
+                current::authenticate_mobile,
             ))
         }))
         .routes(routes!(read).map(|router| {
             router.route_layer(middleware::from_fn_with_state(
                 context.clone(),
-                current::authenticate,
+                current::authenticate_mobile,
             ))
         }))
 }
@@ -103,10 +103,10 @@ struct Collection {
 }
 
 #[utoipa::path(delete, path = "/sessions/current", operation_id = "revokeCurrentSession",
-    description = "Revokes the currently authenticated website session and returns its permanent logout ID, count and time. Requires a current valid website session and exact Origin. Any supplied Sec-Fetch-Site must be same-origin. Success clears only the authenticated session cookie. The revoked session cannot replay DELETE; a new valid session of the same account can read the original result with GET /revocations.",
+    description = "Revokes the currently authenticated session. Website cookies require exact Origin and same-origin Sec-Fetch-Site when supplied. Mini-program Bearer requires no website Origin and cannot be mixed with Session-Id or a session cookie. Only website success clears its selected cookie. A revoked proof cannot replay DELETE; a new session of the same account can read the original with GET /revocations.",
     params(("Operation-Id" = Uuid, Header, description = "Original logout operation UUID"),
-        ("Session-Id" = Uuid, Header, description = "Selects the website session cookie"),
-        ("Origin" = String, Header, description = "Required exact configured origin")),
+        ("Session-Id" = Option<Uuid>, Header, description = "Website cookie mode only"),
+        ("Authorization" = Option<String>, Header, description = "Opaque mini-program Bearer token; exclusive with website credentials")),
     responses((status=200,description="Current session revoked",body=Receipt,headers(("Set-Cookie"=String,description="Expires only the selected session cookie"))),
         (status=400,description="invalid_input; no request body is accepted",body=Failure),
         (status=401,description="authentication_invalid",body=Failure),
@@ -133,10 +133,10 @@ async fn revoke(
 }
 
 #[utoipa::path(delete, path = "/sessions", operation_id = "revokeAllSessions",
-    description = "Revokes all retained unrevoked sessions of the currently authenticated account, including expired sessions, and returns the permanent logout ID, count and time for that fixed set. Requires a current valid website session and exact Origin. Any supplied Sec-Fetch-Site must be same-origin. Success clears only the authenticated session cookie. Later sessions are not added to the original set; a new valid session of the same account can read it with GET /revocations.",
+    description = "Revokes every retained unrevoked session of the authenticated account across website and mini-program sources, including expired sessions. Accepts a selected website cookie with exact Origin, or a unique mini-program Bearer token without website Origin. Mixed credentials are rejected. Only website success clears its selected cookie. Later sessions are not added; a new valid session of the same account can read the original with GET /revocations.",
     params(("Operation-Id" = Uuid, Header, description = "Original logout operation UUID"),
-        ("Session-Id" = Uuid, Header, description = "Selects the website session cookie"),
-        ("Origin" = String, Header, description = "Required exact configured origin")),
+        ("Session-Id" = Option<Uuid>, Header, description = "Website cookie mode only"),
+        ("Authorization" = Option<String>, Header, description = "Opaque mini-program Bearer token; exclusive with website credentials")),
     responses((status=200,description="All retained unrevoked account sessions revoked",body=Receipt,headers(("Set-Cookie"=String,description="Expires only the selected session cookie"))),
         (status=400,description="invalid_input; no request body is accepted",body=Failure),
         (status=401,description="authentication_invalid",body=Failure),
@@ -166,12 +166,18 @@ async fn perform(
         return failed(status, Common::InvalidInput);
     }
     let id = actor.session_id();
+    let cookie = actor.origin().transport() == "cookie";
     crate::route::command(
         context
             .services
             .revocation()
             .revoke(actor, operation_id, scope),
         |result| {
+            let receipt = Json(Receipt {
+                code: "ok",
+                completion: Completion { id: operation_id, count: result.count().get(), revoked_at: result.revoked_at() },
+            });
+            if !cookie { return receipt.into_response(); }
             let cookie = match crate::identity::session::clear(id) {
                 Ok(cookie) => cookie,
                 Err(cause) => {
@@ -181,14 +187,7 @@ async fn perform(
             };
             (
                 [(header::SET_COOKIE, cookie)],
-                Json(Receipt {
-                    code: "ok",
-                    completion: Completion {
-                        id: operation_id,
-                        count: result.count().get(),
-                        revoked_at: result.revoked_at(),
-                    },
-                }),
+                receipt,
             ).into_response()
         },
     )
@@ -196,9 +195,10 @@ async fn perform(
 }
 
 #[utoipa::path(get, path="/revocations", operation_id="readRevocations",
-    description = "Requires a current valid website session of the original account. Reads the permanent original logout's scope, initiatorId and complete fixed session set ordered by session ID, even after short-term session cleanup. The required original object binds scope and initiatorId for a nonempty set; missing and other-account operations return original: null and an empty list. This read neither executes logout nor sets a cookie. Origin must match the configured origin when supplied; absent Origin requires Sec-Fetch-Site: same-origin. Any supplied Sec-Fetch-Site must be same-origin.",
+    description = "Requires a valid website cookie or mini-program Bearer session of the original account. Reads the permanent logout scope, initiatorId and fixed session set in session-ID order, even after session cleanup. Missing and other-account operations return original: null and an empty list. This read never executes logout or sets a cookie. Website Origin must match when supplied; absent Origin requires same-origin Sec-Fetch-Site. Bearer does not require website Origin and cannot be mixed with website credentials.",
     params(("Operation-Id"=Uuid,Header,description="This read request UUID"),
-        ("Session-Id"=Uuid,Header,description="Selects a currently valid website session cookie"),
+        ("Session-Id"=Option<Uuid>,Header,description="Website cookie mode only"),
+        ("Authorization"=Option<String>,Header,description="Opaque mini-program Bearer token; exclusive with website credentials"),
         ("operation_id"=Uuid,Query,description="Original logout UUID")),
     responses((status=200,description="Original account-scoped logout set",body=Collection),
         (status=400,description="invalid_input",body=Failure),(status=401,description="authentication_invalid",body=Failure),

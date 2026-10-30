@@ -19,6 +19,8 @@ pub enum Filename {
     Challenge,
     #[strum(serialize = "message.json")]
     Message,
+    #[strum(serialize = "mini.json")]
+    Mini,
     #[strum(serialize = "database.json")]
     Database,
     #[strum(serialize = "keys.json")]

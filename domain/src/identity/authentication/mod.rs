@@ -10,7 +10,7 @@ pub mod settings;
 mod transaction;
 mod verification;
 
-use std::{future::Future, net::IpAddr, sync::Arc, time::Duration};
+use std::{collections::HashMap, future::Future, net::IpAddr, sync::Arc, time::Duration};
 
 use chrono::{DateTime, Utc};
 use tokio_postgres::{
@@ -25,7 +25,7 @@ use crate::{
         challenge::{self, Token, client},
         current, keys, message,
         mobile::Mobile,
-        operation, transfer, website,
+        operation, transfer,
     },
     kernel::App,
     runtime::{Context, registry, registry::Registry, work::Work},
@@ -46,12 +46,12 @@ pub(crate) async fn verify(
     client: &Client,
     app: &App,
     keys: &keys::Keys,
-    app_id: &website::AppId,
+    settings: &crate::identity::session::settings::Settings,
     now: DateTime<Utc>,
 ) -> Result<(), Error> {
     database::challenge::verify_all(client, keys, now).await?;
     database::message::verify_all(client, &keys.message, now).await?;
-    session::verify_all(client, app, keys, app_id, now).await
+    session::verify_all(client, app, keys, settings, now).await
 }
 
 #[cfg(test)]
@@ -265,6 +265,7 @@ pub struct Service(Arc<Inner>);
 pub(crate) struct Suppliers {
     pub(crate) challenge: client::Client,
     pub(crate) message: message::client::Client,
+    pub(crate) mini: Option<crate::identity::mini::client::Client>,
 }
 
 impl Service {
@@ -307,6 +308,8 @@ impl Service {
             app,
             supplier: suppliers.challenge,
             dispatch: dispatch::Dispatch::new(suppliers.message),
+            mini: suppliers.mini,
+            pending_sessions: tokio::sync::Mutex::new(HashMap::new()),
         }))
     }
 
@@ -343,7 +346,14 @@ impl Service {
 
     /// Authenticate an SMS code and deliver only its original, currently valid credential.
     pub async fn create_session(&self, input: session::Input) -> Result<session::Receipt, Error> {
-        self.0.run(input, session::Action).await
+        session::run(&self.0, session::Request::Message(input)).await
+    }
+
+    pub async fn create_mobile_session(
+        &self,
+        input: session::mobile::Input,
+    ) -> Result<session::Receipt, Error> {
+        session::run(&self.0, session::Request::Mobile(input)).await
     }
 
     /// Stop accepting new C1 work; accepted workers remain owned until drain.
@@ -386,6 +396,8 @@ struct Inner {
     roles: role::Reader,
     supplier: client::Client,
     dispatch: dispatch::Dispatch,
+    mini: Option<crate::identity::mini::client::Client>,
+    pending_sessions: tokio::sync::Mutex<HashMap<operation::Id, session::Pending>>,
 }
 
 impl Inner {

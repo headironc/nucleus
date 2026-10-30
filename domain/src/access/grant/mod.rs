@@ -3016,8 +3016,8 @@ pub(crate) mod tests {
                 Box::pin(services.grant().create(institution.clone(), operation(), command(&input(&candidate, 1)))).await.expect("first domain manager");
                 let message_id = message(&database, services.authentication(), &mut supplier, "13700000000").await;
                 let Receipt::Registration(credential) = Box::pin(services.authentication().create_session(authentication(Uuid::new_v4(), message_id, "13700000000", CODE))).await.expect("third person's R1") else { panic!("registration credential"); };
-                let registered = services.registration().register(crate::registration::Input::new(operation(), credential.id(), credential.token().text().parse().expect("proof"), "Other Manager".parse().expect("name"), "000000200002290088".parse().expect("id number"))).await.expect("third person's R2");
-                let other = services.current().authenticate(current::Proof { id: registered.id(), token: registered.token().text().parse().expect("session token") }).await.expect("third actor");
+                let registered = services.registration().register_input_for_test(crate::registration::Input::new(operation(), credential.id(), credential.token().text().parse().expect("proof"), "Other Manager".parse().expect("name"), "000000200002290088".parse().expect("id number"))).await.expect("third person's R2");
+                let other = services.current().authenticate(current::Proof::Cookie { id: registered.id(), token: registered.token().text().parse().expect("session token") }).await.expect("third actor");
                 let candidate = services.grant().candidate(&institution, Entry::Institution, "13700000000".parse().expect("mobile"), crate::pagination::Pagination::new(1, 20).expect("pagination")).await.expect("second domain manager candidate");
                 let mut body = input(&candidate, 1);
                 body["target"]["mobile"] = json!("13700000000");
