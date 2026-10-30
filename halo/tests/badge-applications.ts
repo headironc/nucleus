@@ -17,6 +17,7 @@ import type {
   ApplicationDetail,
   ApplicationInput,
   ApplicationList,
+  ApplicationPhoto,
   ApplicationPreview,
   PreviewInput,
 } from "../app/protocol/applications";
@@ -114,6 +115,7 @@ export async function ownBadgeApplications(
     );
   const viewport = page.viewportSize();
   const records: Application[] = [];
+  let preparedPhoto: ApplicationPhoto | undefined;
   const calls: { operation: string; input: ApplicationInput }[] = [];
   let photos = 0,
     previews = 0,
@@ -237,7 +239,20 @@ export async function ownBadgeApplications(
 
   const photo = async (route: Route) => {
     photos++;
-    if (!capacity) return route.continue();
+    if (!capacity) {
+      const response = await route.fetch({
+        maxRetries: 0,
+        maxRedirects: 0,
+        timeout: 35_000,
+      });
+      preparedPhoto = await trusted<ApplicationPhoto>(
+        await wire(response),
+        "POST /api/v1/workforce/application-photos",
+        201,
+      );
+      await route.fulfill({ response });
+      return;
+    }
     if (capacityHandled) {
       await route.abort();
       throw new Error("Unexpected automatic photograph retry");
@@ -300,24 +315,28 @@ export async function ownBadgeApplications(
       replacement: "换证",
     }[kind];
     await page.getByRole("radio", { name: label, exact: true }).check();
-    const png = await page.evaluate(() => {
+    const png = await page.evaluate((index) => {
       const canvas = document.createElement("canvas");
       canvas.width = 640;
       canvas.height = 960;
       const context = canvas.getContext("2d")!;
-      context.fillStyle = "#c8d2c6";
+      context.fillStyle = ["#c8d2c6", "#d3c9b9", "#c4cedd", "#d0c5d9"][
+        index % 4
+      ];
       context.fillRect(0, 0, 640, 960);
       context.clearRect(0, 0, 80, 960);
       context.fillStyle = "#ddbc9a";
       context.beginPath();
       context.arc(340, 280, 140, 0, Math.PI * 2);
       context.fill();
-      context.fillStyle = "#365c4e";
+      context.fillStyle = ["#365c4e", "#3d5a78", "#76575d", "#6c6c41"][
+        index % 4
+      ];
       context.beginPath();
       context.ellipse(340, 800, 230, 330, 0, 0, Math.PI * 2);
       context.fill();
       return canvas.toDataURL("image/png").split(",")[1];
-    });
+    }, photos);
     await page.locator('input[type="file"]').setInputFiles({
       name: `fictional-${kind}.png`,
       mimeType: "image/png",
@@ -329,6 +348,10 @@ export async function ownBadgeApplications(
     await expect(
       page.getByRole("button", { name: "已确认裁剪效果" }),
     ).toBeDisabled();
+    return {
+      departmentId,
+      pickup: await page.getByLabel("领取地点", { exact: true }).inputValue(),
+    };
   };
 
   await select(owner.session);
@@ -354,7 +377,8 @@ export async function ownBadgeApplications(
       "lost",
     ] as const) {
       const kind = phase === "lost" ? "issuance" : phase;
-      await prepare(kind);
+      preparedPhoto = undefined;
+      const selected = await prepare(kind);
       const received = responseFor(
         page,
         "/api/v1/workforce/applications/preview",
@@ -370,10 +394,16 @@ export async function ownBadgeApplications(
       const input = response.request().postDataJSON();
       expect(registry.workforceApplicationPreview_input(input)).toBe(true);
       expect(input.kind).toBe(kind);
+      expect(input.selections.departmentId).toBe(selected.departmentId);
+      expect(input.selections.pickup).toBe(selected.pickup);
+      expect(input.selections.rosterId).toBeNull();
+      expect(input.selections.titleId).toBeNull();
       expect(preview.kind).toBe(kind);
       expect(preview.snapshot.name).toBe(current.account.name);
       expect(preview.snapshot.photoId).toBe(input.selections.photoId);
       expect(preview.photo.photoId).toBe(input.selections.photoId);
+      expect(preparedPhoto).toBeDefined();
+      expect({ code: "ok", ...preview.photo }).toEqual(preparedPhoto);
       const dialog = page.getByRole("dialog");
       await expect(dialog).toBeVisible();
       const details = dialog.locator(".application-snapshot");
@@ -388,6 +418,25 @@ export async function ownBadgeApplications(
       await expect(
         dialog.getByRole("img", { name: "本次工牌完整预览" }),
       ).toBeVisible();
+      await expect
+        .poll(() =>
+          dialog
+            .getByRole("img", { name: "本次工牌完整预览" })
+            .evaluate((node, layout) => {
+              const canvas = node as HTMLCanvasElement;
+              const x = Math.floor(
+                ((layout.photo.xUm + layout.photo.widthUm / 2) * canvas.width) /
+                  layout.widthUm,
+              );
+              const y = Math.floor(
+                ((layout.photo.yUm + layout.photo.heightUm / 2) *
+                  canvas.height) /
+                  layout.heightUm,
+              );
+              return canvas.getContext("2d")!.getImageData(x, y, 1, 1).data[3];
+            }, preview.snapshot.template.layout),
+        )
+        .toBe(255);
       await expect(
         dialog.getByRole("button", { name: "确认并提交申请", exact: true }),
       ).toBeEnabled();
