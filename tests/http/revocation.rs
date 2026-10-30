@@ -28,6 +28,15 @@ fn website_logout_uses_the_selected_cookie_and_reads_its_original_with_another_s
                 let (base,stop,task)=running(application).await;
                 let (other,other_cookie)=issued_session(&base,&mut sms).await;
                 let client=reqwest::Client::new();let operation=Uuid::new_v4().to_string();
+                let response = client.get(format!("{base}/api/v1/sessions")).header("operation-id",Uuid::new_v4().to_string()).header("session-id",&id).header("cookie",&cookie).header("sec-fetch-site","same-origin").header("x-real-ip","203.0.113.210").send().await.expect("own website sessions");
+                assert_eq!(response.status(),200); assert_eq!(response.headers()["cache-control"],"no-store"); assert!(!response.headers().contains_key("set-cookie"));
+                let list=response.json::<serde_json::Value>().await.expect("sessions");
+                let sessions=list["sessions"].as_array().expect("session array"); assert_eq!(sessions.len(),2);
+                for session in sessions {
+                    assert_eq!(session.as_object().expect("session object").len(),4);
+                    assert_eq!(session["source"],"website");
+                    assert_eq!(session["current"],session["id"]==id);
+                }
                 let path = if all {"/api/v1/sessions"} else {"/api/v1/sessions/current"};
                 for (index,(headers,body,status)) in [
                     (vec![("sec-fetch-site","same-origin")],"",403),
@@ -87,6 +96,136 @@ fn website_logout_uses_the_selected_cookie_and_reads_its_original_with_another_s
                 drop(supplier);sms.stop().await;proxy.stop().await;
             }
         }).await.expect("HTTP logout budget");
+    });
+}
+
+#[test]
+fn website_targeted_logout_preserves_the_selected_cookie_after_commit_response_loss() {
+    let server = server();
+    Runtime::new().expect("runtime").block_on(async {
+        timeout(Duration::from_secs(35), async {
+            let name = database(&server).await;
+            let supplier = Supplier::echoing().await;
+            let mut sms = fixture::supplier::Supplier::start().await;
+            let proxy = fixture::database_proxy::Proxy::start(&server).await;
+            let application = Application::start(
+                proxy_connections(&name, &proxy),
+                keys(0),
+                services(8).expect("settings"),
+                process::Settings::new(Duration::from_secs(5)).expect("stop"),
+                supplier.client(),
+                message_at(sms.address(), sms.authority()),
+            )
+            .await
+            .expect("start");
+            let issuance = application.registration().clone();
+            let (base, stop, task) = running(application).await;
+            let (id, cookie) = issued_session(&base, &mut sms).await;
+            age_issuance(&server, &name, &issuance).await;
+            stop.send(()).expect("stop before next issuance");
+            let (application, result) = task.await.expect("first server");
+            result.expect("drained");
+            drop(application);
+            let application = Application::start(
+                proxy_connections(&name, &proxy),
+                keys(0),
+                services(8).expect("settings"),
+                process::Settings::new(Duration::from_secs(5)).expect("stop"),
+                supplier.client(),
+                message_at(sms.address(), sms.authority()),
+            )
+            .await
+            .expect("restart");
+            let (base, stop, task) = running(application).await;
+            let (other, other_cookie) = issued_session(&base, &mut sms).await;
+            let client = reqwest::Client::new();
+            let request = |method, path: &str, operation: String| {
+                client
+                    .request(method, format!("{base}/api/v1{path}"))
+                    .header("operation-id", operation)
+                    .header("session-id", &id)
+                    .header("cookie", &cookie)
+                    .header("origin", "https://example.com")
+                    .header("x-real-ip", "203.0.113.211")
+            };
+            let path = format!("/sessions/{other}");
+            let response = request(reqwest::Method::DELETE, &path, Uuid::new_v4().to_string())
+                .header("origin", "https://attacker.invalid")
+                .send()
+                .await
+                .expect("origin refusal");
+            assert_eq!(response.status(), 403);
+            assert!(!response.headers().contains_key("set-cookie"));
+            let operation = Uuid::new_v4().to_string();
+            proxy.arm(fixture::database_proxy::Fault::LostCommit);
+            let pending =
+                tokio::spawn(request(reqwest::Method::DELETE, &path, operation.clone()).send());
+            timeout(Duration::from_secs(3), proxy.intercepted())
+                .await
+                .expect("target commit response lost");
+            proxy.release();
+            let response = pending
+                .await
+                .expect("caller")
+                .expect("original target recovered");
+            assert_eq!(response.status(), 200);
+            assert!(!response.headers().contains_key("set-cookie"));
+            assert_eq!(
+                response
+                    .json::<serde_json::Value>()
+                    .await
+                    .expect("completion")["completion"]["count"],
+                1
+            );
+            let response = request(
+                reqwest::Method::GET,
+                "/accounts/current",
+                Uuid::new_v4().to_string(),
+            )
+            .send()
+            .await
+            .expect("original selected cookie still effective");
+            assert_eq!(response.status(), 200);
+            let response = client
+                .get(format!("{base}/api/v1/sessions"))
+                .header("operation-id", Uuid::new_v4().to_string())
+                .header("session-id", &other)
+                .header("cookie", &other_cookie)
+                .header("origin", "https://example.com")
+                .header("x-real-ip", "203.0.113.212")
+                .send()
+                .await
+                .expect("revoked target");
+            assert_eq!(response.status(), 401);
+            let response = request(
+                reqwest::Method::GET,
+                &format!("/revocations?operation_id={operation}"),
+                Uuid::new_v4().to_string(),
+            )
+            .send()
+            .await
+            .expect("original target read");
+            assert_eq!(response.status(), 200);
+            assert!(!response.headers().contains_key("set-cookie"));
+            let original = response
+                .json::<serde_json::Value>()
+                .await
+                .expect("original");
+            assert_eq!(
+                original["original"],
+                serde_json::json!({"scope":"other","initiatorId":id})
+            );
+            assert_eq!(original["revocations"][0]["id"], other);
+            stop.send(()).expect("stop");
+            let (application, result) = task.await.expect("server");
+            result.expect("drained");
+            drop(application);
+            assert_eq!(supplier.calls.load(Ordering::SeqCst), 2);
+            sms.stop().await;
+            proxy.stop().await;
+        })
+        .await
+        .expect("website targeted logout budget");
     });
 }
 
