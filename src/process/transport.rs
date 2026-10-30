@@ -34,7 +34,8 @@ impl Transport {
             .await
             .map_err(RunError::Listener)?;
         let admission = identity::admission::Admission::new().map_err(RunError::Admission)?;
-        let authentication = identity::Context::new(services.clone(), settings, source, admission);
+        let authentication =
+            identity::Context::new(services.clone(), settings, source, admission.clone());
         let routes = identity::router(authentication.clone())
             .merge(center::router(
                 services.affiliation().clone(),
@@ -47,6 +48,11 @@ impl Transport {
             .merge(workforce::directory::router(
                 services.directory().clone(),
                 authentication.clone(),
+            ))
+            .merge(workforce::application::router(
+                services.application().clone(),
+                authentication.clone(),
+                admission,
             ))
             .merge(access::router(
                 services.role().clone(),

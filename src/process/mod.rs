@@ -32,6 +32,10 @@ pub fn run() -> Result<(), RunError> {
         return Err(RunError::NotifyMissing);
     }
     let settings = settings::Settings::load()?;
+    let application = settings
+        .application
+        .prepare()
+        .map_err(RunError::ApplicationSettings)?;
     let keys = keys::load()?;
     let connections = crate::database::load(settings.database)?;
     let (challenge, message) =
@@ -43,7 +47,7 @@ pub fn run() -> Result<(), RunError> {
         Application::start_with_mini(
             connections,
             keys,
-            settings.services,
+            settings.services.with_application(application),
             settings.process,
             challenge,
             message,
@@ -118,6 +122,8 @@ fn notify(_: std::net::SocketAddr) -> Result<(), RunError> {
 
 #[derive(Debug, Error)]
 pub enum RunError {
+    #[error("badge application preparation failed")]
+    ApplicationSettings(crate::workforce::settings::Error),
     #[error("{0}")]
     Settings(#[from] settings::Error),
     #[error("{0}")]
@@ -169,6 +175,7 @@ impl RunError {
     /// Locate a process failure without formatting settings, inputs or source chains.
     pub fn stage(&self) -> &'static str {
         match self {
+            Self::ApplicationSettings(_) => "application_settings",
             Self::Settings(_) => "settings",
             Self::Application(Error::Instance(_)) => "instance_lock",
             Self::Keys(_) => "keys",
@@ -600,6 +607,9 @@ mod tests {
             avatar_settings(),
         )
         .expect("settings")
+        .with_application(domain::workforce::application::fixture_settings(
+            storage.clone(),
+        ))
         .with_avatar_storage(Some(storage))
     }
 

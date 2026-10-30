@@ -22,6 +22,7 @@ pub struct Settings {
     pub(crate) requests: crate::identity::Settings,
     pub(crate) services: domain::startup::Settings,
     pub(crate) process: crate::process::Settings,
+    pub(crate) application: crate::workforce::settings::Settings,
 }
 
 impl Settings {
@@ -34,6 +35,7 @@ impl Settings {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Input {
+    workforce: crate::workforce::settings::Workforce,
     database: database::assembly::input::Input,
     challenge: Challenge,
     message: Message,
@@ -367,6 +369,11 @@ impl TryFrom<Input> for Settings {
     type Error = Error;
 
     fn try_from(input: Input) -> Result<Self, Error> {
+        let storage = platform::files::Settings::new(
+            input.storage.root.clone().into(),
+            input.storage.mount.clone().into(),
+            input.storage.device,
+        )?;
         let mini = input
             .wechat
             .mini_program
@@ -375,6 +382,10 @@ impl TryFrom<Input> for Settings {
             })
             .transpose()?;
         Ok(Self {
+            application: crate::workforce::settings::Settings::new(
+                input.workforce.application,
+                storage,
+            )?,
             database: input.database.try_into()?,
             challenge: challenge::settings::Settings::new(
                 challenge::settings::AllowedHostnames::new(
@@ -423,6 +434,8 @@ impl TryFrom<Templates> for message::settings::Templates {
 /// Loading and construction causes are retained without exposing submitted values.
 #[derive(Error)]
 pub enum Error {
+    #[error("badge application settings are invalid")]
+    Application(#[from] crate::workforce::settings::Error),
     #[error("{0}")]
     Avatar(#[from] domain::identity::avatar::link::SettingsError),
     #[error("{0}")]
@@ -513,7 +526,7 @@ mod tests {
     use crate::settings::{Error, Input, Settings};
 
     fn input() -> Vec<(String, String)> {
-        [
+        let mut input: Vec<(String, String)> = [
             ("NUCLEUS_CHALLENGE__SITE_KEY", "fixture-site-key"),
             (
                 "NUCLEUS_CHALLENGE__HOSTNAMES",
@@ -544,7 +557,35 @@ mod tests {
         ]
         .into_iter()
         .map(|(key, value)| (key.into(), value.into()))
-        .collect()
+        .collect();
+        input.extend([
+            (
+                "NUCLEUS_WORKFORCE__APPLICATION__BACKGROUND_PATH".into(),
+                "/fictional/background.png".into(),
+            ),
+            (
+                "NUCLEUS_WORKFORCE__APPLICATION__BACKGROUND_MEDIA_TYPE".into(),
+                "image/png".into(),
+            ),
+            (
+                "NUCLEUS_WORKFORCE__APPLICATION__FONT_PATH".into(),
+                "/fictional/font.ttf".into(),
+            ),
+            (
+                "NUCLEUS_WORKFORCE__APPLICATION__PICKUPS".into(),
+                r#"["Fixture reception"]"#.into(),
+            ),
+            (
+                "NUCLEUS_WORKFORCE__APPLICATION__PHOTO_LIMITS".into(),
+                r#"{"person_files":100,"person_bytes":1073741824,"total_files":1000,"total_bytes":10737418240}"#.into(),
+            ),
+            (
+                "NUCLEUS_WORKFORCE__APPLICATION__TEMPLATE".into(),
+                serde_json::to_string(&domain::workforce::application::fixture_template())
+                    .expect("fixture template"),
+            ),
+        ]);
+        input
     }
 
     fn load(input: Vec<(String, String)>) -> Result<Settings, Error> {
@@ -555,6 +596,51 @@ mod tests {
         match load(input) {
             Ok(_) => panic!("invalid input must fail"),
             Err(error) => error,
+        }
+    }
+
+    #[test]
+    fn fixed_badge_configuration_is_required_and_validated_before_file_reading() {
+        assert!(
+            load(input()).is_ok(),
+            "source files are read by the process entry point"
+        );
+        for field in [
+            "BACKGROUND_PATH",
+            "BACKGROUND_MEDIA_TYPE",
+            "FONT_PATH",
+            "TEMPLATE",
+            "PICKUPS",
+            "PHOTO_LIMITS",
+        ] {
+            let missing = format!("NUCLEUS_WORKFORCE__APPLICATION__{field}");
+            let mut values = input();
+            values.retain(|(key, _)| key != &missing);
+            assert!(
+                load(values).is_err(),
+                "missing {field} cannot disable the online entry"
+            );
+        }
+        for (field, value) in [
+            ("BACKGROUND_PATH", "relative.png"),
+            ("FONT_PATH", "/fonts/../font.ttf"),
+            ("BACKGROUND_MEDIA_TYPE", "image/gif"),
+            ("PICKUPS", "[]"),
+            ("PICKUPS", r#"[" "]"#),
+            ("PHOTO_LIMITS", "{}"),
+            (
+                "PHOTO_LIMITS",
+                r#"{"person_files":1,"person_bytes":0,"total_files":1,"total_bytes":1}"#,
+            ),
+        ] {
+            let key = format!("NUCLEUS_WORKFORCE__APPLICATION__{field}");
+            let mut values = input();
+            values.retain(|(existing, _)| existing != &key);
+            values.push((key, value.into()));
+            assert!(
+                load(values).is_err(),
+                "invalid supplied {field} cannot become a default"
+            );
         }
     }
 

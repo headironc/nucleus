@@ -623,7 +623,7 @@ pub(super) async fn referenced(client: &Client, expected: &Item) -> Result<bool,
             .map_err(Error::decode)?,
         Item::Department(item) => client
             .query_one(
-                "SELECT EXISTS (SELECT 1 FROM workforce.departments WHERE parent_id = $1) OR EXISTS (SELECT 1 FROM workforce.rules WHERE department_id = $1) OR EXISTS (SELECT 1 FROM workforce.rosters WHERE department_id = $1)",
+                "SELECT EXISTS (SELECT 1 FROM workforce.departments WHERE parent_id = $1) OR EXISTS (SELECT 1 FROM workforce.rules WHERE department_id = $1) OR EXISTS (SELECT 1 FROM workforce.rosters WHERE department_id = $1) OR EXISTS (SELECT 1 FROM workforce.applications WHERE department_id = $1)",
                 &[&item.id],
             )
             .await?
@@ -653,8 +653,9 @@ pub(super) async fn referenced(client: &Client, expected: &Item) -> Result<bool,
             .await?
             .try_get::<_, bool>(0)
             .map_err(Error::decode)?,
-        // Badge submissions that will reference titles are not delivered yet.
-        Item::Title(_) => false,
+        Item::Title(item) => client.query_one(
+            "SELECT EXISTS (SELECT 1 FROM workforce.applications WHERE title_id = $1)", &[&item.id]
+        ).await?.try_get(0).map_err(Error::decode)?,
     };
     Ok(referenced)
 }
@@ -803,6 +804,17 @@ pub(super) async fn replace_roster(
             .iter()
             .all(|choice| choice.position_id != entry.position_id)
         {
+            if client
+                .query_one(
+                    "SELECT EXISTS (SELECT 1 FROM workforce.applications WHERE roster_id=$1)",
+                    &[&entry.id],
+                )
+                .await?
+                .try_get::<_, bool>(0)
+                .map_err(Error::decode)?
+            {
+                return Err(super::Rejection::InUse.into());
+            }
             let deleted = client
                 .execute("DELETE FROM workforce.rosters WHERE id = $1", &[&entry.id])
                 .await?;

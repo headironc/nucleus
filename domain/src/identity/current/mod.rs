@@ -288,6 +288,22 @@ impl Service {
         Ok((state.person_id, state.revision_id, state.observed_at))
     }
 
+    /// Printable current identity, with the same authentication and protected profile read.
+    pub(crate) async fn fetch_name(
+        &self,
+        client: &tokio_postgres::Client,
+        actor: &Actor,
+        read: Read,
+    ) -> Result<(person::Id, Name, DateTime<Utc>), Error> {
+        let state = database::find_person_by_actor(client, &self.0.app, read, actor)
+            .await?
+            .ok_or(Error::Invalid)?;
+        self.confirm(actor, &state)?;
+        let profile = database::profile(client, &state, &self.0.keys, self.0.app.keys()).await?;
+        let (_, name, _) = profile.into_values();
+        Ok((state.person_id, name, state.observed_at))
+    }
+
     pub(crate) async fn fetch_state(
         &self,
         client: &tokio_postgres::Client,

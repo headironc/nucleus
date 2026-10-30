@@ -12,7 +12,7 @@ use crate::OPERATION_BUDGET;
 
 /// Every embedded migration as `(name, SQL)` in version order. The online test harnesses apply
 /// exactly this list; a test requires it to equal the `migrations` directory.
-pub const MIGRATIONS: [(&str, &str); 14] = [
+pub const MIGRATIONS: [(&str, &str); 15] = [
     ("V1__keys", include_str!("../migrations/V1__keys.sql")),
     (
         "V2__challenge_acceptance",
@@ -65,6 +65,10 @@ pub const MIGRATIONS: [(&str, &str); 14] = [
     (
         "V14__avatar_uploads",
         include_str!("../migrations/V14__avatar_uploads.sql"),
+    ),
+    (
+        "V15__applications",
+        include_str!("../migrations/V15__applications.sql"),
     ),
 ];
 
@@ -324,7 +328,7 @@ mod tests {
     use tokio::{runtime::Runtime, time::timeout};
     use tokio_postgres::error::SqlState;
 
-    use crate::migration::{Error, lock, reconcile, run, runner};
+    use crate::migration::{Error, MIGRATIONS, lock, reconcile, run, runner};
 
     #[test]
     fn embedded_migrations_match_the_migration_directory() {
@@ -571,7 +575,7 @@ mod tests {
                 .get_applied_migrations_async(session.client_mut())
                 .await
                 .expect("history");
-            assert_eq!(applied.len(), 14);
+            assert_eq!(applied.len(), MIGRATIONS.len());
             assert_eq!(applied[0].version(), 1);
             assert_eq!(applied[1].version(), 2);
             assert_eq!(applied[2].version(), 3);
@@ -646,7 +650,7 @@ mod tests {
             &[],
         ).await.expect("independent complete migration history");
         let expected = runner().expect("embedded migrations");
-        assert_eq!(rows.len(), if applied { 14 } else { 0 });
+        assert_eq!(rows.len(), if applied { MIGRATIONS.len() } else { 0 });
         let mut snapshot = Vec::new();
         for (row, migration) in rows.iter().zip(expected.get_migrations()) {
             assert_eq!(row.get::<_, i32>("version"), migration.version());
@@ -799,7 +803,9 @@ mod tests {
                                     .await
                                     .expect("observe original commit")
                                     .get(0);
-                                if count == 14 {
+                                if count
+                                    == i64::try_from(MIGRATIONS.len()).expect("migration count")
+                                {
                                     break;
                                 }
                                 tokio::task::yield_now().await;
