@@ -1,6 +1,6 @@
 # 工牌申请
 
-状态：简化后的目标设计，尚未实施。本文拥有提交快照、申请状态、审批、取消与申请表。生成与发放见[成品](fulfillment.md)，固定资源见[媒体](media.md)。共同事务、审计和失败处理按[架构](../architecture.md)。
+本文拥有提交快照、申请状态、审批、取消与申请表。实际交付范围见[能力状态](../README.md#能力状态)。生成与发放见[成品](fulfillment.md)，固定资源见[媒体](media.md)。共同事务、审计和失败处理按[架构](../architecture.md)。
 
 ## 申请与自动分类
 
@@ -70,9 +70,21 @@ submitted 没有审批字段；rejected、approved、ready、issued 有审批字
 
 按实际列表需要建立申请人及状态的查询索引，排序用 submitted_at 和 id。不建立 person_id 与 kind 的唯一索引。现有人员等表结构不在本工牌切片里重建。
 
+JSON 中的科室、职务、职称、照片、背景和字体引用使用数据库生成列提取，并由真实外键保护。职务条目必须属于同一实际科室，照片必须属于申请人，背景与字体必须具有对应资源角色；不另存可独立修改的引用副本。已被申请引用的目录项不能删除，启停或改名不改变旧快照。照片元数据和资源字节不可覆盖，资源角色限定为照片、背景和字体。
+
 ## 存储与 HTTP
 
 本人只能读取自己的申请，有权管理者按作用范围读取。审批权不自动开放完整证件号。JSON 使用现有封套，失败不伪装成空列表；当前身份、来源防护与请求体校验继续有效。
+
+本人提交前调用 `POST /api/v1/workforce/applications/preview`，正文为 `{kind, selections}`。`selections` 必填实际科室 `departmentId`、科室职务条目 `rosterId`、职称 `titleId`、已准备照片 `photoId` 和领取地点原文 `pickup`。不选职务或职称时显式传 `null`，服务端不补默认科室。全部 16 种分类规则齐备后才开放预览与提交；缺项是 `503 dependency_unavailable`。
+
+预览正文最多 8 KiB。提交包含完整文字行和布局，正文预算独立为 128 KiB，不能因旧输入预算截断已确认内容。两者超限均返回 `413 invalid_input`。
+
+预览响应为 `{code: "ok", kind, snapshot, photo}`。提交正文为 `{kind, selections, expected}`，`expected` 使用本人确认的完整 `snapshot`。成功返回 `201`、`{code: "ok", application}`。服务端在短事务中重读可信内容并比较全部实际字段；差异为 `409 data_changed`。当前无工号为 `409 number_required`；目录或领取地点不可选为 `422 selection_unavailable`；不可引用的照片为 `404 target_unavailable`。缺字、完整文字放不下分别为 `422 missing_glyph`、`422 text_overflow`。
+
+`snapshot` 包含 `name`、完整 `number`、`printedNumber`、`department: {id, name, printed}`、可空的 `position: {rosterId, name}` 与 `title: {id, name}`、`printedTitle`、`photoId`、`template`、`pickup` 和实际文字行 `text`。布局和行的单位及完整文字定位见[媒体规则](media.md#文字排版)。`photo` 是不可变照片元数据，含 `photoId`、`resourceId`、`width`、`height` 和 `mediaType`，供预览和历史详情定位字节及保持原比例；不把照片尺寸另存为可变牌面事实。
+
+本人列表使用[共同分页](../http/lists.md)，按 `submittedAt DESC, id DESC` 排序。正常账户及活跃 Grant 返回 `{code: "ok", access: "full", count, applications}`；每项含 `id`、`kind`、`status`、`submittedAt`、`snapshot` 和 `photo`。当前没有工号仍可读完整历史。Grant 暂停或结束时返回 `access: "restricted"`，只列未发放可取消申请，每项恰为 `{id, kind, status, submittedAt}`，没有快照和照片。详情采用同一 `access` 区分，单项位于 `application`。他人或不可披露目标统一为 `404 target_unavailable`；失效会话或账户为 `401 authentication_invalid`。
 
 | 路由                                                   | 结果                   |
 | ------------------------------------------------------ | ---------------------- |
@@ -85,6 +97,8 @@ submitted 没有审批字段；rejected、approved、ready、issued 有审批字
 | POST /api/v1/workforce/applications/{id}/cancellations | 按当前身份和权限取消   |
 
 不提供重提 Submission、独立 Review 读取或原 Operation-Id 结果恢复。请求关联 ID 不承担去重。未收到响应时刷新列表或详情，不自动重发。创建可能重复，审批与取消由状态条件保护。未收到提交确认时不宣称一定失败。
+
+上述 JSON 和照片准备入口沿用共同 `Operation-Id` 请求头，仅用于诊断。重复该头不合并申请，也不提供原结果。媒体资源 GET/HEAD 按[媒体读取](media.md#存储与原结果)豁免关联头，仍检查当前会话和对象权限。
 
 ## 验收
 

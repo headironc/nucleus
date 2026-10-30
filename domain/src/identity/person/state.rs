@@ -27,6 +27,18 @@ pub(crate) async fn lock(
     Ok(())
 }
 
+/// Current-state consumers that never update Person stabilize its fields without taking
+/// the exclusive lock used by number and identity writers.
+pub(crate) async fn lock_shared(client: &Client, id: person::Id) -> Result<(), Error> {
+    client
+        .query_opt(
+            "SELECT id FROM identity.persons WHERE id=$1 FOR SHARE",
+            &[&id],
+        )
+        .await?;
+    Ok(())
+}
+
 /// Acquire the actor and target persons in their established global order.
 pub(crate) async fn lock_participants(
     client: &Client,

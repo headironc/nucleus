@@ -1102,6 +1102,12 @@ pub(super) mod tests {
                 .await
                 .expect("avatar upload migration");
             transaction
+                .batch_execute(include_str!(
+                    "../../../../deployment/migrations/V15__applications.sql"
+                ))
+                .await
+                .expect("badge application migration");
+            transaction
                 .batch_execute(&crate::database::permissions::grants())
                 .await
                 .expect("runtime grants");

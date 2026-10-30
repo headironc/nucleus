@@ -9,8 +9,9 @@ use std::{
 
 use rustix::{
     fs::{
-        AtFlags, CWD, FileType, Mode, OFlags, RenameFlags, StatxAttributes, StatxFlags, fchmod,
-        fstat, fsync, mkdirat, openat, renameat_with, statat, statx, unlinkat,
+        AtFlags, CWD, Dir, FileType, FlockOperation, Mode, OFlags, RenameFlags, StatxAttributes,
+        StatxFlags, fchmod, flock, fstat, fsync, mkdirat, openat, renameat_with, statat, statx,
+        unlinkat,
     },
     io::Errno,
 };
@@ -110,6 +111,19 @@ pub struct Directory {
 }
 
 impl Directory {
+    /// Serialize filesystem accounting and publication across independently opened roots.
+    /// The held directory inode is the lock identity; callers must not replace that directory.
+    pub fn exclusive(&self, segments: &[&str]) -> Result<ExclusiveDirectory, Error> {
+        let directory = self.directory(segments, true)?;
+        // dup shares an open-file description, which would also share an existing flock.
+        let root = openat(&directory, ".", DIRECTORY, Mode::empty())?;
+        flock(&root, FlockOperation::LockExclusive)?;
+        Ok(ExclusiveDirectory(Directory {
+            root,
+            device: self.device,
+        }))
+    }
+
     /// The caller must already own the durable intention and serialize this candidate identity.
     pub fn publish(
         &self,
@@ -210,14 +224,77 @@ impl Directory {
     }
 }
 
+/// Closing the held directory releases its filesystem lock, including after process exit.
+pub struct ExclusiveDirectory(Directory);
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Usage {
+    pub files: u64,
+    pub bytes: u64,
+}
+
+impl ExclusiveDirectory {
+    /// Count every private regular file, including writable or incomplete candidates.
+    /// Links, unexpected file types and changes to the expected filesystem fail closed.
+    pub fn usage(&self, segments: &[&str]) -> Result<Usage, Error> {
+        let root = match self.0.directory(segments, false) {
+            Ok(directory) => directory,
+            Err(Error::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Usage::default());
+            }
+            Err(error) => return Err(error),
+        };
+        let mut pending = vec![root];
+        let mut usage = Usage::default();
+        while let Some(directory) = pending.pop() {
+            for entry in Dir::read_from(&directory)? {
+                let entry = entry?;
+                let name = entry.file_name();
+                if name.to_bytes() == b"." || name.to_bytes() == b".." {
+                    continue;
+                }
+                let stat = statat(&directory, name, AtFlags::SYMLINK_NOFOLLOW)?;
+                if FileType::from_raw_mode(stat.st_mode) == FileType::Directory {
+                    let child = openat(&directory, name, DIRECTORY, Mode::empty())?;
+                    private_directory(&child, self.0.device)?;
+                    pending.push(child);
+                } else {
+                    private_file(&stat, self.0.device)?;
+                    usage.files = usage.files.checked_add(1).ok_or(Error::Identity)?;
+                    usage.bytes = usage
+                        .bytes
+                        .checked_add(u64::try_from(stat.st_size).map_err(|_| Error::Identity)?)
+                        .ok_or(Error::Identity)?;
+                }
+            }
+        }
+        Ok(usage)
+    }
+
+    pub fn publish(
+        &self,
+        segments: &[&str],
+        name: &str,
+        candidate: &str,
+        bytes: &[u8],
+    ) -> Result<(), Error> {
+        self.0.publish(segments, name, candidate, bytes)
+    }
+}
+
 /// A held regular-file inode remains readable after its directory entry is unlinked.
 pub struct Reader(File);
 
 impl Reader {
-    pub fn read(mut self, expected_size: u64) -> Result<Vec<u8>, Error> {
+    pub fn verify_size(&self, expected_size: u64) -> Result<(), Error> {
         if self.0.metadata()?.len() != expected_size {
             return Err(Error::Identity);
         }
+        Ok(())
+    }
+
+    pub fn read(mut self, expected_size: u64) -> Result<Vec<u8>, Error> {
+        self.verify_size(expected_size)?;
         let length = usize::try_from(expected_size).map_err(|_| Error::Identity)?;
         let mut bytes = vec![0; length];
         self.0.read_exact(&mut bytes)?;
@@ -377,6 +454,99 @@ mod tests {
         }
         fn open(&self) -> Directory {
             self.settings().open().expect("real private filesystem")
+        }
+    }
+
+    #[test]
+    fn metadata_verification_preserves_the_unread_body_and_checks_length() {
+        use std::io::Seek as _;
+
+        let fixture = Fixture::new();
+        let directory = fixture.open();
+        let bytes = b"private resource";
+        directory
+            .publish(&["head"], "resource", "candidate", bytes)
+            .expect("private file");
+        let mut reader = directory
+            .open(&["head"], "resource")
+            .expect("safe file")
+            .expect("present file");
+        reader
+            .verify_size(bytes.len() as u64)
+            .expect("metadata length");
+        assert!(matches!(
+            reader.verify_size(bytes.len() as u64 + 1),
+            Err(Error::Identity)
+        ));
+        assert_eq!(reader.0.stream_position().expect("unread offset"), 0);
+        assert_eq!(
+            reader.read(bytes.len() as u64).expect("unchanged body"),
+            bytes
+        );
+    }
+
+    #[test]
+    fn directory_lock_is_visible_to_another_process_and_released_on_close() {
+        let fixture = Fixture::new();
+        let directory = fixture.open();
+        let held = directory
+            .exclusive(&["quota"])
+            .expect("held filesystem lock");
+        let run = |locked: bool| {
+            let mut child =
+                std::process::Command::new(std::env::current_exe().expect("test binary"))
+                    .args([
+                        "--exact",
+                        "files::tests::directory_lock_child",
+                        "--nocapture",
+                    ])
+                    .env("NUCLEUS_TEST_LOCK_ROOT", fixture.root.path())
+                    .env("NUCLEUS_TEST_LOCK_MOUNT", &fixture.mount)
+                    .env("NUCLEUS_TEST_LOCK_DEVICE", fixture.device.to_string())
+                    .env("NUCLEUS_TEST_LOCKED", if locked { "yes" } else { "no" })
+                    .spawn()
+                    .expect("independent test process");
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+            loop {
+                if let Some(status) = child.try_wait().expect("child status") {
+                    assert!(status.success());
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    child.kill().expect("stop timed-out child");
+                    child.wait().expect("reap child");
+                    panic!("file lock observation timed out");
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+        };
+        run(true);
+        drop(held);
+        run(false);
+    }
+
+    #[test]
+    fn directory_lock_child() {
+        let Some(root) = std::env::var_os("NUCLEUS_TEST_LOCK_ROOT") else {
+            return;
+        };
+        let mount = std::env::var_os("NUCLEUS_TEST_LOCK_MOUNT").expect("mount");
+        let device = std::env::var("NUCLEUS_TEST_LOCK_DEVICE")
+            .expect("device")
+            .parse()
+            .expect("device number");
+        let directory = Settings::new(root.into(), mount.into(), device)
+            .expect("settings")
+            .open()
+            .expect("private root");
+        let leaf = directory
+            .directory(&["quota"], false)
+            .expect("lock directory");
+        let result = flock(&leaf, FlockOperation::NonBlockingLockExclusive);
+        if std::env::var("NUCLEUS_TEST_LOCKED").expect("lock expectation") == "yes" {
+            assert_eq!(result, Err(Errno::WOULDBLOCK));
+        } else {
+            result.expect("released process lock");
         }
     }
 
