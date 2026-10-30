@@ -24,7 +24,50 @@ pub struct Request {
     pub bytes: Vec<u8>,
     /// Recorded before queueing, independently of when the test receives this request.
     pub received_at: Instant,
-    pub reply: oneshot::Sender<Vec<u8>>,
+    pub reply: Reply,
+}
+
+enum Response {
+    Complete(Vec<u8>),
+    Held {
+        bytes: Vec<u8>,
+        written: oneshot::Sender<()>,
+        release: oneshot::Receiver<()>,
+    },
+}
+
+pub struct Reply(oneshot::Sender<Response>);
+
+impl Reply {
+    pub fn send(self, bytes: Vec<u8>) -> Result<(), Vec<u8>> {
+        match self.0.send(Response::Complete(bytes)) {
+            Ok(()) => Ok(()),
+            Err(Response::Complete(bytes)) => Err(bytes),
+            Err(Response::Held { .. }) => unreachable!("complete response sent"),
+        }
+    }
+
+    pub fn is_closed(&self) -> bool {
+        self.0.is_closed()
+    }
+
+    /// Confirm the prefix was written before holding this connection until release.
+    pub async fn hold(self, bytes: Vec<u8>) -> oneshot::Sender<()> {
+        let (written, received) = oneshot::channel();
+        let (release, waiting) = oneshot::channel();
+        assert!(
+            self.0
+                .send(Response::Held {
+                    bytes,
+                    written,
+                    release: waiting
+                })
+                .is_ok(),
+            "supplier connection available"
+        );
+        received.await.expect("response prefix written");
+        release
+    }
 }
 
 impl Supplier {
@@ -80,13 +123,22 @@ impl Supplier {
                             }
                             let received_at = Instant::now();
                             let (reply, response) = oneshot::channel();
-                            if sender.send(Request { bytes, received_at, reply }).is_err() {
+                            if sender.send(Request { bytes, received_at, reply: Reply(reply) }).is_err() {
                                 return;
                             }
-                            if let Ok(bytes) = response.await {
-                                let _ = socket.write_all(&bytes).await;
-                                let _ = socket.shutdown().await;
+                            match response.await {
+                                Ok(Response::Complete(bytes)) => {
+                                    let _ = socket.write_all(&bytes).await;
+                                }
+                                Ok(Response::Held { bytes, written, release }) => {
+                                    socket.write_all(&bytes).await.expect("response prefix write");
+                                    socket.flush().await.expect("response prefix flush");
+                                    let _ = written.send(());
+                                    let _ = release.await;
+                                }
+                                Err(_) => return,
                             }
+                            let _ = socket.shutdown().await;
                         });
                     }
                 }
@@ -225,6 +277,53 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn held_body_does_not_hide_another_request_and_ends_on_release() {
+        timeout(Duration::from_secs(5), async {
+            let mut supplier = Supplier::start().await;
+            let mut first = connect(&supplier).await;
+            first
+                .write_all(b"POST /held HTTP/1.1\r\n\r\n")
+                .await
+                .expect("first request");
+            let prefix = b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n{";
+            let release = supplier.request().await.reply.hold(prefix.to_vec()).await;
+            let mut received = vec![0; prefix.len()];
+            first
+                .read_exact(&mut received)
+                .await
+                .expect("written prefix");
+            assert_eq!(received, prefix);
+            let mut second = connect(&supplier).await;
+            second
+                .write_all(b"POST /second HTTP/1.1\r\n\r\n")
+                .await
+                .expect("second request");
+            let request = supplier.request().await;
+            assert_eq!(request.bytes, b"POST /second HTTP/1.1\r\n\r\n");
+            request
+                .reply
+                .send(b"HTTP/1.1 204 No Content\r\n\r\n".to_vec())
+                .expect("second reply");
+            let mut bytes = Vec::new();
+            second
+                .read_to_end(&mut bytes)
+                .await
+                .expect("second response");
+            assert_eq!(bytes, b"HTTP/1.1 204 No Content\r\n\r\n");
+            release.send(()).expect("release held connection");
+            bytes.clear();
+            first
+                .read_to_end(&mut bytes)
+                .await
+                .expect("held response ended");
+            assert!(bytes.is_empty());
+            supplier.stop().await;
+        })
+        .await
+        .expect("held body and concurrent observation bounded");
+    }
+
+    #[tokio::test]
     async fn stop_ends_connections_waiting_for_tls_headers_and_replies() {
         timeout(Duration::from_secs(5), async {
             let mut supplier = Supplier::start().await;
@@ -235,6 +334,16 @@ mod tests {
                 .await
                 .expect("held request");
             let request = supplier.request().await;
+            let mut body = connect(&supplier).await;
+            body.write_all(b"POST /body HTTP/1.1\r\n\r\n")
+                .await
+                .expect("body request");
+            let release = supplier
+                .request()
+                .await
+                .reply
+                .hold(b"HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n".to_vec())
+                .await;
             let mut handshake = TcpStream::connect(address)
                 .await
                 .expect("pending handshake");
@@ -246,6 +355,7 @@ mod tests {
                 .expect("partial headers");
             supplier.stop().await;
             assert!(request.reply.is_closed(), "response owner has ended");
+            assert!(release.is_closed(), "held body owner has ended");
             for mut socket in [first, headers] {
                 let mut bytes = Vec::new();
                 let _ = socket.read_to_end(&mut bytes).await;

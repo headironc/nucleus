@@ -5,6 +5,12 @@ use tokio_postgres::error::SqlState;
 /// Keep driver classification and decoding diagnostics, never PostgreSQL detail or values.
 pub struct Query(pub(crate) tokio_postgres::Error);
 
+impl From<tokio_postgres::Error> for Query {
+    fn from(error: tokio_postgres::Error) -> Self {
+        Self(error)
+    }
+}
+
 impl Query {
     pub fn is_constraint(
         &self,

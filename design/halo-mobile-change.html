@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>更换手机号 · 司籍处</title>
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/tokens.css" />
+    <link rel="stylesheet" href="assets/halo-home.css" />
+    <link rel="stylesheet" href="assets/halo-account.css" />
+    <link rel="stylesheet" href="assets/halo-mobile-change.css" />
+    <script src="assets/halo-mobile-change.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    <div class="preview-tools" aria-label="设计预览工具">
+      <div class="preview-caption">
+        <strong>HALO · 设计预览</strong
+        ><span>虚构资料，不发送短信或更改账户</span>
+      </div>
+      <button
+        class="preview-toggle"
+        aria-expanded="false"
+        aria-controls="preview-tools-content"
+      >
+        展开预览工具
+      </button>
+      <div class="preview-tools-content" id="preview-tools-content">
+        <div class="preview-controls">
+          <label for="scenario-picker">页面状态</label
+          ><select id="scenario-picker"></select>
+        </div>
+        <details class="design-notes">
+          <summary>设计说明与分支</summary>
+          <div>
+            <p>
+              本稿仅模拟本人换号。原号、新号与登录验证码用途不同。实际换号只能在建立办理时的同一网站登录中完成。成功后须以新号重新登录，再查询原办理。
+            </p>
+            <p>
+              界面中的号码为本次填写内容，不是账户接口返回的资料。验证码错误次数未由接口返回，本稿不显示剩余次数。演示不证明真实短信、存储恢复或操作系统键盘行为。
+            </p>
+            <label for="send-outcome">发码示例结果</label
+            ><select id="send-outcome">
+              <option value="sent">已提交发送</option>
+              <option value="sending">仍在发送</option>
+              <option value="delivery-unknown">供应商结果未知</option>
+              <option value="send-unknown">请求结果未知</option>
+              <option value="send-failed">明确发送失败</option>
+              <option value="send-limited">首次暂时受限</option>
+              <option value="save-failed">发送前保存失败</option>
+            </select>
+            <label for="submit-outcome">验证或完成示例结果</label
+            ><select id="submit-outcome">
+              <option value="success">成功</option>
+              <option value="wrong-code">验证码错误</option>
+              <option value="verification-required">验证不再适用</option>
+              <option value="unknown">结果未知</option>
+              <option value="mobile-taken">新号被占用（完成时）</option>
+              <option value="save-failed">发送前保存失败</option>
+            </select>
+            <label for="query-outcome">查询示例结果</label
+            ><select id="query-outcome">
+              <option value="completed">本次已完成</option>
+              <option value="pending">仍未完成</option>
+              <option value="expired">办理已失效</option>
+              <option value="query-failed">查询失败</option>
+              <option value="query-limited">查询受限</option>
+              <option value="unavailable">没有可读结果</option>
+              <option value="login-required">需要重新登录</option>
+              <option value="forbidden">同源读取拒绝</option>
+            </select>
+            <label for="theme-picker">外观</label
+            ><select id="theme-picker">
+              <option value="system">跟随系统</option>
+              <option value="light">浅色</option>
+              <option value="dark">深色</option>
+            </select>
+          </div>
+        </details>
+      </div>
+    </div>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a
+          class="brand"
+          href="halo-home.html"
+          data-leave
+          aria-label="司籍处首页"
+          ><img src="assets/logo.png" width="56" height="56" alt="" /><span
+            class="brand-copy"
+            ><strong>司籍处</strong><span>中医药文化宣传与推广中心</span></span
+          ></a
+        >
+        <nav class="mobile-change-navigation" aria-label="网站导航">
+          <a href="halo-services.html" data-leave>员工服务</a
+          ><a href="halo-account.html" data-leave>个人账户</a>
+        </nav>
+      </div>
+    </header>
+    <main class="mobile-layout" id="main" tabindex="-1">
+      <a class="mobile-back" href="halo-account.html" data-leave
+        >← 返回个人账户</a
+      >
+      <div class="mobile-heading">
+        <p class="section-kicker" id="page-context">个人账户 · 本人办理</p>
+        <h1 id="page-title" tabindex="-1">更换手机号</h1>
+        <p id="page-description">先验证当前手机号，再验证新手机号。</p>
+      </div>
+      <div id="mobile-content" aria-live="polite"></div>
+      <footer class="mobile-footer">司籍处 · 个人账户</footer>
+    </main>
+    <dialog id="leave-dialog" aria-labelledby="leave-title">
+      <h2 id="leave-title"></h2>
+      <p id="leave-description"></p>
+      <div class="mobile-actions">
+        <button id="stay-button" autofocus>留在此页</button
+        ><button id="leave-button" class="secondary">离开此页</button>
+      </div>
+    </dialog>
+  </body>
+</html>

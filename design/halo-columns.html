@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>栏目管理 · 司籍处</title>
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/tokens.css" />
+    <link rel="stylesheet" href="assets/halo-home.css" />
+    <link rel="stylesheet" href="assets/halo-account.css" />
+    <link rel="stylesheet" href="assets/halo-columns.css" />
+    <script src="assets/halo-columns.js" defer></script>
+  </head>
+  <body class="columns-page">
+    <a class="skip-link" href="#columns">跳到主要内容</a>
+    <div class="preview-tools" aria-label="设计预览工具">
+      <div class="preview-caption">
+        <strong>HALO · 设计预览</strong><span>栏目维护 · 虚构资料</span>
+      </div>
+      <button
+        class="preview-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="preview-tools-content"
+      >
+        展开预览工具
+      </button>
+      <div class="preview-tools-content" id="preview-tools-content">
+        <div class="preview-controls">
+          <label for="scenario-picker">页面状态</label>
+          <select id="scenario-picker"></select>
+          <button
+            class="sample-tool"
+            type="button"
+            data-action="fill-example"
+            id="fill-example"
+            hidden
+          >
+            填入示例
+          </button>
+          <button
+            class="sample-tool"
+            type="button"
+            data-action="end-wait"
+            id="end-wait"
+            hidden
+          >
+            演示等待结束
+          </button>
+        </div>
+        <details class="design-notes">
+          <summary>设计说明与状态依据</summary>
+          <div>
+            <p id="state-basis"></p>
+            <p>
+              本稿只在当前页面模拟栏目列表、创建、修改与启停，不读取真实账户或调用业务接口。不提供排序、删除、文章发布、首页编排或图片库。
+            </p>
+            <p>
+              栏目管理使用
+              institution.articles；首页编排权限不包含栏目维护。系统管理员默认持有两项，普通账户没有，其他人员通过自定义机构角色取得。不附加员工服务资格。
+            </p>
+            <p>
+              栏目修改直接生效，不经过草稿或发布。尚未查明保存结果时保留这次提交的标识与完整输入，只查询这次保存的结果；当前列表或字段相同不能证明这次保存完成。
+            </p>
+            <p>
+              本稿的材料只存在于演示内存，不实现生产会话、恢复材料持久保存、跨页恢复或跨标签页协调。通过状态工具查看恢复材料缺失、权限变化和账户切换的遮蔽结果。
+            </p>
+            <p>
+              规则所有者：docs/content/columns.md、docs/content/publication.md、docs/content/http.md、docs/client/recovery.md。查询参数仅为设计入口，不规定正式管理页面地址。
+            </p>
+          </div>
+        </details>
+      </div>
+    </div>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="halo-home.html" aria-label="司籍处首页"
+          ><img src="assets/logo.png" width="56" height="56" alt="" /><span
+            class="brand-copy"
+            ><strong>司籍处</strong><span>中医药文化宣传与推广中心</span></span
+          ></a
+        >
+        <nav class="account-navigation" aria-label="网站导航">
+          <a href="halo-account.html">个人账户</a>
+          <a href="halo-services.html#content-manager">员工服务</a>
+          <a class="public-return" href="halo-home.html">返回首页 ↗</a>
+        </nav>
+      </div>
+    </header>
+    <main class="columns-layout" id="columns" tabindex="-1">
+      <div class="page-heading">
+        <div>
+          <p class="section-kicker">网站内容 · 栏目</p>
+          <h1 id="page-title" tabindex="-1">栏目管理</h1>
+          <p class="page-introduction">整理公开导航，让文章各有所属。</p>
+        </div>
+        <a class="back-to-services" href="halo-services.html#content-manager"
+          >← 返回员工服务</a
+        >
+      </div>
+      <div id="column-content" aria-live="polite"></div>
+      <noscript><p>请开启 JavaScript 查看栏目管理设计演示。</p></noscript>
+    </main>
+    <footer class="account-footer">司籍处 · 栏目管理</footer>
+    <dialog
+      id="column-dialog"
+      class="preview-dialog"
+      aria-labelledby="dialog-title"
+      aria-describedby="dialog-description"
+    >
+      <div class="dialog-heading">
+        <span id="dialog-context">请确认本次修改</span
+        ><button
+          class="dialog-close"
+          type="button"
+          data-action="close-dialog"
+          aria-label="关闭"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18" />
+          </svg>
+        </button>
+      </div>
+      <h2 id="dialog-title"></h2>
+      <p id="dialog-description"></p>
+      <div id="dialog-summary"></div>
+      <div class="dialog-actions">
+        <button type="button" class="button primary" id="dialog-confirm">
+          确认保存</button
+        ><button
+          type="button"
+          class="button"
+          data-action="close-dialog"
+          id="dialog-back"
+        >
+          返回修改
+        </button>
+      </div>
+    </dialog>
+  </body>
+</html>

@@ -1,0 +1,165 @@
+name: Nucleus dependency image
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Build for inspection, or publish an already inspected artifact.
+        type: choice
+        options: [build, publish]
+        default: build
+        required: true
+      revision:
+        description: Reviewed full commit SHA containing the image inputs.
+        type: string
+        required: true
+      build-run:
+        description: Successful build run ID (publish only).
+        type: string
+      artifact-id:
+        description: Inspected immutable artifact ID (publish only).
+        type: string
+      image-sha256:
+        description: SHA-256 of the inspected nucleus-ci.tar (publish only).
+        type: string
+      visibility:
+        description: Expected package visibility after publishing; does not change visibility.
+        type: choice
+        options: [private, public]
+        default: private
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev' && github.repository_id == '1432619931' && inputs.operation == 'build' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    steps:
+      - name: Require an exact reviewed revision
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: '[[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.revision }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .tool-versions
+      - name: Build the dependency image
+        run: bun tools/halo-ci-image.ts build halo-ci:build
+      - name: Export the complete image for inspection
+        env:
+          REVISION: ${{ inputs.revision }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$REVISION"
+          mkdir "$RUNNER_TEMP/nucleus-ci"
+          docker save halo-ci:build --output "$RUNNER_TEMP/nucleus-ci/nucleus-ci.tar"
+          docker image inspect halo-ci:build > "$RUNNER_TEMP/nucleus-ci/inspect.json"
+          docker image history --no-trunc --format '{{json .}}' halo-ci:build > "$RUNNER_TEMP/nucleus-ci/history.jsonl"
+          image_sha256=$(sha256sum "$RUNNER_TEMP/nucleus-ci/nucleus-ci.tar" | cut -d ' ' -f 1)
+          jq --null-input --arg revision "$REVISION" --arg image_sha256 "$image_sha256" \
+            --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
+            '{revision: $revision, image_sha256: $image_sha256, run: $run, attempt: $attempt}' > "$RUNNER_TEMP/nucleus-ci/provenance.json"
+          printf 'Revision: %s\nImage archive SHA-256: %s\nBuild run: %s\n' \
+            "$REVISION" "$image_sha256" "$GITHUB_RUN_ID" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nucleus-ci-image
+          path: ${{ runner.temp }}/nucleus-ci/
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  publish:
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/dev' && github.repository_id == '1432619931' && inputs.operation == 'publish' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    steps:
+      - name: Bind the inspected artifact to its successful build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REVISION: ${{ inputs.revision }}
+          BUILD_RUN: ${{ inputs.build-run }}
+          ARTIFACT_ID: ${{ inputs.artifact-id }}
+          IMAGE_SHA256: ${{ inputs.image-sha256 }}
+          VISIBILITY: ${{ inputs.visibility }}
+        run: |
+          set -euo pipefail
+          [[ "$REVISION" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$BUILD_RUN" =~ ^[1-9][0-9]*$ ]]
+          [[ "$ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$IMAGE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$VISIBILITY" == private || "$VISIBILITY" == public ]]
+          gh api --hostname github.com "repos/silence-force/nucleus/actions/runs/$BUILD_RUN" > "$RUNNER_TEMP/build-run.json"
+          jq --exit-status --arg run "$BUILD_RUN" '
+            (.id | tostring) == $run and .repository.id == 1432619931 and
+            .head_repository.id == 1432619931 and .head_branch == "dev" and
+            .path == ".github/workflows/halo-image.yml" and
+            .event == "workflow_dispatch" and .status == "completed" and .conclusion == "success"
+          ' "$RUNNER_TEMP/build-run.json" > /dev/null
+          gh api --hostname github.com "repos/silence-force/nucleus/actions/artifacts/$ARTIFACT_ID" > "$RUNNER_TEMP/artifact.json"
+          jq --exit-status --arg artifact "$ARTIFACT_ID" --arg run "$BUILD_RUN" '
+            (.id | tostring) == $artifact and .name == "nucleus-ci-image" and .expired == false and
+            (.workflow_run.id | tostring) == $run and .workflow_run.repository_id == 1432619931 and
+            .workflow_run.head_repository_id == 1432619931 and .workflow_run.head_branch == "dev"
+          ' "$RUNNER_TEMP/artifact.json" > /dev/null
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ inputs.artifact-id }}
+          run-id: ${{ inputs.build-run }}
+          repository: silence-force/nucleus
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: ${{ runner.temp }}/nucleus-ci
+          digest-mismatch: error
+      - name: Verify the inspected bytes before loading
+        env:
+          REVISION: ${{ inputs.revision }}
+          BUILD_RUN: ${{ inputs.build-run }}
+          IMAGE_SHA256: ${{ inputs.image-sha256 }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/nucleus-ci"
+          printf '%s  nucleus-ci.tar\n' "$IMAGE_SHA256" | sha256sum -c -
+          jq --exit-status --arg revision "$REVISION" --arg run "$BUILD_RUN" --arg sha "$IMAGE_SHA256" \
+            '.revision == $revision and .run == $run and .image_sha256 == $sha' provenance.json > /dev/null
+      - name: Publish the reviewed dependency image
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_USER: ${{ github.actor }}
+          IMAGE: ghcr.io/silence-force/nucleus-ci:build-${{ github.run_id }}-${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          docker load --input "$RUNNER_TEMP/nucleus-ci/nucleus-ci.tar"
+          docker tag halo-ci:build "$IMAGE"
+          source=$(docker image inspect "$IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.source" }}')
+          test "$source" = "https://github.com/silence-force/nucleus"
+          image_id=$(docker image inspect "$IMAGE" --format '{{.Id}}')
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$REGISTRY_USER" --password-stdin
+          docker push "$IMAGE"
+          manifest=$(docker manifest inspect --verbose "$IMAGE")
+          digest=$(jq --exit-status --raw-output --arg image_id "$image_id" \
+            'select((.SchemaV2Manifest // .OCIManifest).config.digest == $image_id) | .Descriptor.digest | select(test("^sha256:[0-9a-f]{64}$"))' <<< "$manifest")
+          printf '%s@%s\n' "${IMAGE%:*}" "$digest" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify package identity and visibility
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VISIBILITY: ${{ inputs.visibility }}
+        run: |
+          set -euo pipefail
+          package=$(gh api --hostname github.com orgs/silence-force/packages/container/nucleus-ci \
+            --jq '{id,name,visibility,repository_id:.repository.id,repository:.repository.full_name}')
+          printf '%s\n' "$package"
+          jq --exit-status --arg visibility "$VISIBILITY" \
+            '.name == "nucleus-ci" and .visibility == $visibility and .repository_id == 1432619931 and .repository == "silence-force/nucleus"' <<< "$package"
+      - name: Remove publisher credentials
+        if: ${{ always() }}
+        run: docker logout ghcr.io

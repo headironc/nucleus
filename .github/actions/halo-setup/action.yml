@@ -1,0 +1,47 @@
+name: Halo build environment
+description: Verify the preinstalled website environment and restore image-bound Rust dependencies.
+inputs:
+  cache-lookup-only:
+    description: For prewarming, skip restoring an exact cache hit; otherwise restore normally.
+    default: "false"
+outputs:
+  cache-hit:
+    description: Whether an exact Halo HTTP dependency cache was found or restored.
+    value: ${{ steps.cache-lookup.outputs.cache-hit == 'true' || steps.cache.outputs.cache-hit == 'true' }}
+runs:
+  using: composite
+  steps:
+    - name: Verify the pinned dependency image
+      id: environment
+      shell: bash
+      run: |
+        set -euo pipefail
+        [[ "$HALO_CI_IMAGE" =~ ^ghcr.io/silence-force/nucleus-ci@sha256:[0-9a-f]{64}$ ]]
+        bun tools/halo-ci-image.ts verify
+        printf 'key=%s\n' "${HALO_CI_IMAGE##*@}" >> "$GITHUB_OUTPUT"
+    - name: Install website dependencies
+      shell: bash
+      working-directory: halo
+      run: bun install --frozen-lockfile --ignore-scripts
+    - name: Verify preinstalled browser runtimes
+      shell: bash
+      working-directory: halo
+      run: bun tools/browser-smoke.ts
+    - name: Look up Rust dependencies for prewarming
+      id: cache-lookup
+      if: ${{ inputs.cache-lookup-only == 'true' }}
+      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        shared-key: ${{ steps.environment.outputs.key }}-halo-http
+        workspaces: ". -> target/cargo"
+        cache-bin: false
+        lookup-only: true
+        save-if: false
+    - name: Cache Rust dependencies
+      id: cache
+      if: ${{ steps.cache-lookup.outputs.cache-hit != 'true' }}
+      uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      with:
+        shared-key: ${{ steps.environment.outputs.key }}-halo-http
+        workspaces: ". -> target/cargo"
+        cache-bin: false

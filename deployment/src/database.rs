@@ -13,8 +13,17 @@ use crate::credentials::{self, Filename};
 
 /// Load only declared sources and assemble without opening database connections.
 pub fn load(settings: Settings) -> Result<database::Connections, Error> {
+    load_file(settings, Filename::Database)
+}
+
+/// Administration uses the application's credentials and permission boundary.
+pub(crate) fn runtime(settings: Settings) -> Result<database::Connections, Error> {
+    load_file(settings, Filename::RuntimeDatabase)
+}
+
+fn load_file(settings: Settings, filename: Filename) -> Result<database::Connections, Error> {
     let directory = credentials::directory()?;
-    let input: Input = credentials::read(&directory, Filename::Database)?;
+    let input: Input = credentials::read(&directory, filename)?;
     let password: Password = input.try_into()?;
     let bytes = fs::read(settings.authority()).map_err(Error::AuthorityRead)?;
     Ok(settings.build(password, assembly::roots(&bytes)?)?)

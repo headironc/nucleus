@@ -1,39 +1,32 @@
-//! Challenge proof key versions. Files and environment belong to application assembly.
+//! `lookup` key versions for Challenge token proofs and occupancy.
 
 use std::collections::BTreeMap;
 
-use platform::cryptography::{self, hmac, sha256};
+use platform::cryptography::{self, hmac};
 use thiserror::Error;
 use zeroize::Zeroizing;
 
-use crate::identity::{
-    challenge::{Token, proof::Proof},
-    keys::{self, Entry, Id, Material, Purpose},
+use crate::{
+    identity::challenge::{Token, proof::Proof},
+    keys::{Derived, Id},
 };
 
 /// A versioned key issued only by the validated Challenge key set.
 pub struct Key {
     id: Id,
-    fingerprint: sha256::Digest,
     material: hmac::Key,
 }
 
 impl Key {
-    fn new(id: Id, material: Zeroizing<[u8; 32]>) -> Result<Self, cryptography::Error> {
-        let fingerprint = keys::fingerprint(id, Purpose::Challenge, &material)?;
-        Ok(Self {
+    fn new(id: Id, material: Zeroizing<[u8; 32]>) -> Self {
+        Self {
             id,
-            fingerprint,
             material: hmac::Key::new(material),
-        })
+        }
     }
 
     pub fn id(&self) -> Id {
         self.id
-    }
-
-    pub fn fingerprint(&self) -> &sha256::Digest {
-        &self.fingerprint
     }
 
     pub fn prove(&self, token: &Token) -> Result<Proof, cryptography::Error> {
@@ -52,20 +45,9 @@ pub struct Keys {
 }
 
 impl Keys {
-    pub fn new(active_id: Id, keys: Vec<Entry>) -> Result<Self, keys::Error> {
-        keys::validate(active_id, &keys)?;
-        let mut retained = BTreeMap::new();
-        for Entry {
-            id,
-            material: Material(material),
-        } in keys
-        {
-            retained.insert(id, Key::new(id, material)?);
-        }
-        let active = retained
-            .remove(&active_id)
-            .ok_or(keys::Error::Active(active_id))?;
-        Ok(Self { active, retained })
+    pub(crate) fn new(derived: Derived) -> Self {
+        let (active, retained) = derived.split(Key::new);
+        Self { active, retained }
     }
 
     pub fn active(&self) -> &Key {
@@ -94,35 +76,10 @@ pub struct Missing(Id);
 mod tests {
     use zeroize::Zeroizing;
 
-    use crate::identity::keys::{
-        Entry, Id, Material,
-        challenge::{Key, Keys},
+    use crate::{
+        identity::keys::challenge::Keys,
+        keys::{Derived, Entry, Id, Material},
     };
-
-    #[test]
-    fn matches_independent_fingerprint_vectors() {
-        // Python hashlib over big-endian length prefixes and key bytes 0..31.
-        let material = std::array::from_fn(|index| u8::try_from(index).expect("32 bytes"));
-        for (id, expected) in [
-            (
-                0,
-                [
-                    44, 13, 251, 149, 176, 190, 83, 135, 253, 93, 4, 69, 60, 110, 94, 120, 50, 166,
-                    116, 228, 99, 249, 26, 22, 162, 130, 71, 231, 121, 97, 69, 127,
-                ],
-            ),
-            (
-                i64::MAX,
-                [
-                    215, 99, 201, 94, 92, 215, 118, 235, 30, 14, 120, 49, 186, 19, 232, 27, 58, 53,
-                    31, 185, 13, 69, 84, 7, 246, 26, 197, 250, 254, 156, 3, 152,
-                ],
-            ),
-        ] {
-            let key = Key::new(Id::new(id).expect("id"), Zeroizing::new(material)).expect("key");
-            assert_eq!(key.fingerprint().as_ref(), &expected);
-        }
-    }
 
     fn fixture(count: u16) -> Vec<Entry> {
         (0..count)
@@ -140,10 +97,10 @@ mod tests {
     #[test]
     fn selects_active_and_retained_keys_without_fallback() {
         let id = Id::new(0).expect("id");
-        let old = Keys::new(id, fixture(2)).expect("keys");
+        let old = Keys::new(Derived::fixed(id, fixture(2)));
         let token = "fictional-token".parse().expect("token");
         let proof = old.active().prove(&token).expect("proof");
-        let new = Keys::new(Id::new(1).expect("id"), fixture(2)).expect("keys");
+        let new = Keys::new(Derived::fixed(Id::new(1).expect("id"), fixture(2)));
         assert!(!new.active().verify(&token, &proof).expect("verify"));
         assert!(
             new.fetch(id)

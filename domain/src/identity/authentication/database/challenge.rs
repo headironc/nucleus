@@ -3,27 +3,41 @@
 use std::net::IpAddr;
 
 use chrono::{DateTime, TimeDelta, Utc};
-use tokio::time::timeout;
 use tokio_postgres::{Client, Row};
 
 use crate::{
-    database::Query,
+    database::{Query, verification},
     identity::{
-        authentication::{Error, Input, Keys, Receipt, Stage, Status, TRANSACTION_BUDGET},
-        challenge::{self, Purpose, mobile, proof::Proof},
-        keys, operation,
+        authentication::{Error, Input, Keys, Receipt, Sender, Stage, Status, TRANSACTION_BUDGET},
+        challenge::{self, Purpose, proof::Proof},
+        mobile::envelope::{Binding, Envelope},
+        operation, person, session, transfer,
     },
+    keys,
 };
 
-const COLUMNS: &str = "id, operation_id, purpose, hash, key_id, mobile, source, calls, created_at, expires_at, status, solved_at, finished_at";
+const COLUMNS: &str = "id, operation_id, purpose, person_id, session_id, transfer_id, hash, key_id, mobile, source, calls, created_at, expires_at, status, solved_at, finished_at";
+
+pub(in crate::identity::authentication) enum Subject {
+    Anonymous,
+    Current {
+        person_id: person::Id,
+        session_id: session::Id,
+    },
+    Transfer {
+        person_id: person::Id,
+        session_id: session::Id,
+        transfer_id: transfer::Id,
+    },
+}
 
 pub(in crate::identity::authentication) struct Challenge {
     id: challenge::Id,
     operation_id: operation::Id,
-    purpose: Purpose,
+    subject: Subject,
     proof: Proof,
     key_id: keys::Id,
-    mobile: mobile::Mobile,
+    mobile: Envelope,
     source: IpAddr,
     calls: i16,
     created_at: DateTime<Utc>,
@@ -35,10 +49,35 @@ impl TryFrom<Row> for Challenge {
     type Error = Error;
 
     fn try_from(row: Row) -> Result<Self, Self::Error> {
+        let subject = match (
+            row.try_get::<_, Purpose>("purpose")?,
+            row.try_get::<_, Option<person::Id>>("person_id")?,
+            row.try_get::<_, Option<session::Id>>("session_id")?,
+            row.try_get::<_, Option<transfer::Id>>("transfer_id")?,
+        ) {
+            (Purpose::Authentication, None, None, None) => Subject::Anonymous,
+            (Purpose::MobileChange, Some(person_id), Some(session_id), None) => Subject::Current {
+                person_id,
+                session_id,
+            },
+            (Purpose::MobileBinding, Some(person_id), Some(session_id), Some(transfer_id)) => {
+                Subject::Transfer {
+                    person_id,
+                    session_id,
+                    transfer_id,
+                }
+            }
+            _ => {
+                return Err(Error::Facts {
+                    stage: Stage::ChallengeDecode,
+                    rule: "challenge purpose must preserve its original identity binding",
+                });
+            }
+        };
         Ok(Self {
             id: row.try_get("id")?,
             operation_id: row.try_get("operation_id")?,
-            purpose: row.try_get("purpose")?,
+            subject,
             proof: row.try_get("hash")?,
             key_id: row.try_get("key_id")?,
             mobile: row.try_get("mobile")?,
@@ -97,7 +136,9 @@ impl Challenge {
         &self,
         keys: &Keys,
     ) -> Result<crate::identity::mobile::Mobile, Error> {
-        Ok(self.mobile.open(&keys.encryption, &keys.mobile, self.id)?)
+        Ok(self
+            .mobile
+            .open(&keys.encryption, &keys.mobile, Binding::Challenge(self.id))?)
     }
 
     pub(in crate::identity::authentication) fn validate_at(
@@ -166,13 +207,8 @@ impl Challenge {
 
     fn validate(&self, keys: &Keys) -> Result<(), Error> {
         keys.challenge.fetch(self.key_id)?;
-        self.mobile.open(&keys.encryption, &keys.mobile, self.id)?;
-        if self.purpose != Purpose::Authentication {
-            return Err(Error::Facts {
-                stage: Stage::ChallengeValidation,
-                rule: "purpose must be authentication",
-            });
-        }
+        self.mobile
+            .open(&keys.encryption, &keys.mobile, Binding::Challenge(self.id))?;
         if !(1..=2).contains(&self.calls) {
             return Err(Error::Facts {
                 stage: Stage::ChallengeValidation,
@@ -256,6 +292,24 @@ impl Challenge {
         self.validate(keys)?;
         if self.operation_id != input.operation_id
             || !self.mobile.matches(&keys.mobile, &input.mobile)?
+            || !match (&self.subject, &input.sender) {
+                (Subject::Anonymous, Sender::Anonymous) => true,
+                (Subject::Current { session_id, .. }, Sender::Current(actor)) => {
+                    *session_id == actor.session_id()
+                }
+                (
+                    Subject::Transfer {
+                        session_id,
+                        transfer_id,
+                        ..
+                    },
+                    Sender::Transfer {
+                        actor,
+                        transfer_id: expected,
+                    },
+                ) => *session_id == actor.session_id() && transfer_id == expected,
+                _ => false,
+            }
         {
             return Err(Error::Mismatch);
         }
@@ -269,18 +323,18 @@ impl Challenge {
     }
 }
 
-pub(in crate::identity::authentication) async fn find(
+pub(in crate::identity::authentication) async fn find_receipt(
     client: &Client,
     keys: &Keys,
     input: &Input,
 ) -> Result<Option<Receipt>, Error> {
-    let option = inspect(client, input.operation_id).await?;
+    let option = find_by_operation(client, input.operation_id).await?;
     option
         .map(|challenge| challenge.verify(keys, input))
         .transpose()
 }
 
-pub(in crate::identity::authentication) async fn inspect(
+pub(in crate::identity::authentication) async fn find_by_operation(
     client: &Client,
     operation_id: operation::Id,
 ) -> Result<Option<Challenge>, Error> {
@@ -330,7 +384,7 @@ pub(in crate::identity::authentication) async fn verify(
     operation_id: operation::Id,
     now: DateTime<Utc>,
 ) -> Result<Option<Challenge>, Error> {
-    let option = inspect(client, operation_id).await?;
+    let option = find_by_operation(client, operation_id).await?;
     if let Some(challenge) = &option {
         challenge.validate(keys)?;
         challenge.validate_at(now)?;
@@ -348,6 +402,7 @@ pub(in crate::identity::authentication) async fn deleted(
             "SELECT NOT EXISTS (SELECT 1 FROM identity.challenges WHERE id = $1)
             AND NOT EXISTS (SELECT 1 FROM identity.messages WHERE challenge_id = $1 OR id = $2)
             AND NOT EXISTS (SELECT 1 FROM identity.checks WHERE id = $2)
+            AND NOT EXISTS (SELECT 1 FROM identity.confirmations WHERE id = $2)
             AND NOT EXISTS (SELECT 1 FROM identity.claims WHERE id = $2)",
             &[&challenge_id, &option],
         )
@@ -359,6 +414,7 @@ pub(in crate::identity::authentication) async fn insert(
     client: &Client,
     keys: &Keys,
     input: &Input,
+    subject: Subject,
     now: DateTime<Utc>,
 ) -> Result<Receipt, Error> {
     for key in keys.challenge.all() {
@@ -385,20 +441,40 @@ pub(in crate::identity::authentication) async fn insert(
         calls: 1,
         status: Status::Calling,
     };
-    let sql = "INSERT INTO identity.challenges (id, operation_id, purpose, hash, key_id, mobile, source, calls, created_at, expires_at) VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9)";
+    let (person_id, session_id, transfer_id) = match subject {
+        Subject::Anonymous => (None, None, None),
+        Subject::Current {
+            person_id,
+            session_id,
+        } => (Some(person_id), Some(session_id), None),
+        Subject::Transfer {
+            person_id,
+            session_id,
+            transfer_id,
+        } => (Some(person_id), Some(session_id), Some(transfer_id)),
+    };
+    let sql = "INSERT INTO identity.challenges (id, operation_id, purpose, hash, key_id, mobile, source, calls, created_at, expires_at, person_id, session_id, transfer_id) VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8, $9, $10, $11, $12)";
     let error = match client
         .execute(
             sql,
             &[
                 &receipt.id,
                 &input.operation_id,
-                &Purpose::Authentication,
+                &input.purpose(),
                 &keys.challenge.active().prove(&input.token)?,
                 &keys.challenge.active().id(),
-                &mobile::Mobile::seal(&keys.encryption, &keys.mobile, receipt.id, &input.mobile)?,
+                &Envelope::seal(
+                    &keys.encryption,
+                    &keys.mobile,
+                    Binding::Challenge(receipt.id),
+                    &input.mobile,
+                )?,
                 &input.source,
                 &receipt.created_at,
                 &receipt.expires_at,
+                &person_id,
+                &session_id,
+                &transfer_id,
             ],
         )
         .await
@@ -424,33 +500,37 @@ pub(in crate::identity::authentication) async fn verify_all(
     now: DateTime<Utc>,
 ) -> Result<(), Error> {
     // A cursor bounds retained-history memory while holding the exclusive barrier.
-    timeout(
-        TRANSACTION_BUDGET,
-        client.batch_execute(&format!(
-            "DECLARE challenges CURSOR FOR SELECT {COLUMNS} FROM identity.challenges"
-        )),
-    )
-    .await??;
+    verification::Stage::ChallengesOpen
+        .query(
+            TRANSACTION_BUDGET,
+            client.batch_execute(&format!(
+                "DECLARE challenges CURSOR FOR SELECT {COLUMNS} FROM identity.challenges"
+            )),
+        )
+        .await??;
     loop {
         // Bound each batch without making retained history exhaust a total startup budget.
-        let complete = timeout(TRANSACTION_BUDGET, async {
-            let rows = client
-                .query("FETCH FORWARD 128 FROM challenges", &[])
-                .await?;
-            let complete = rows.is_empty();
-            for row in rows {
-                let challenge = Challenge::try_from(row)?;
-                challenge.validate(keys)?;
-                challenge.validate_at(now)?;
-            }
-            Ok::<_, Error>(complete)
-        })
-        .await??;
+        let complete = verification::Stage::ChallengesBatch
+            .batch(TRANSACTION_BUDGET, async {
+                let rows = client
+                    .query("FETCH FORWARD 128 FROM challenges", &[])
+                    .await?;
+                let complete = rows.is_empty();
+                for row in rows {
+                    let challenge = Challenge::try_from(row)?;
+                    challenge.validate(keys)?;
+                    challenge.validate_at(now)?;
+                }
+                Ok::<_, Error>(complete)
+            })
+            .await??;
         if complete {
             break;
         }
     }
-    timeout(TRANSACTION_BUDGET, client.batch_execute("CLOSE challenges")).await??;
+    verification::Stage::ChallengesClose
+        .query(TRANSACTION_BUDGET, client.batch_execute("CLOSE challenges"))
+        .await??;
     Ok(())
 }
 

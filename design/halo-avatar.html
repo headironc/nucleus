@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="司籍处网站本人头像更换设计预览。" />
+    <title>更换头像 · 司籍处</title>
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/tokens.css" />
+    <link rel="stylesheet" href="assets/halo-home.css" />
+    <link rel="stylesheet" href="assets/halo-account.css" />
+    <link rel="stylesheet" href="assets/halo-avatar.css" />
+    <script src="assets/halo-avatar.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#avatar">跳到主要内容</a>
+    <div class="preview-tools" aria-label="设计预览工具">
+      <div class="preview-caption">
+        <strong>HALO · 设计预览</strong
+        ><span>本地预览与模拟结果，不上传图片</span>
+      </div>
+      <button
+        class="preview-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="preview-tools-content"
+      >
+        展开预览工具
+      </button>
+      <div class="preview-tools-content" id="preview-tools-content">
+        <div class="preview-controls">
+          <label for="scenario-picker">页面状态</label>
+          <select id="scenario-picker">
+            <optgroup label="当前本人读取">
+              <option value="ready">已读取 · 尚未选图</option>
+              <option value="loading">当前头像读取中</option>
+              <option value="unavailable">当前读取失败</option>
+              <option value="limited">当前读取受限</option>
+              <option value="session-invalid">当前登录无效</option>
+              <option value="forbidden">同源读取被拒绝</option>
+              <option value="account-changed">账户选择已变化</option>
+              <option value="other-account">新账户重新读取完成</option>
+              <option value="image-unavailable">只有头像图片加载失败</option>
+              <option value="image-retry-failed">图片重试一次仍失败</option>
+            </optgroup>
+            <optgroup label="本地选择与确认">
+              <option value="file-reading">正在读取本地图片</option>
+              <option value="preview">新头像待确认更换</option>
+              <option value="format-error">格式或声明不符</option>
+              <option value="size-error">超过 2 MiB</option>
+              <option value="dimensions-error">不是合规原始尺寸</option>
+              <option value="damaged-error">图片损坏或无法解码</option>
+              <option value="animation-error">动画图片</option>
+              <option value="local-unavailable">本地预览暂不可用</option>
+              <option value="exif-unavailable">EXIF 原始方向预览限制</option>
+            </optgroup>
+            <optgroup label="提交与结果查询">
+              <option value="submitting">更换提交中</option>
+              <option value="pending">本次更换待确认</option>
+              <option value="checking">正在查询更换结果</option>
+              <option value="pending-session-invalid">待确认时登录失效</option>
+              <option value="pending-reauthenticating">正在读取登录账户</option>
+              <option value="pending-reauthenticated">
+                已登录原账户 · 查询结果
+              </option>
+              <option value="pending-other-account">
+                已切换账户 · 中性读取入口
+              </option>
+              <option value="pending-forbidden">更换结果查询被拒绝</option>
+              <option value="check-error">更换结果查询失败</option>
+              <option value="check-limited">更换结果查询受限</option>
+              <option value="result-unavailable">暂时没有可读结果</option>
+              <option value="locator-missing">恢复定位缺失</option>
+              <option value="current-only">只读当前 · 原结果仍待确认</option>
+              <option value="request-mismatch">与原提交内容不符</option>
+              <option value="submit-error">已确认未更换 · 可重新选择</option>
+              <option value="submit-limited">更换暂时受限 · 本次未更换</option>
+            </optgroup>
+            <optgroup label="变化与确定结果">
+              <option value="avatar-changed">当前头像已变化 · 先重读</option>
+              <option value="current-reloading">正在重读变化后的头像</option>
+              <option value="reconfirm">已重读 · 重新确认新头像</option>
+              <option value="success">本次更换已完成</option>
+              <option value="unchanged">本次无需更换</option>
+              <option value="later-changed">原更换完成 · 当前后来变化</option>
+              <option value="unchanged-later-changed">
+                本次无需更换 · 当前后来变化
+              </option>
+            </optgroup>
+          </select>
+          <button type="button" class="sample-tool" data-action="use-example">
+            使用示例图片
+          </button>
+          <button
+            type="button"
+            class="sample-tool"
+            data-action="simulate-same-account"
+            hidden
+          >
+            演示登录更换头像时使用的账户
+          </button>
+          <button
+            type="button"
+            class="sample-tool"
+            data-action="simulate-other-account"
+            hidden
+          >
+            演示另一账户重新登录
+          </button>
+        </div>
+        <details class="design-notes">
+          <summary>设计说明与状态依据</summary>
+          <div>
+            <p id="state-basis"></p>
+            <p>
+              本稿不读取真实账户，不上传图片。普通确认路径模拟完成；状态工具可演示确定结果和异常。猫、狗图片为仓库内已有虚构素材，不从姓名或手机号推导。
+            </p>
+            <p>
+              原始静态 PNG、JPEG 或 WebP，正方形且边长为 1–1024 像素，最多 2
+              MiB。检测到 EXIF
+              元数据时，本设计预览无法准确展示原始方向，不展示或确认该候选，可用示例演示。这是设计工具能力限制，不表示文件不合规。其他文件使用浏览器默认解码，原始字节不变。
+            </p>
+            <p>
+              本地检查用于设计预览，真实客户端仍须以服务端完整解码与确定结果为准。本稿不实现生产会话、持久恢复、跨标签页协调、真实限流或上传处理。
+            </p>
+            <p>
+              仅当前有效本人会话，不附加员工服务资格。头像与工牌照片分别办理，不更改实名、微信绑定或员工服务。规则见
+              <code>docs/identity/avatar.md</code> 和
+              <code>docs/client/recovery.md</code>。
+            </p>
+          </div>
+        </details>
+      </div>
+    </div>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="halo-home.html" aria-label="司籍处首页"
+          ><img src="assets/logo.png" width="56" height="56" alt="" /><span
+            class="brand-copy"
+            ><strong>司籍处</strong><span>中医药文化宣传与推广中心</span></span
+          ></a
+        >
+        <nav class="account-navigation" aria-label="网站导航">
+          <a href="halo-services.html">员工服务</a>
+          <a href="halo-account.html">个人账户</a>
+          <a class="public-return" href="halo-home.html">返回首页 ↗</a>
+        </nav>
+      </div>
+    </header>
+    <main class="avatar-layout" id="avatar" tabindex="-1">
+      <div class="page-heading">
+        <div>
+          <p class="section-kicker">个人账户</p>
+          <h1 id="page-title" tabindex="-1">更换头像</h1>
+          <p class="page-introduction">选择新头像，预览后确认更换。</p>
+        </div>
+        <a class="back-to-services" href="halo-account.html">← 返回个人账户</a>
+      </div>
+      <div class="avatar-columns">
+        <section
+          class="avatar-panel"
+          id="avatar-content"
+          aria-live="polite"
+          aria-label="头像更换"
+        >
+          <div class="reading-state" aria-busy="true">
+            <span class="reading-symbol" aria-hidden="true"></span>
+            <h2>正在读取当前头像</h2>
+            <p>读取完成后，再选择图片。</p>
+          </div>
+        </section>
+        <aside class="avatar-guide" aria-labelledby="guide-title">
+          <p class="section-kicker">选图说明</p>
+          <h2 id="guide-title">一张清晰的方形图片</h2>
+          <ul>
+            <li>静态 PNG、JPEG 或 WebP</li>
+            <li>原图宽高相同，边长 1–1024 像素</li>
+            <li>文件最多 2 MiB</li>
+            <li>不接受动画或损坏图片</li>
+          </ul>
+          <p>按图片原始方向处理，不自动裁剪、缩放或旋转。</p>
+          <div class="guide-separator"></div>
+          <h3>仅更换账户头像</h3>
+          <p>不影响实名、微信绑定或员工服务，也不更换工牌照片。</p>
+        </aside>
+      </div>
+      <noscript
+        ><p class="page-notice">
+          请开启 JavaScript 查看本页设计演示。
+        </p></noscript
+      >
+    </main>
+    <footer class="account-footer"><span>司籍处 · 本人头像</span></footer>
+    <dialog
+      id="leave-dialog"
+      class="preview-dialog"
+      aria-labelledby="leave-title"
+      aria-describedby="leave-description"
+    >
+      <div class="dialog-heading">
+        <span>离开前确认</span
+        ><button
+          type="button"
+          class="dialog-close"
+          data-action="dismiss"
+          aria-label="关闭"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18" />
+          </svg>
+        </button>
+      </div>
+      <h2 id="leave-title"></h2>
+      <p id="leave-description"></p>
+      <div class="dialog-actions">
+        <button
+          class="button"
+          type="button"
+          data-action="dismiss"
+          id="stay-button"
+        >
+          继续选择</button
+        ><button
+          class="button primary"
+          type="button"
+          data-action="leave"
+          id="leave-button"
+        >
+          放弃并离开
+        </button>
+      </div>
+    </dialog>
+  </body>
+</html>

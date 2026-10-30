@@ -1,65 +1,31 @@
 //! Deployment key file decoding and validated metadata assembly.
 
-use std::{fmt, path::Path};
+use std::fmt;
 
-use domain::identity::keys::{
-    self, challenge, encryption, input, message, metadata::Metadata, mobile,
-};
+use domain::keys::{self, input};
 use thiserror::Error;
 
 use crate::credentials::{self, Filename};
 
-/// Derive metadata from the same validated purpose types used by the application.
-pub fn load() -> Result<Metadata, Error> {
+/// Derive metadata from the same validated root and use types the application loads.
+pub fn load() -> Result<keys::Keys, Error> {
     let directory = credentials::directory()?;
-    let (active_id, entries) = read_entries(&directory, Filename::ChallengeKeys)?;
-    let challenge = match challenge::Keys::new(active_id, entries) {
-        Ok(keys) => keys,
+    let input: input::Input = credentials::read(&directory, Filename::Keys)?;
+    let (active_id, entries) = match input.try_into() {
+        Ok(entries) => entries,
         Err(source) => {
-            return Err(Error::Keys {
-                file: Filename::ChallengeKeys,
+            return Err(Error::Input {
+                file: Filename::Keys,
                 source,
             });
         }
     };
-    let (active_id, entries) = read_entries(&directory, Filename::MobileKeys)?;
-    let mobile = match mobile::Keys::new(active_id, entries) {
-        Ok(keys) => keys,
-        Err(source) => {
-            return Err(Error::Keys {
-                file: Filename::MobileKeys,
-                source,
-            });
-        }
-    };
-    let (active_id, entries) = read_entries(&directory, Filename::EncryptionKeys)?;
-    let encryption = match encryption::Keys::new(active_id, entries) {
-        Ok(keys) => keys,
-        Err(source) => {
-            return Err(Error::Keys {
-                file: Filename::EncryptionKeys,
-                source,
-            });
-        }
-    };
-    let (active_id, entries) = read_entries(&directory, Filename::MessageKeys)?;
-    let message = match message::Keys::new(active_id, entries) {
-        Ok(keys) => keys,
-        Err(source) => {
-            return Err(Error::Keys {
-                file: Filename::MessageKeys,
-                source,
-            });
-        }
-    };
-    Ok(Metadata::new(&challenge, &mobile, &encryption, &message))
-}
-
-fn read_entries(directory: &Path, file: Filename) -> Result<(keys::Id, Vec<keys::Entry>), Error> {
-    let input: input::Input = credentials::read(directory, file)?;
-    match input.try_into() {
-        Ok(entries) => Ok(entries),
-        Err(source) => Err(Error::Input { file, source }),
+    match keys::Keys::new(active_id, entries) {
+        Ok(keys) => Ok(keys),
+        Err(source) => Err(Error::Keys {
+            file: Filename::Keys,
+            source,
+        }),
     }
 }
 
@@ -94,25 +60,6 @@ mod tests {
 
     use tempfile::TempDir;
 
-    #[test]
-    fn diagnostics_identify_invalid_key_sets_without_material() {
-        let error = crate::keys::credentials::Error::Keys {
-            file: crate::credentials::Filename::ChallengeKeys,
-            source: domain::identity::keys::Error::DuplicateId(
-                domain::identity::keys::Id::new(7).expect("id"),
-            ),
-        };
-        let diagnostic = format!("{error:?}");
-        assert!(diagnostic.contains("challenge-keys.json"));
-        assert!(diagnostic.contains("duplicate key id Id(7)"));
-        assert!(
-            std::error::Error::source(&error)
-                .expect("source")
-                .downcast_ref::<domain::identity::keys::Error>()
-                .is_some()
-        );
-    }
-
     use crate::{
         credentials::{self, Filename},
         keys::credentials::{Error, load},
@@ -121,37 +68,81 @@ mod tests {
     const KEY: &str = r#"{"version":1,"active":0,"keys":[{"id":0,"material":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"}]}"#;
 
     #[test]
-    fn loads_fixed_files_without_supplier_or_application_settings() {
+    fn diagnostics_identify_invalid_key_sets_without_material() {
+        let error = Error::Keys {
+            file: Filename::Keys,
+            source: domain::keys::Error::DuplicateId(domain::keys::Id::new(7).expect("id")),
+        };
+        let diagnostic = format!("{error:?}");
+        assert!(diagnostic.contains("keys.json"));
+        assert!(diagnostic.contains("duplicate key id Id(7)"));
+        assert!(
+            std::error::Error::source(&error)
+                .expect("source")
+                .downcast_ref::<domain::keys::Error>()
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn loads_the_fixed_root_file_without_supplier_or_application_settings() {
         if let Ok(case) = env::var("TEST_DEPLOYMENT_CREDENTIALS") {
             let result = load();
             match case.as_str() {
                 "valid" => assert!(result.is_ok()),
-                "missing" => assert!(matches!(
-                    result,
-                    Err(Error::Credentials(credentials::Error::Read {
-                        file: Filename::MobileKeys,
-                        ..
-                    }))
-                )),
+                "missing" => {
+                    let error = result.err().expect("missing fixed file rejected");
+                    assert!(matches!(
+                        &error,
+                        Error::Credentials(credentials::Error::Read {
+                            file: Filename::Keys,
+                            ..
+                        })
+                    ));
+                    let diagnostic = format!("{error:?}");
+                    assert!(diagnostic.contains("keys.json"));
+                    assert!(
+                        !diagnostic.contains(
+                            env::var("CREDENTIALS_DIRECTORY")
+                                .expect("directory")
+                                .as_str()
+                        )
+                    );
+                }
                 "invalid" => {
                     let error = result.err().expect("invalid fixture rejected");
                     assert!(!format!("{error:?}").contains("sensitive"));
                 }
+                "duplicate" => assert!(matches!(
+                    result,
+                    Err(Error::Keys {
+                        file: Filename::Keys,
+                        source: domain::keys::Error::DuplicateId(_)
+                    })
+                )),
+                "inactive" => assert!(matches!(
+                    result,
+                    Err(Error::Keys {
+                        file: Filename::Keys,
+                        source: domain::keys::Error::Active(_)
+                    })
+                )),
                 _ => panic!("unknown test case"),
             }
             return;
         }
         let directory = TempDir::new().expect("directory");
         let path = directory.path();
-        fs::write(path.join("challenge-keys.json"), KEY).expect("challenge");
-        fs::write(path.join("encryption-keys.json"), KEY).expect("encryption");
-        fs::write(path.join("message-keys.json"), KEY).expect("message");
+        // Former per-purpose files are not alternative sources.
+        for file in ["challenge-keys.json", "mobile-keys.json", "seal-keys.json"] {
+            fs::write(path.join(file), KEY).expect("ignored former file");
+        }
         fs::write(path.join(".env"), "NUCLEUS_MIGRATION__PORT=invalid\n").expect("ignored env");
         let run = |case: &str| {
             let result = Command::new(env::current_exe().expect("executable"))
                 .args([
                     "--exact",
-                    "keys::credentials::tests::loads_fixed_files_without_supplier_or_application_settings",
+                    "keys::credentials::tests::loads_the_fixed_root_file_without_supplier_or_application_settings",
                 ])
                 .env_clear()
                 .current_dir(path)
@@ -167,16 +158,32 @@ mod tests {
             );
         };
         run("missing");
-        fs::write(path.join("mobile-keys.json"), KEY).expect("mobile");
+        fs::write(path.join("keys.json"), KEY).expect("root");
         run("valid");
+        let entry =
+            serde_json::json!({"id":0,"material":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8"});
+        fs::write(
+            path.join("keys.json"),
+            serde_json::to_vec(&serde_json::json!({"version":1,"active":0,"keys":[entry,entry]}))
+                .expect("duplicate key JSON"),
+        )
+        .expect("duplicate root");
+        run("duplicate");
+        fs::write(
+            path.join("keys.json"),
+            KEY.replace(r#""active":0"#, r#""active":1"#),
+        )
+        .expect("undeclared active root");
+        run("inactive");
         for invalid in [
             r#"[1,0,[]]"#,
             r#"{"version":2,"active":0,"keys":[]}"#,
             r#"{"version":1,"active":0,"keys":[[0,"sensitive"]]}"#,
             r#"{"version":1,"active":0,"keys":[{"id":0,"material":"sensitive"}]}"#,
             r#"{"version":1,"active":0,"keys":[],"sensitive":true}"#,
+            r#"{"version":1,"active":0,"keys":[{"id":0,"material":"AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8","purpose":"root"}]}"#,
         ] {
-            fs::write(path.join("mobile-keys.json"), invalid).expect("invalid fixture");
+            fs::write(path.join("keys.json"), invalid).expect("invalid fixture");
             run("invalid");
         }
     }

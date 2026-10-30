@@ -1,30 +1,24 @@
-use std::num::NonZeroUsize;
-
-use thiserror::Error;
-
 use crate::identity::message;
 
-/// C1 work capacity belongs to this consumer, not environment loading.
+/// Settings owned by the authentication use cases.
 pub struct Settings {
-    capacity: NonZeroUsize,
     message: message::Limits,
+    session: crate::identity::authentication::session::settings::Settings,
 }
 
 impl Settings {
-    pub fn new(capacity: usize, message: message::Limits) -> Result<Self, Error> {
-        let capacity = NonZeroUsize::new(capacity).ok_or(Error)?;
-        Ok(Self { capacity, message })
-    }
-
-    pub(super) fn capacity(&self) -> usize {
-        self.capacity.get()
+    pub fn new(
+        message: message::Limits,
+        session: crate::identity::authentication::session::settings::Settings,
+    ) -> Self {
+        Self { message, session }
     }
 
     pub(super) fn message(&self) -> &message::Limits {
         &self.message
     }
-}
 
-#[derive(Debug, Error)]
-#[error("authentication work capacity must be positive")]
-pub struct Error;
+    pub(crate) fn session(&self) -> &crate::identity::authentication::session::settings::Settings {
+        &self.session
+    }
+}

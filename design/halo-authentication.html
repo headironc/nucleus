@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="司籍处网站登录与注册页面设计。" />
+    <title>登录 · 司籍处</title>
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/tokens.css" />
+    <link rel="stylesheet" href="assets/halo-home.css" />
+    <link rel="stylesheet" href="assets/halo-authentication.css" />
+    <script src="assets/halo-authentication.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#authentication">跳到主要内容</a>
+    <div class="preview-tools" aria-label="设计预览工具">
+      <div class="preview-caption">
+        <strong>HALO · 设计预览</strong><span>不发送短信，不保存个人资料</span>
+      </div>
+      <button
+        class="preview-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="preview-tools-content"
+      >
+        展开预览工具
+      </button>
+      <div class="preview-tools-content" id="preview-tools-content">
+        <div class="preview-controls">
+          <span class="preview-field">
+            <label for="demo-path">演示路径</label>
+            <select id="demo-path">
+              <option value="existing">已有账户</option>
+              <option value="new">首次使用</option>
+            </select>
+          </span>
+          <span class="preview-field">
+            <label for="scenario-picker">页面状态</label>
+            <select id="scenario-picker"></select>
+          </span>
+          <span class="preview-field">
+            <label for="demo-current">个人账户读取</label>
+            <select id="demo-current">
+              <option value="ready">正常读取</option>
+              <option value="none">没有登录选择</option>
+              <option value="storage">登录信息读取失败</option>
+              <option value="unavailable">账户资料读取失败</option>
+              <option value="limited">读取受限</option>
+              <option value="invalid">登录已失效</option>
+              <option value="denied">读取被拒绝</option>
+              <option value="changed">读取时切换账户</option>
+            </select>
+          </span>
+          <button type="button" id="fill-example">填入示例</button>
+        </div>
+        <details class="design-notes">
+          <summary>设计说明与状态依据</summary>
+          <div>
+            <p id="state-basis"></p>
+            <p>
+              本页为交互设计稿，表单内容只留在当前页面内存中；刷新即清除。示例按钮只填入虚构资料。倒计时用于展示，正式值取服务端截止和等待时间。
+            </p>
+            <p id="preview-protocol">
+              短信登录和注册按 dev
+              的现有契约设计。微信分支为目标设计，正式入口随网站授权能力交付；二维码与安全验证均为展示占位，不调用供应商。
+            </p>
+            <p id="preview-session">
+              登录结果还须读取本人资料后才进入已登录页面。注册不自动开通员工服务。待确认状态不自动重发短信或重新注册；本稿不实现持久会话、跨页恢复与多标签页协调。
+            </p>
+            <p id="preview-delivery">
+              注册完成后只读确认当前本人，再返回公开首页，不进入员工服务示例。完整目标稿的已有账户路径仍展示员工服务入口；正式实现按可信服务读取分流，不能从登录或注册结果推断服务资格。
+            </p>
+            <div class="preview-controls" id="logout-return-settings" hidden>
+              <label for="logout-return-example">返回后的演示情形</label>
+              <select id="logout-return-example">
+                <option value="same-account">同账户</option>
+                <option value="other-account">其他账户</option>
+                <option value="material-missing">同账户 · 查询信息缺失</option>
+                <option value="scope-unverified" hidden>
+                  同账户 · 原退出范围未核实
+                </option>
+              </select>
+            </div>
+            <p>
+              从本次退出或全部退出结果页带各自固定站内意图进入时，完整目标预览的已有账户登录成功且本人读取完成后可返回对应退出结果页；默认演示同账户。全部退出的请求不一致路径另保留原范围未核实示例，返回后不把此前记录显示为全部退出成功。上方选择仅改变返回后的虚构场景，不保存真实退出材料，不接收任意返回地址或操作标识。独立检查登录状态不取得退出返回资格，其手机号登录链接不携带退出意图。普通完整目标登录保留员工服务入口；R1、R2
+              已有账户登录及
+              R2、完整目标稿注册完成，保留只读账户与公开首页去向。R1
+              新号码仍显示注册未开放。
+            </p>
+            <p>
+              从结束员工服务页带固定站内意图进入时，已有账户登录及本人读取完成后可返回本次办理。同账户继续核对，其他账户遮蔽此前办理，材料不可用时只查看当前服务。
+            </p>
+            <p>
+              状态依据与完整契约索引见仓库 <code>docs/client/pages.md</code>。
+            </p>
+            <p>
+              从更换手机号页带固定站内意图进入时，已有账户登录后返回原办理查询。新登录不能继续此前登录建立的换号；其他账户不显示原办理资料。这里只演示导航，不使用换号验证码登录。
+            </p>
+          </div>
+        </details>
+      </div>
+    </div>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="halo-home.html" aria-label="司籍处首页">
+          <img src="assets/logo.png" width="56" height="56" alt="" />
+          <span class="brand-copy"
+            ><strong>司籍处</strong><span>中医药文化宣传与推广中心</span></span
+          >
+        </a>
+        <a class="public-link" href="halo-home.html"
+          ><span aria-hidden="true">←</span> 返回首页</a
+        >
+      </div>
+    </header>
+
+    <main class="authentication-layout">
+      <aside class="service-introduction" aria-label="员工服务介绍">
+        <p class="section-kicker">日常事务 · 从这里开始</p>
+        <h2>员工服务</h2>
+        <p class="introduction-copy">
+          办理工号与工牌，<br />查看进度、管理个人资料。
+        </p>
+        <figure class="authentication-art">
+          <img
+            src="assets/halo-botanical.svg"
+            width="680"
+            height="520"
+            alt=""
+          />
+          <figcaption>草木有时，日常有序。</figcaption>
+        </figure>
+        <p class="public-note">
+          只想看看文化与科普？<br /><a href="halo-home.html#explore"
+            >无需登录，继续浏览 <span aria-hidden="true">↗</span></a
+          >
+        </p>
+      </aside>
+
+      <section
+        id="authentication"
+        class="authentication-panel"
+        aria-labelledby="page-title"
+        tabindex="-1"
+      >
+        <div class="panel-heading">
+          <p class="form-eyebrow" id="page-step">手机号登录</p>
+          <h1 id="page-title" tabindex="-1">登录司籍处</h1>
+          <p id="page-description">
+            使用手机号验证登录。首次使用，验证后再填写注册资料。
+          </p>
+        </div>
+        <div id="state-notice" class="state-notice" role="status" hidden></div>
+        <div id="form-content"></div>
+        <p class="panel-footnote">
+          公开内容无需登录，<a href="halo-home.html">返回首页浏览</a>。
+        </p>
+      </section>
+    </main>
+
+    <footer class="authentication-footer">
+      <span>司籍处 · 员工服务</span>
+    </footer>
+
+    <template id="phone-template">
+      <form id="phone-form" novalidate autocomplete="off">
+        <div class="field-group">
+          <label for="mobile">手机号</label>
+          <input
+            id="mobile"
+            name="mobile"
+            type="tel"
+            inputmode="tel"
+            autocomplete="off"
+            placeholder="请输入 11 位手机号"
+            aria-describedby="mobile-hint mobile-error"
+          />
+          <p class="field-hint" id="mobile-hint">
+            使用本人正在使用的中国大陆手机号。
+          </p>
+          <p class="field-error" id="mobile-error" hidden></p>
+        </div>
+        <div class="challenge-box">
+          <span class="challenge-symbol" aria-hidden="true">○</span>
+          <div>
+            <strong id="challenge-label">安全验证</strong>
+            <p id="challenge-description">验证后可获取短信验证码</p>
+          </div>
+          <button class="inline-button" type="button" data-action="challenge">
+            开始验证
+          </button>
+        </div>
+        <button class="button primary full-width" type="submit">
+          获取验证码 <span aria-hidden="true">→</span>
+        </button>
+        <div class="alternative">
+          <span>其他登录方式</span
+          ><button
+            class="button secondary full-width"
+            type="button"
+            data-action="wechat"
+          >
+            微信登录
+          </button>
+        </div>
+      </form>
+    </template>
+
+    <template id="code-template">
+      <form id="code-form" novalidate autocomplete="off">
+        <div class="verified-mobile">
+          <span>接收手机号 <strong id="mobile-summary"></strong></span
+          ><button
+            type="button"
+            class="inline-button"
+            data-action="change-mobile"
+          >
+            更换
+          </button>
+        </div>
+        <div class="field-group">
+          <label id="code-label" for="code-1">短信验证码</label>
+          <div
+            id="code"
+            class="code-cells"
+            role="group"
+            aria-labelledby="code-label"
+          >
+            <input
+              id="code-1"
+              class="code-cell"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              autocomplete="one-time-code"
+              aria-describedby="code-hint code-error"
+            />
+            <input
+              id="code-2"
+              class="code-cell"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              autocomplete="one-time-code"
+              aria-label="第 2 位，共 6 位"
+              aria-describedby="code-hint code-error"
+            />
+            <input
+              id="code-3"
+              class="code-cell"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              autocomplete="one-time-code"
+              aria-label="第 3 位，共 6 位"
+              aria-describedby="code-hint code-error"
+            />
+            <input
+              id="code-4"
+              class="code-cell"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              autocomplete="one-time-code"
+              aria-label="第 4 位，共 6 位"
+              aria-describedby="code-hint code-error"
+            />
+            <input
+              id="code-5"
+              class="code-cell"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              autocomplete="one-time-code"
+              aria-label="第 5 位，共 6 位"
+              aria-describedby="code-hint code-error"
+            />
+            <input
+              id="code-6"
+              class="code-cell"
+              type="text"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              autocomplete="one-time-code"
+              aria-label="第 6 位，共 6 位"
+              aria-describedby="code-hint code-error"
+            />
+          </div>
+          <p class="field-hint" id="code-hint">
+            请输入最新收到的 6 位验证码，可直接粘贴整段。
+          </p>
+          <p class="field-error" id="code-error" hidden></p>
+        </div>
+        <div class="resend-row">
+          <span>没有收到短信？</span
+          ><button type="button" class="inline-button" data-action="resend">
+            重新获取
+          </button>
+        </div>
+        <button class="button primary full-width" type="submit">
+          验证并继续 <span aria-hidden="true">→</span>
+        </button>
+        <p class="form-help">验证后，已有账户直接登录；新用户继续注册。</p>
+      </form>
+    </template>
+
+    <template id="registration-template">
+      <form id="registration-form" novalidate autocomplete="off">
+        <ol class="registration-steps" aria-label="注册进度">
+          <li><span>✓</span> 手机号已验证</li>
+          <li aria-current="step"><span>2</span> 填写资料</li>
+        </ol>
+        <p class="registration-window" id="registration-window">
+          请在
+          <strong id="registration-clock">09:59</strong>
+          内提交，超时后需重新验证手机号。
+        </p>
+        <div class="field-group">
+          <label for="name">姓名</label>
+          <input
+            id="name"
+            name="name"
+            autocomplete="off"
+            placeholder="请填写身份证上的姓名"
+            aria-describedby="name-error"
+          />
+          <p class="field-error" id="name-error" hidden></p>
+        </div>
+        <div class="field-group">
+          <label for="id-number">身份证号</label>
+          <input
+            id="id-number"
+            name="idNumber"
+            type="text"
+            autocomplete="off"
+            placeholder="18 位居民身份证号"
+            aria-describedby="id-number-hint id-number-error"
+          />
+          <p class="field-hint" id="id-number-hint">
+            请核对姓名和身份证号，末位 X 可用大小写。
+          </p>
+          <p class="field-error" id="id-number-error" hidden></p>
+        </div>
+        <p class="registration-purpose">
+          姓名和身份证号用于账户登记。员工服务需另行开通。
+          尚未提交的姓名和身份证号不会自动保存。
+        </p>
+        <button class="button primary full-width" type="submit">
+          注册并登录 <span aria-hidden="true">→</span>
+        </button>
+        <button
+          class="text-button registration-back"
+          type="button"
+          data-action="leave-registration"
+        >
+          返回登录
+        </button>
+      </form>
+    </template>
+
+    <template id="result-template">
+      <div class="result-content">
+        <div class="result-symbol" aria-hidden="true"></div>
+        <p id="result-detail"></p>
+        <button
+          class="button primary full-width"
+          id="result-action"
+          type="button"
+        ></button>
+        <a
+          class="button primary full-width"
+          id="result-link"
+          href="halo-authentication.html"
+          target="_blank"
+          rel="noopener"
+          hidden
+        ></a>
+        <a
+          class="button secondary full-width"
+          id="result-home"
+          href="halo-home.html"
+          hidden
+          >返回首页</a
+        >
+      </div>
+    </template>
+
+    <template id="current-template">
+      <div class="current-content">
+        <div class="current-avatar">
+          <svg
+            class="current-avatar-image"
+            viewBox="0 0 96 96"
+            role="img"
+            aria-label="当前头像，虚构示例"
+          >
+            <circle class="avatar-background" cx="48" cy="48" r="46" />
+            <path
+              class="avatar-shirt"
+              d="M18 82c1-19 13-29 30-29s29 10 30 29"
+            />
+            <circle class="avatar-face" cx="48" cy="36" r="17" />
+            <path
+              class="avatar-hair"
+              d="M31 36c-4-25 38-26 34 0l-8-14-10 8-13-1z"
+            />
+          </svg>
+          <div class="current-avatar-placeholder" aria-hidden="true" hidden>
+            <svg viewBox="0 0 48 48">
+              <circle cx="24" cy="17" r="7" />
+              <path d="M10 40c0-10 6-15 14-15s14 5 14 15" />
+            </svg>
+          </div>
+        </div>
+        <div class="current-avatar-status">
+          <p class="current-avatar-error" role="status" hidden></p>
+          <button
+            type="button"
+            class="inline-button"
+            data-action="retry-avatar"
+            hidden
+          >
+            重新加载头像
+          </button>
+        </div>
+        <dl class="current-summary">
+          <div>
+            <dt>姓名</dt>
+            <dd id="current-name">示例用户</dd>
+          </div>
+          <div>
+            <dt>身份证尾号</dt>
+            <dd id="current-id-suffix">012X</dd>
+          </div>
+        </dl>
+        <p class="current-help">你可以继续浏览公开内容。</p>
+        <a class="button primary full-width" href="halo-home.html">返回首页</a>
+      </div>
+    </template>
+
+    <template id="wechat-template">
+      <div class="wechat-content">
+        <div class="qr-placeholder" aria-label="微信二维码展示占位，不可扫描">
+          <svg viewBox="0 0 120 120" aria-hidden="true">
+            <path d="M12 38V12h26m44 0h26v26m0 44v26H82m-44 0H12V82" />
+            <rect x="40" y="26" width="40" height="68" rx="5" />
+            <path d="M51 36h18M55 84h10M29 59h62" />
+          </svg>
+          <span>二维码示意</span>
+        </div>
+        <p class="wechat-instruction">用已绑定账户的微信扫码登录</p>
+        <button
+          class="button secondary full-width"
+          type="button"
+          data-action="phone"
+        >
+          使用手机号登录
+        </button>
+        <p class="form-help">首次使用，请先通过手机号注册。</p>
+      </div>
+    </template>
+
+    <dialog
+      class="preview-dialog"
+      id="navigation-dialog"
+      aria-labelledby="dialog-title"
+      aria-describedby="dialog-description"
+    >
+      <div class="dialog-heading">
+        <span>司籍处</span
+        ><button
+          class="dialog-close"
+          type="button"
+          aria-label="关闭提示"
+          data-action="close-dialog"
+        >
+          ×
+        </button>
+      </div>
+      <h2 id="dialog-title"></h2>
+      <p id="dialog-description"></p>
+      <div class="dialog-actions">
+        <button
+          class="button secondary"
+          type="button"
+          data-action="close-dialog"
+        >
+          继续填写</button
+        ><button class="button primary" type="button" id="dialog-confirm">
+          返回登录
+        </button>
+      </div>
+    </dialog>
+  </body>
+</html>

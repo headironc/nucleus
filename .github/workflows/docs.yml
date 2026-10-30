@@ -1,0 +1,59 @@
+name: Docs
+
+on:
+  pull_request:
+    branches: [dev, main]
+    types: [opened, reopened, synchronize, edited]
+
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  docs:
+    name: Nucleus Docs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version-file: .tool-versions
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .tool-versions
+          package-manager-cache: false
+      - name: Install lychee
+        run: |
+          curl --fail --location --silent --show-error --max-time 120 --output "$RUNNER_TEMP/lychee.tar.gz" 'https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-gnu.tar.gz'
+          echo "1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a  $RUNNER_TEMP/lychee.tar.gz" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/lychee"
+          tar --extract --gzip --file "$RUNNER_TEMP/lychee.tar.gz" --directory "$RUNNER_TEMP/lychee" --strip-components=1
+          echo "$RUNNER_TEMP/lychee" >> "$GITHUB_PATH"
+      - name: Record candidate and tools
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          printf 'repository=%s pr=%s run=%s attempt=%s\n' "$GITHUB_REPOSITORY" "$PR_NUMBER" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+          git rev-parse HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          bun --version
+          node --version
+          lychee --version
+      - name: Install dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Test design preview
+        run: bun test tools/preview-design.test.ts
+      - name: Check document formatting and Markdown
+        run: bun run check:docs
+      - name: Check local links
+        run: bun run check:docs:links

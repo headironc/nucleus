@@ -1,5 +1,5 @@
-pub mod access_key;
 pub mod client;
+pub mod credentials;
 pub mod limits;
 pub mod proof;
 pub mod request;
@@ -14,7 +14,7 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use derive_more::{AsRef, Display};
-use serde::Serialize;
+use serde::{Deserialize, Deserializer, Serialize};
 use serde_with::DeserializeFromStr;
 use thiserror::Error;
 use tokio_postgres::types::{FromSql, ToSql};
@@ -111,7 +111,7 @@ impl FromStr for Id {
 #[error("invalid UUID text")]
 pub struct ParseIdError(#[from] uuid::Error);
 
-/// The eight-digit code shared by a C1 message and its R1 check.
+/// The six-digit code shared by authentication and mobile-change messages.
 #[derive(AsRef)]
 #[as_ref(str)]
 pub struct Code(Zeroizing<String>);
@@ -133,8 +133,9 @@ impl Code {
             let mut bytes = Zeroizing::new([0_u8; 4]);
             fill(&mut bytes[..])?;
             let sample = u32::from_le_bytes(*bytes);
-            if sample < 4_200_000_000 {
-                return Ok(Self(Zeroizing::new(format!("{:08}", sample % 100_000_000))));
+            // Accept a whole number of million-value ranges to avoid modulo bias.
+            if sample < 4_294_000_000 {
+                return Ok(Self(Zeroizing::new(format!("{:06}", sample % 1_000_000))));
             }
         }
     }
@@ -144,7 +145,7 @@ impl FromStr for Code {
     type Err = ParseError;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        if input.len() != 8 || !input.bytes().all(|digit| digit.is_ascii_digit()) {
+        if input.len() != 6 || !input.bytes().all(|digit| digit.is_ascii_digit()) {
             return Err(ParseError);
         }
 
@@ -158,7 +159,14 @@ impl Debug for Code {
     }
 }
 
-/// The supplied message code is not eight ASCII digits.
+impl<'de> Deserialize<'de> for Code {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let input = Zeroizing::<String>::deserialize(deserializer)?;
+        input.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+/// The supplied message code is not six ASCII digits.
 #[derive(Debug, Error)]
 #[error("invalid message code")]
 pub struct ParseError;
@@ -230,42 +238,66 @@ mod tests {
     }
 
     #[test]
-    fn accepts_exactly_eight_ascii_digits_and_keeps_leading_zeroes() {
-        let code = "00001234".parse::<Code>().expect("fixed code is valid");
-        assert_eq!(code.as_ref(), "00001234");
+    fn accepts_exactly_six_ascii_digits_and_keeps_leading_zeroes() {
+        for text in ["000000", "001234", "999999"] {
+            let code = text.parse::<Code>().expect("six ASCII digits are valid");
+            assert_eq!(code.as_ref(), text);
+        }
 
         for invalid in [
             "",
+            "12345",
             "1234567",
+            "12345678",
             "123456789",
-            " 12345678",
-            "12345678\n",
-            "1234 678",
-            "1234-678",
-            "１２３４５６７８",
+            " 123456",
+            "123456\n",
+            "123 56",
+            "123-56",
+            "１２３４５６",
+            "１２",
+            "123٤5",
         ] {
             assert!(matches!(invalid.parse::<Code>(), Err(ParseError)));
         }
     }
 
     #[test]
+    fn deserializes_validated_code_text_without_exposing_invalid_values() {
+        for json in [r#""001234""#, r#""\u003001234""#] {
+            let code: Code = serde_json::from_str(json).expect("valid code");
+            assert_eq!(code.as_ref(), "001234");
+            let code: Code =
+                serde_json::from_value(serde_json::from_str(json).expect("owned text"))
+                    .expect("owned valid code");
+            assert_eq!(code.as_ref(), "001234");
+        }
+        for invalid in ["1234567", " 123456", "１２３４５６"] {
+            let error = serde_json::from_value::<Code>(serde_json::json!(invalid))
+                .expect_err("invalid code");
+            assert!(!format!("{error:?}").contains(invalid));
+            assert!(!error.to_string().contains(invalid));
+        }
+        for invalid in ["null", "123", "true", "[]", "{}"] {
+            assert!(serde_json::from_str::<Code>(invalid).is_err());
+        }
+    }
+
+    #[test]
     fn rejection_sampling_skips_out_of_range_values_and_preserves_leading_zeroes() {
-        let samples = [4_200_000_000_u32, 0];
+        let samples = [4_294_000_000_u32, u32::MAX, 0];
         let mut calls = 0;
         let code = Code::generate_with(|bytes| {
             bytes.copy_from_slice(&samples[calls].to_le_bytes());
             calls += 1;
             Ok(())
         })
-        .expect("fixed second sample is accepted");
+        .expect("fixed third sample is accepted");
 
-        assert_eq!(calls, 2);
-        assert_eq!(code.as_ref(), "00000000");
+        assert_eq!(calls, 3);
+        assert_eq!(code.as_ref(), "000000");
 
-        for (sample, expected) in [
-            (4_199_999_999_u32, "99999999"),
-            (100_000_001_u32, "00000001"),
-        ] {
+        for (sample, expected) in [(4_293_999_999_u32, "999999"), (1_000_001_u32, "000001")] {
             let code = Code::generate_with(|bytes| {
                 bytes.copy_from_slice(&sample.to_le_bytes());
                 Ok(())
@@ -278,7 +310,7 @@ mod tests {
     #[test]
     fn random_source_failure_produces_no_code() {
         let result = Code::generate_with(|bytes| {
-            bytes.copy_from_slice(&12345678_u32.to_le_bytes());
+            bytes.copy_from_slice(&123456_u32.to_le_bytes());
             Err(getrandom::Error::UNSUPPORTED)
         });
         assert!(matches!(result, Err(getrandom::Error::UNSUPPORTED)));
@@ -286,7 +318,7 @@ mod tests {
 
     #[test]
     fn debug_output_does_not_disclose_the_code() {
-        let code = "00001234".parse::<Code>();
+        let code = "001234".parse::<Code>();
         assert_eq!(format!("{code:?}"), "Ok(Code(\"[redacted]\"))");
     }
 }

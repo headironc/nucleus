@@ -1,0 +1,276 @@
+{
+  "scannerSha256": "88f91962aa2f93ac6ab281d553b9e125f5197bbbce38f9f2437f7299c32e5509",
+  "configurationSha256": "27630a96d6c55755cc37620f3933d5cab94b1eb78a726a32e11212972525d76e",
+  "findings": [
+    {
+      "path": "usr/lib/node_modules/npm/node_modules/just-diff/index.cjs",
+      "sourceSha256": "1b73ffb5cba2f5ba219ef8fff57f9b34f77d7dd4b0229f6396c022f796e7993d",
+      "rule": "generic-api-key",
+      "line": 84,
+      "valueSha256": "ae3f07e6360d7dd1659f31f82ec070fb390a25bc6a127485f9bf60828f4aff7f",
+      "reason": "Public source code identifier or expression",
+      "count": 1
+    },
+    {
+      "path": "usr/lib/node_modules/npm/node_modules/just-diff/index.cjs",
+      "sourceSha256": "1b73ffb5cba2f5ba219ef8fff57f9b34f77d7dd4b0229f6396c022f796e7993d",
+      "rule": "generic-api-key",
+      "line": 86,
+      "valueSha256": "59e3fbea8ff197e5558e16ef0ffb5c5b02eb412a1b35c7683874d363cd902dff",
+      "reason": "Public source code identifier or expression",
+      "count": 1
+    },
+    {
+      "path": "usr/lib/node_modules/npm/node_modules/just-diff/index.mjs",
+      "sourceSha256": "2d3eef1b11e8da9dcd695711f8fe468b7320058652196b82290c53321cecfb93",
+      "rule": "generic-api-key",
+      "line": 79,
+      "valueSha256": "ae3f07e6360d7dd1659f31f82ec070fb390a25bc6a127485f9bf60828f4aff7f",
+      "reason": "Public source code identifier or expression",
+      "count": 1
+    },
+    {
+      "path": "usr/lib/node_modules/npm/node_modules/just-diff/index.mjs",
+      "sourceSha256": "2d3eef1b11e8da9dcd695711f8fe468b7320058652196b82290c53321cecfb93",
+      "rule": "generic-api-key",
+      "line": 81,
+      "valueSha256": "59e3fbea8ff197e5558e16ef0ffb5c5b02eb412a1b35c7683874d363cd902dff",
+      "reason": "Public source code identifier or expression",
+      "count": 1
+    },
+    {
+      "path": "usr/lib/x86_64-linux-gnu/perl/5.38.2/CORE/cop.h",
+      "sourceSha256": "72f3a4d6c3896122957651f33f38e61c3b70c910b050d26e6aa7461444ae7b05",
+      "rule": "generic-api-key",
+      "line": 225,
+      "valueSha256": "ae0ecefb746baae9e8bf99353a1b49da911c49da15203ab501315b24f14ad341",
+      "reason": "Public source code identifier or expression",
+      "count": 1
+    },
+    {
+      "path": "usr/include/node/v8-internal.h",
+      "sourceSha256": "eb74fc0740b7f858a03e319e077c1698d2083325f3154c67771b120fb48f8520",
+      "rule": "generic-api-key",
+      "line": 187,
+      "valueSha256": "ba0ecf02782c7b00d6d66f95034e3e13bd0c7e85651a59a670737e5b0b95e391",
+      "reason": "Public source code identifier or expression",
+      "count": 1
+    },
+    {
+      "path": "usr/lib/node_modules/corepack/dist/lib/corepack.cjs",
+      "sourceSha256": "abd6f0e7b4e2af310243e202fd908ea64cda545786222f0a3d3f62426e8ad66e",
+      "rule": "generic-api-key",
+      "line": 12981,
+      "valueSha256": "e7317f5ba3e527faa7164c83e43ece6041310188121d2f33a3e75d8d0053eea3",
+      "reason": "Published Corepack package-signing public key; DER public-key parsing verified",
+      "count": 1
+    },
+    {
+      "path": "usr/lib/node_modules/corepack/dist/lib/corepack.cjs",
+      "sourceSha256": "abd6f0e7b4e2af310243e202fd908ea64cda545786222f0a3d3f62426e8ad66e",
+      "rule": "generic-api-key",
+      "line": 12988,
+      "valueSha256": "a5828f8ae9a4e52f11b844088b73e46c9c14f02881a1e64e65af4a498479fcf2",
+      "reason": "Published Corepack package-signing public key; DER public-key parsing verified",
+      "count": 1
+    },
+    {
+      "path": "all layer entry paths, links and types",
+      "sourceSha256": "7c99a44876c7494c4d1cbf210bc47b59d035c24443ad5585c9732bcab136b84f",
+      "rule": "generic-api-key",
+      "line": 11225,
+      "valueSha256": "c25fcc48806b3d8a1cd1fbb62195d5c77f9eb52d3461e6882f4769eb2b0f9dc4",
+      "reason": "Public Debian package filename suffix amd64.triggers",
+      "count": 1
+    },
+    {
+      "path": "all layer entry paths, links and types",
+      "sourceSha256": "7c99a44876c7494c4d1cbf210bc47b59d035c24443ad5585c9732bcab136b84f",
+      "rule": "generic-api-key",
+      "line": 11235,
+      "valueSha256": "c25fcc48806b3d8a1cd1fbb62195d5c77f9eb52d3461e6882f4769eb2b0f9dc4",
+      "reason": "Public Debian package filename suffix amd64.triggers",
+      "count": 1
+    },
+    {
+      "path": "tmp/playwright-core.tar.gz",
+      "sourceSha256": "732a21e8928a68eae1b1752cb13eb7022e4ede97a9de6b78e24ef9049526b3b5",
+      "rule": "generic-api-key",
+      "line": 40636,
+      "valueSha256": "15cef4b629cc2d07a4563df9516739d4c8d6097eb283e5260fd59299a3c99c56",
+      "reason": "RFC 6455 sample WebSocket nonce in public Playwright code",
+      "count": 1
+    },
+    {
+      "path": "tmp/playwright-core.tar.gz",
+      "sourceSha256": "732a21e8928a68eae1b1752cb13eb7022e4ede97a9de6b78e24ef9049526b3b5",
+      "rule": "generic-api-key",
+      "line": 5,
+      "valueSha256": "640aed0105386a54b4a1d9115bc0a4efa6044bec37a70cb969759b06f7d9b739",
+      "reason": "Public source code identifier or expression",
+      "count": 1
+    },
+    {
+      "path": "ms-playwright-agent/node_modules/playwright-core/lib/vite/traceViewer/assets/xtermModule-B794rD2Z.js",
+      "sourceSha256": "7f3c6bda9e7b6327740dff3b946c68a52027357ef2b14b1ea373aa614cbb7977",
+      "rule": "generic-api-key",
+      "line": 5,
+      "valueSha256": "640aed0105386a54b4a1d9115bc0a4efa6044bec37a70cb969759b06f7d9b739",
+      "reason": "Public source code identifier or expression",
+      "count": 1
+    },
+    {
+      "path": "all layer entry paths, links and types",
+      "sourceSha256": "647636cc56734836e9e272b6018ccd41f64975f2430cb28c03779c4f0de33f1a",
+      "rule": "generic-api-key",
+      "line": 19891,
+      "valueSha256": "c25fcc48806b3d8a1cd1fbb62195d5c77f9eb52d3461e6882f4769eb2b0f9dc4",
+      "reason": "Public Debian package filename suffix amd64.triggers",
+      "count": 1
+    },
+    {
+      "path": "all layer entry paths, links and types",
+      "sourceSha256": "647636cc56734836e9e272b6018ccd41f64975f2430cb28c03779c4f0de33f1a",
+      "rule": "generic-api-key",
+      "line": 19996,
+      "valueSha256": "c25fcc48806b3d8a1cd1fbb62195d5c77f9eb52d3461e6882f4769eb2b0f9dc4",
+      "reason": "Public Debian package filename suffix amd64.triggers",
+      "count": 1
+    },
+    {
+      "path": "ms-playwright-agent/node_modules/playwright-core/lib/coreBundle.js",
+      "sourceSha256": "829521b67ed7be90c7d6d6098ff39f2241562d47e4ad7ccab13710924a56001d",
+      "rule": "generic-api-key",
+      "line": 40636,
+      "valueSha256": "15cef4b629cc2d07a4563df9516739d4c8d6097eb283e5260fd59299a3c99c56",
+      "reason": "RFC 6455 sample WebSocket nonce in public Playwright code",
+      "count": 1
+    },
+    {
+      "path": "ms-playwright/chromium-1248/chrome-linux64/resources/accessibility/reading_mode_gdocs_helper_manifest.json",
+      "sourceSha256": "14bf22d3fb7c33990b3c8f05f91f6b79017e05008cf46d735657e03e8e04ed3b",
+      "rule": "generic-api-key",
+      "line": 2,
+      "valueSha256": "d479a85aa6bbb15049c791f3d063c2240b1b6b51bc1ebab1792cff12cde7e606",
+      "reason": "Reviewed publicly distributed Chromium component identity material; DER private key bytes, not a public-key false positive; https://github.com/chromium/chromium/blob/145.0.7566.1/chrome/browser/resources/reading_mode_gdocs_helper/manifest.json",
+      "count": 1
+    },
+    {
+      "path": "usr/share/bison/skeletons/java.m4",
+      "sourceSha256": "8952f572e346315183392421a4aee23ac211890f794774689dafcaad6afb9787",
+      "rule": "generic-api-key",
+      "line": 309,
+      "valueSha256": "46c70391b580995aaab7d89fcaa117b13c016a495f89a21ada4b778ecce41f18",
+      "reason": "Public source code identifier or expression",
+      "count": 1
+    },
+    {
+      "path": "usr/share/bison/skeletons/c.m4",
+      "sourceSha256": "328d06afdea69ce9604790634abb406d55c0da0a4f39a103defba8084637a67f",
+      "rule": "generic-api-key",
+      "line": 85,
+      "valueSha256": "46c70391b580995aaab7d89fcaa117b13c016a495f89a21ada4b778ecce41f18",
+      "reason": "Public source code identifier or expression",
+      "count": 1
+    },
+    {
+      "path": "usr/include/unicode/ucol.h",
+      "sourceSha256": "edf05b3ca0afec96b1190d4bb62b5a2c93d47b810658b8671719a4d99f115198",
+      "rule": "generic-api-key",
+      "line": 1196,
+      "valueSha256": "7de4b79e7e33f81dde5e52f664b49d2a2670f2e815b831e7d45adb702491d04e",
+      "reason": "Public source code identifier or expression",
+      "count": 1
+    },
+    {
+      "path": "usr/include/linux/netfilter/nf_tables.h",
+      "sourceSha256": "63938c1b2535d63d90238b59494b4327489b7c733ae49b64602c745473e75ba2",
+      "rule": "generic-api-key",
+      "line": 1910,
+      "valueSha256": "4a2399d1032908a32727c3b80b19daec59f82da11921ce27f89af6ecee359d2d",
+      "reason": "Public source code identifier or expression",
+      "count": 1
+    },
+    {
+      "path": "usr/include/linux/nl80211.h",
+      "sourceSha256": "9535f7ae11376801e3586ac1c237e706e296bb8885568baca08c967cb024b7f7",
+      "rule": "generic-api-key",
+      "line": 5343,
+      "valueSha256": "8f1b19e6239e0dc658ca5169e60570a7d15a35cd95a2bb508a10e90c9e4933f7",
+      "reason": "Public source code identifier or expression",
+      "count": 1
+    },
+    {
+      "path": "opt/node/lib/node_modules/npm/node_modules/just-diff/index.cjs",
+      "sourceSha256": "1b73ffb5cba2f5ba219ef8fff57f9b34f77d7dd4b0229f6396c022f796e7993d",
+      "rule": "generic-api-key",
+      "line": 84,
+      "valueSha256": "ae3f07e6360d7dd1659f31f82ec070fb390a25bc6a127485f9bf60828f4aff7f",
+      "reason": "Public source code identifier or expression",
+      "count": 1
+    },
+    {
+      "path": "opt/node/lib/node_modules/npm/node_modules/just-diff/index.cjs",
+      "sourceSha256": "1b73ffb5cba2f5ba219ef8fff57f9b34f77d7dd4b0229f6396c022f796e7993d",
+      "rule": "generic-api-key",
+      "line": 86,
+      "valueSha256": "59e3fbea8ff197e5558e16ef0ffb5c5b02eb412a1b35c7683874d363cd902dff",
+      "reason": "Public source code identifier or expression",
+      "count": 1
+    },
+    {
+      "path": "opt/node/lib/node_modules/npm/node_modules/just-diff/index.mjs",
+      "sourceSha256": "2d3eef1b11e8da9dcd695711f8fe468b7320058652196b82290c53321cecfb93",
+      "rule": "generic-api-key",
+      "line": 79,
+      "valueSha256": "ae3f07e6360d7dd1659f31f82ec070fb390a25bc6a127485f9bf60828f4aff7f",
+      "reason": "Public source code identifier or expression",
+      "count": 1
+    },
+    {
+      "path": "opt/node/lib/node_modules/npm/node_modules/just-diff/index.mjs",
+      "sourceSha256": "2d3eef1b11e8da9dcd695711f8fe468b7320058652196b82290c53321cecfb93",
+      "rule": "generic-api-key",
+      "line": 81,
+      "valueSha256": "59e3fbea8ff197e5558e16ef0ffb5c5b02eb412a1b35c7683874d363cd902dff",
+      "reason": "Public source code identifier or expression",
+      "count": 1
+    },
+    {
+      "path": "opt/node/lib/node_modules/npm/node_modules/@npmcli/arborist/README.md",
+      "sourceSha256": "972e9be5b203202b0341f886ff538bb88cce1caa4a0e8088758047aa83ff7a2e",
+      "rule": "generic-api-key",
+      "line": 44,
+      "valueSha256": "c3d6f56b667ef61396c692506f1f1be028da46272b25dbd70c4fa15c00893118",
+      "reason": "Published npm Arborist README example encoding not my real password",
+      "count": 1
+    },
+    {
+      "path": "opt/node/lib/node_modules/npm/node_modules/@npmcli/arborist/README.md",
+      "sourceSha256": "972e9be5b203202b0341f886ff538bb88cce1caa4a0e8088758047aa83ff7a2e",
+      "rule": "generic-api-key",
+      "line": 47,
+      "valueSha256": "7e8a30c801002173d74cfad5c170a84b6b26ff5252bf0b7430a2d569f949cab7",
+      "reason": "Published npm Arborist README example encoding not my real password",
+      "count": 1
+    },
+    {
+      "path": "opt/node/lib/node_modules/npm/node_modules/@npmcli/arborist/README.md",
+      "sourceSha256": "972e9be5b203202b0341f886ff538bb88cce1caa4a0e8088758047aa83ff7a2e",
+      "rule": "generic-api-key",
+      "line": 52,
+      "valueSha256": "c3d6f56b667ef61396c692506f1f1be028da46272b25dbd70c4fa15c00893118",
+      "reason": "Published npm Arborist README example encoding not my real password",
+      "count": 1
+    },
+    {
+      "path": "opt/node/include/node/v8-internal.h",
+      "sourceSha256": "73db93bad8c49dd348aa3aa1f3778e4110be5a00474e992be5cb2154a51ca909",
+      "rule": "generic-api-key",
+      "line": 173,
+      "valueSha256": "ba0ecf02782c7b00d6d66f95034e3e13bd0c7e85651a59a670737e5b0b95e391",
+      "reason": "Public source code identifier or expression",
+      "count": 1
+    }
+  ]
+}

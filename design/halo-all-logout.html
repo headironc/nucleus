@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="司籍处网站退出全部设备设计预览。" />
+    <title>退出全部设备 · 司籍处</title>
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/tokens.css" />
+    <link rel="stylesheet" href="assets/halo-home.css" />
+    <link rel="stylesheet" href="assets/halo-account.css" />
+    <link rel="stylesheet" href="assets/halo-all-logout.css" />
+    <script src="assets/halo-all-logout.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    <div class="preview-tools" aria-label="设计预览工具">
+      <div class="preview-caption">
+        <strong>HALO · 设计预览</strong><span>虚构资料，不执行真实退出</span>
+      </div>
+      <button
+        class="preview-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="preview-tools-content"
+      >
+        展开预览工具
+      </button>
+      <div class="preview-tools-content" id="preview-tools-content">
+        <div class="preview-controls">
+          <label for="scenario-picker">页面状态</label
+          ><select id="scenario-picker"></select>
+        </div>
+        <details class="design-notes">
+          <summary>设计说明</summary>
+          <div>
+            <p id="state-basis"></p>
+            <p>
+              本稿只演示页面与交互，不读取账户，不调用退出或结果接口。会话数不等于设备数，不展示设备清单。恢复只读原退出结果，不再次发送退出请求。状态工具的登录示例不是真实登录。
+            </p>
+            <label for="submit-outcome">确认后的示例结果</label
+            ><select id="submit-outcome">
+              <option value="success">成功</option>
+              <option value="save-failed">发送前保存失败</option>
+              <option value="unknown">结果未知</option>
+              <option value="unknown-invalid">401 · 原结果未知</option>
+              <option value="submit-limited">请求受限</option>
+              <option value="rejected">可信拒绝</option>
+              <option value="request-mismatch">请求与此前退出不一致</option>
+            </select>
+            <label for="login-outcome">检查登录的示例结果</label
+            ><select id="login-outcome">
+              <option value="login-required">需登录</option>
+              <option value="recovery-ready">原账户新登录</option>
+              <option value="original-valid">原登录仍有效</option>
+              <option value="other-account">另一账户</option>
+              <option value="check-failed">检查失败</option>
+              <option value="check-limited">检查受限</option>
+            </select>
+            <label for="query-outcome">查看原结果的示例结果</label
+            ><select id="query-outcome">
+              <option value="recovered">已完成</option>
+              <option value="query-failed">技术失败</option>
+              <option value="query-limited">暂时受限</option>
+              <option value="query-empty">空结果</option>
+              <option value="query-invalid">401</option>
+              <option value="query-forbidden">403</option>
+            </select>
+            <button type="button" class="text-action" data-action="end-wait">
+              演示等待结束
+            </button>
+          </div>
+        </details>
+      </div>
+    </div>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a
+          class="brand"
+          href="halo-home.html"
+          aria-label="司籍处首页"
+          data-leave
+          ><img src="assets/logo.png" width="56" height="56" alt="" /><span
+            class="brand-copy"
+            ><strong>司籍处</strong><span>中医药文化宣传与推广中心</span></span
+          ></a
+        >
+        <nav class="account-navigation" aria-label="网站导航">
+          <a href="halo-account.html" data-leave>个人账户</a
+          ><a href="halo-home.html" data-leave>返回首页 ↗</a>
+        </nav>
+      </div>
+    </header>
+    <main class="logout-layout" id="main" tabindex="-1">
+      <a class="back-link" href="halo-account.html" data-leave
+        >← 返回个人账户</a
+      >
+      <div class="logout-heading">
+        <p class="section-kicker">本人账户</p>
+        <h1 id="page-title" tabindex="-1">退出全部设备</h1>
+        <p id="page-introduction">结束本人账户在网站和小程序中的全部登录。</p>
+      </div>
+      <div id="logout-content" aria-live="polite"></div>
+      <noscript><p>请开启 JavaScript 查看设计演示。</p></noscript>
+    </main>
+    <footer class="account-footer">司籍处 · 本人账户</footer>
+    <dialog
+      id="logout-dialog"
+      class="preview-dialog"
+      aria-labelledby="dialog-title"
+      aria-describedby="dialog-description"
+    >
+      <div class="dialog-heading">
+        <span>本人确认</span
+        ><button
+          class="dialog-close"
+          type="button"
+          data-action="cancel"
+          aria-label="关闭"
+        >
+          ×
+        </button>
+      </div>
+      <h2 id="dialog-title"></h2>
+      <p id="dialog-description"></p>
+      <div id="dialog-detail"></div>
+      <div id="dialog-actions" class="dialog-actions"></div>
+    </dialog>
+  </body>
+</html>

@@ -1,0 +1,42 @@
+{
+  "name": "halo",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.4",
+  "engines": {
+    "node": ">=26 <27"
+  },
+  "scripts": {
+    "generate": "node tools/protocol.ts",
+    "check:generated": "node tools/protocol.ts --check",
+    "typecheck": "react-router typegen && node node_modules/typescript-compiler/bin/tsc --noEmit",
+    "build": "node tools/build.ts",
+    "start": "NODE_ENV=production node server.mjs",
+    "test": "vitest run",
+    "test:browser": "playwright test"
+  },
+  "dependencies": {
+    "@base-ui/react": "1.9.0",
+    "@react-router/node": "8.5.1",
+    "lucide-react": "1.64.0",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "react-router": "8.5.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@react-router/dev": "8.5.1",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/node": "26.6.6",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "openapi-typescript": "7.13.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "typescript-compiler": "npm:typescript@7.0.2",
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
+  }
+}

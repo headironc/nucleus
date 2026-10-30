@@ -12,10 +12,10 @@ use crate::{
         authentication::{
             self, Error, Inner, Input, Stage, TRANSACTION_BUDGET, database::message::Message,
         },
-        challenge, message,
+        keys, message,
         message::{Conclusion, worker},
     },
-    runtime::Sample,
+    kernel::time::Sample,
 };
 
 pub(super) struct Action;
@@ -24,8 +24,15 @@ impl authentication::Execute for Action {
     type Output = Receipt;
 
     async fn execute(self, service: &Inner, input: &Input) -> Result<Receipt, Error> {
-        let challenge = service.verify_challenge(input).await?;
-        service.send_message(input, challenge).await
+        let verification = service.verify_challenge(input).await?.allow_send()?;
+        match service.send_message(input, verification.receipt()).await {
+            Ok((receipt, Some(error))) => {
+                tracing::error!(operation_id = %input.operation_id, stage = "message_completion", outcome = receipt.status.as_ref(), challenge = ?verification.diagnostic(), error = ?error);
+                Ok(receipt)
+            }
+            Ok((receipt, None)) => verification.finish(input, Ok(receipt)),
+            Err(error) => verification.finish(input, Err(error)),
+        }
     }
 }
 
@@ -160,6 +167,30 @@ struct Prepared {
     code: message::Code,
 }
 
+impl Prepared {
+    fn verify(&self, keys: &keys::message::Keys, message: &Message) -> Result<(), Error> {
+        if self.message.id() != message.id() {
+            return Err(Error::Facts {
+                stage: Stage::MessageRecovery,
+                rule: "recovered message identity must match the original permit",
+            });
+        }
+        if self.message.worker_id() != message.worker_id() {
+            return Err(Error::Facts {
+                stage: Stage::MessageRecovery,
+                rule: "recovered worker must match the original execution",
+            });
+        }
+        if !message.verify_code(keys, &self.code)? {
+            return Err(Error::Facts {
+                stage: Stage::MessageRecovery,
+                rule: "the retained code must verify against the recovered proof",
+            });
+        }
+        Ok(())
+    }
+}
+
 enum Preparation {
     Original(Message),
     Ready(Prepared),
@@ -182,123 +213,184 @@ impl Inner {
         &self,
         input: &Input,
         challenge: authentication::Receipt,
-    ) -> Result<Receipt, Error> {
-        let prepared = match self.prepare(input, challenge).await? {
-            Preparation::Original(message) => {
-                if message.status() != message::Status::Sending {
-                    return Ok(Receipt::new(&message));
-                }
-                let (message, _) = self
-                    .change_message(input, challenge.id, &Change::Orphan)
-                    .await?;
-                return Ok(Receipt::new(&message));
-            }
-            Preparation::Ready(prepared) => prepared,
-        };
-        let worker_id = prepared.message.worker_id();
-        let _allowance = match self.dispatch.capacity.try_acquire() {
-            Ok(allowance) => allowance,
-            Err(_) => {
-                return self
-                    .finish_message(input, challenge.id, worker_id, Conclusion::Failed)
-                    .await;
-            }
-        };
-        let mut next_at = match timeout(TRANSACTION_BUDGET, async {
-            let next_at = self.dispatch.next_at.lock().await;
-            sleep_until(*next_at).await;
-            next_at
-        })
-        .await
+    ) -> Result<(Receipt, Option<Box<Error>>), Error> {
+        let (preparation, option) = self.prepare(input, challenge).await?;
+        if let Preparation::Original(message) = &preparation
+            && message.status() != message::Status::Sending
         {
-            Ok(next_at) => next_at,
-            Err(_) => {
-                return self
-                    .finish_message(input, challenge.id, worker_id, Conclusion::Failed)
-                    .await;
-            }
+            return Ok((Receipt::new(message), option));
+        }
+        let option = match option {
+            // Preparation already closed admission. Do not claim, abandon, or call PNVS.
+            Some(cause) if cause.unreliable() => return Err(*cause),
+            option => option,
         };
-        let (message, sample) = self
-            .change_message(
-                input,
-                challenge.id,
-                &Change::Claim {
-                    worker_id,
-                    code: &prepared.code,
-                },
-            )
-            .await?;
-        let receipt = Receipt::new(&message);
-        if receipt.status != message::Status::Sending {
-            return Ok(receipt);
-        }
-        let date = sampled_date(sample)?;
-        let remaining = receipt.expires_at.signed_duration_since(date).num_seconds();
-        if remaining < 60 {
-            return self
-                .finish_message(input, challenge.id, worker_id, Conclusion::Failed)
-                .await;
-        }
-        let request = match self.dispatch.client.request(
-            message::request::Input {
-                mobile: &input.mobile,
-                code: &prepared.code,
-                message_id: receipt.id,
-                valid_seconds: remaining.unsigned_abs(),
-                purpose: challenge::Purpose::Authentication,
-            },
-            message::request::Context {
-                date,
-                nonce: Uuid::new_v4(),
-            },
-        ) {
-            Ok(request) => request,
-            Err(error) => {
-                return conclude(
-                    Err(error.into()),
-                    self.finish_message(input, challenge.id, worker_id, Conclusion::Failed)
+        let result = async {
+            let prepared = match preparation {
+                Preparation::Original(_) => {
+                    let (message, _, option) = self
+                        .change_message(input, challenge.id, &Change::Orphan)
+                        .await?;
+                    return Ok((Receipt::new(&message), option));
+                }
+                Preparation::Ready(prepared) => prepared,
+            };
+            let worker_id = prepared.message.worker_id();
+            let _allowance = match self.dispatch.capacity.try_acquire() {
+                Ok(allowance) => allowance,
+                Err(_) => {
+                    return self
+                        .finish_message(input, challenge.id, worker_id, Conclusion::Failed)
+                        .await;
+                }
+            };
+            let mut next_at = match timeout(TRANSACTION_BUDGET, async {
+                let next_at = self.dispatch.next_at.lock().await;
+                sleep_until(*next_at).await;
+                next_at
+            })
+            .await
+            {
+                Ok(next_at) => next_at,
+                Err(_) => {
+                    return self
+                        .finish_message(input, challenge.id, worker_id, Conclusion::Failed)
+                        .await;
+                }
+            };
+            let (message, sample, option) = self
+                .change_message(
+                    input,
+                    challenge.id,
+                    &Change::Claim {
+                        worker_id,
+                        code: &prepared.code,
+                    },
+                )
+                .await?;
+            let receipt = Receipt::new(&message);
+            if receipt.status != message::Status::Sending {
+                return Ok((receipt, option));
+            }
+            let result = async {
+                let date = sampled_date(sample)?;
+                let remaining = receipt.expires_at.signed_duration_since(date).num_seconds();
+                if remaining < 60 {
+                    return self
+                        .finish_message(input, challenge.id, worker_id, Conclusion::Failed)
+                        .await;
+                }
+                let request = match self.dispatch.client.request(
+                    message::request::Input {
+                        mobile: &input.mobile,
+                        code: &prepared.code,
+                        message_id: receipt.id,
+                        valid_seconds: remaining.unsigned_abs(),
+                        purpose: input.purpose(),
+                    },
+                    message::request::Context {
+                        date,
+                        nonce: Uuid::new_v4(),
+                    },
+                ) {
+                    Ok(request) => request,
+                    Err(error) => {
+                        return conclude(
+                            Err(error.into()),
+                            self.finish_message(input, challenge.id, worker_id, Conclusion::Failed)
+                                .await,
+                        );
+                    }
+                };
+                if receipt
+                    .expires_at
+                    .signed_duration_since(sampled_date(sample)?)
+                    < TimeDelta::seconds(60)
+                {
+                    return self
+                        .finish_message(input, challenge.id, worker_id, Conclusion::Failed)
+                        .await;
+                }
+                // Hold spacing through the actual call so scheduling delays cannot compress starts.
+                let started = std::time::Instant::now();
+                let attempt = request.execute().await;
+                let elapsed = started.elapsed();
+                *next_at = Instant::now() + std::time::Duration::from_secs(1);
+                drop(next_at);
+                let (conclusion, result) = match attempt {
+                    Err(cause) => (
+                        Conclusion::Unknown,
+                        Err(Error::MessageRequest { cause, elapsed }),
+                    ),
+                    Ok(attempt) => {
+                        let status = attempt.status();
+                        let elapsed = attempt.elapsed();
+                        match attempt.into_outcome() {
+                            message::response::Outcome::Accepted(_) => (Conclusion::Sent, Ok(())),
+                            message::response::Outcome::Rejected(_) => (Conclusion::Failed, Ok(())),
+                            message::response::Outcome::Unknown(reason) => (
+                                Conclusion::Unknown,
+                                Err(Error::MessageOutcome {
+                                    reason,
+                                    status,
+                                    elapsed,
+                                }),
+                            ),
+                        }
+                    }
+                };
+                conclude(
+                    result,
+                    self.finish_message(input, challenge.id, worker_id, conclusion)
                         .await,
-                );
+                )
             }
-        };
-        if receipt
-            .expires_at
-            .signed_duration_since(sampled_date(sample)?)
-            < TimeDelta::seconds(60)
-        {
-            return self
-                .finish_message(input, challenge.id, worker_id, Conclusion::Failed)
-                .await;
+            .await;
+            match (result, option) {
+                (Ok((receipt, Some(cause))), Some(transition)) => Ok((
+                    receipt,
+                    Some(Box::new(Error::MessageTransition { cause, transition })),
+                )),
+                (Ok((receipt, None)), option) => Ok((receipt, option)),
+                (Err(cause), Some(transition)) => Err(Error::MessageTransition {
+                    cause: Box::new(cause),
+                    transition,
+                }),
+                (result, None) => result,
+            }
         }
-        // Hold spacing through the actual call so scheduling delays cannot compress starts.
-        let attempt = request.execute().await;
-        *next_at = Instant::now() + std::time::Duration::from_secs(1);
-        drop(next_at);
-        let (conclusion, result) = match attempt {
-            Err(error) => (Conclusion::Unknown, Err(error.into())),
-            Ok(attempt) => match attempt.into_outcome() {
-                message::response::Outcome::Accepted(_) => (Conclusion::Sent, Ok(())),
-                message::response::Outcome::Rejected(_) => (Conclusion::Failed, Ok(())),
-                message::response::Outcome::Unknown(reason) => {
-                    (Conclusion::Unknown, Err(Error::MessageOutcome(reason)))
-                }
-            },
-        };
-        conclude(
-            result,
-            self.finish_message(input, challenge.id, worker_id, conclusion)
-                .await,
-        )
+        .await;
+        match result {
+            Ok((receipt, Some(cause))) => Ok((
+                receipt,
+                Some(match option {
+                    Some(preparation) => Box::new(Error::MessagePreparation { cause, preparation }),
+                    None => cause,
+                }),
+            )),
+            Ok((receipt, None)) => Ok((receipt, option)),
+            Err(cause) => Err(match option {
+                Some(preparation) => Error::MessagePreparation {
+                    cause: Box::new(cause),
+                    preparation,
+                },
+                None => cause,
+            }),
+        }
     }
 }
 
 fn conclude(
     result: Result<(), Error>,
-    persistence: Result<Receipt, Error>,
-) -> Result<Receipt, Error> {
+    persistence: Result<(Receipt, Option<Box<Error>>), Error>,
+) -> Result<(Receipt, Option<Box<Error>>), Error> {
     match (result, persistence) {
         (Ok(()), result) => result,
-        (Err(error), Ok(_)) => Err(error),
+        (Err(cause), Ok((_, Some(transition)))) => Err(Error::MessageTransition {
+            cause: Box::new(cause),
+            transition,
+        }),
+        (Err(error), Ok((_, None))) => Err(error),
         (Err(cause), Err(persistence)) => Err(Error::MessageConclusion {
             cause: Box::new(cause),
             persistence: Box::new(persistence),
@@ -327,7 +419,7 @@ fn sampled_date(sample: Sample) -> Result<DateTime<Utc>, Error> {
 
 #[cfg(test)]
 #[allow(clippy::expect_used)]
-pub(super) mod tests {
+pub(crate) mod tests {
     use std::{collections::BTreeMap, sync::Arc, time::Duration};
 
     use chrono::{DateTime, Utc};
@@ -335,27 +427,28 @@ pub(super) mod tests {
     use tokio_postgres::Row;
     use uuid::Uuid;
 
-    use super::{Change, Conclusion, Preparation, worker};
     use crate::{
-        database::Barrier,
+        database::{Barrier, transaction::EndError},
         identity::{
             authentication::{
-                self, Error, Input, Receipt, Service, Stage, dispatch, quota,
+                Error, Input, Receipt, Service, Stage, dispatch,
+                dispatch::{Change, Preparation},
+                quota,
                 verification::tests::{Database, Supplier, keys, server},
             },
             message,
             message::{
-                access_key::{AccessKey, Id, Secret},
+                Conclusion,
                 client::Client,
+                credentials::{AccessKey, Id, Secret},
                 settings::{Settings, Signature, TemplateCode, Templates},
+                worker,
             },
         },
         runtime::Context,
     };
 
-    pub(in crate::identity::authentication) fn client(
-        supplier: &fixture::supplier::Supplier,
-    ) -> Client {
+    pub(crate) fn client(supplier: &fixture::supplier::Supplier) -> Client {
         client_with_budget(supplier, 1000)
     }
 
@@ -381,7 +474,7 @@ pub(super) mod tests {
         .expect("loopback client")
     }
 
-    pub(in crate::identity::authentication) async fn unused_client() -> Client {
+    pub(crate) async fn unused_client() -> Client {
         client(&fixture::supplier::Supplier::start().await)
     }
 
@@ -400,14 +493,34 @@ pub(super) mod tests {
         supplier: &fixture::supplier::Supplier,
         limits: message::Limits,
     ) -> (Context, Service) {
-        let context = Context::new(database.connections(&database.user))
-            .await
-            .expect("context");
+        start_on(
+            database.connections(&database.user),
+            challenge,
+            supplier,
+            limits,
+        )
+        .await
+    }
+
+    async fn start_on(
+        connections: platform::database::Connections,
+        challenge: &Supplier,
+        supplier: &fixture::supplier::Supplier,
+        limits: message::Limits,
+    ) -> (Context, Service) {
+        let context = Context::new(connections).await.expect("context");
         let barrier = Barrier::begin(context.clone()).await.expect("barrier");
         let service = Service::start(
             barrier,
             keys(),
-            authentication::Settings::new(8, limits).expect("settings"),
+            crate::startup::Settings::new(
+                8,
+                limits,
+                crate::identity::authentication::verification::tests::session_settings(),
+                crate::registration::Limits::default(),
+                crate::identity::authentication::verification::tests::avatar_settings(),
+            )
+            .expect("settings"),
             challenge.client(),
             client(supplier),
         )
@@ -489,7 +602,228 @@ pub(super) mod tests {
         context.stop().await.expect("stop");
     }
 
-    pub(in crate::identity::authentication) fn proxied(
+    #[test]
+    #[tracing_test::traced_test]
+    fn pnvs_failures_reach_one_safe_final_event_even_after_waiter_cancellation() {
+        use tracing::Instrument;
+
+        let server = server();
+        Runtime::new().expect("runtime").block_on(async {
+            timeout(Duration::from_secs(40), async {
+                for mode in ["status", "timeout", "cancelled", "truncated", "json"] {
+                    let database = Database::initialized(Arc::clone(&server)).await;
+                    let mut challenge = Supplier::new().await;
+                    let mut supplier = fixture::supplier::Supplier::start().await;
+                    let (context, service) = start(&database, &challenge, &supplier, message::Limits::default()).await;
+                    let operation_id = Uuid::new_v4();
+                    let receipt = passed(&database, &service, &mut challenge, operation_id, "13800000000", "192.0.2.1").await;
+                    let sender = service.clone();
+                    let task = tokio::spawn(async move {
+                        sender.send(input(operation_id, "13800000000", "192.0.2.1")).await
+                    }.in_current_span());
+                    let request = supplier.request().await;
+                    let query = values(&request);
+                    let parameters: serde_json::Value = serde_json::from_str(&query["TemplateParam"]).expect("template parameters");
+                    let code = parameters["code"].as_str().expect("fixture code").to_owned();
+                    let observer = database.connections(&database.user).recover().await.expect("independent observer");
+                    let sql = "SELECT message.id, message.status, message.finished_at,
+                               (to_jsonb(message) - 'status' - 'finished_at')::text AS permit,
+                               to_jsonb(checks)::text AS proof, to_jsonb(claim)::text AS claim
+                               FROM identity.messages message
+                               JOIN identity.checks checks ON checks.id=message.id
+                               JOIN identity.claims claim ON claim.id=message.id
+                               WHERE message.challenge_id=$1";
+                    let original = observer.client().query_one(sql, &[&receipt.id]).await.expect("claimed before reply");
+                    assert_eq!(original.get::<_, &str>("status"), "sending");
+                    let completion = async {
+                        let expected = if mode == "cancelled" {
+                            let release = request.reply.hold(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{".to_vec()).await;
+                            task.abort();
+                            assert!(task.await.expect_err("waiter cancelled").is_cancelled());
+                            timeout(Duration::from_secs(5), async {
+                                loop {
+                                    let row = observer.client().query_one(sql, &[&receipt.id]).await.expect("cancelled work observed independently");
+                                    if row.get::<_, &str>("status") == "unknown" { break; }
+                                    tokio::task::yield_now().await;
+                                }
+                            }).await.expect("original work persisted despite cancelled waiter");
+                            release.send(()).expect("release supplier body after timeout");
+                            "MessageRequest { cause: Read { status: 200, timeout: true".to_owned()
+                        } else {
+                            let error = if mode == "timeout" {
+                                let release = request.reply.hold(b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{".to_vec()).await;
+                                let error = task.await.expect("sender task").expect_err("body timeout");
+                                release.send(()).expect("release timed out body");
+                                error
+                            } else {
+                                let bytes = match mode {
+                                "status" => b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n".to_vec(),
+                                "truncated" => b"HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n{".to_vec(),
+                                _ => b"HTTP/1.1 200 OK\r\nContent-Length: 24\r\n\r\nfictional-sensitive-body".to_vec(),
+                                };
+                                request.reply.send(bytes).expect("supplier response");
+                                task.await.expect("sender task").expect_err("unknown supplier result")
+                            };
+                            assert_eq!(error.failure(), crate::identity::authentication::Failure::Unavailable);
+                            match (&error, mode) {
+                                (Error::MessageOutcome { reason, status, elapsed }, "status") => {
+                                    assert!(matches!(reason, message::response::Unknown::HttpStatus));
+                                    assert_eq!(*status, reqwest::StatusCode::SERVICE_UNAVAILABLE);
+                                    assert!(*elapsed > Duration::ZERO);
+                                }
+                                (Error::MessageRequest { cause: message::request::Error::Read { status, source }, elapsed }, "truncated") => {
+                                    assert_eq!(*status, reqwest::StatusCode::OK);
+                                    assert!(!source.is_timeout());
+                                    assert!(*elapsed > Duration::ZERO);
+                                }
+                                (Error::MessageRequest { cause: message::request::Error::Read { status, source }, elapsed }, "timeout") => {
+                                    assert_eq!(*status, reqwest::StatusCode::OK);
+                                    assert!(source.is_timeout());
+                                    assert!(*elapsed >= Duration::from_secs(1));
+                                }
+                                (Error::MessageRequest { cause: message::request::Error::Decode { status, category, .. }, elapsed }, "json") => {
+                                    assert_eq!(*status, reqwest::StatusCode::OK);
+                                    assert_eq!(*category, serde_json::error::Category::Syntax);
+                                    assert!(*elapsed > Duration::ZERO);
+                                }
+                                _ => panic!("unexpected supplier classification: {error:?}"),
+                            }
+                            format!("{error:?}")
+                        };
+                        // Inspect durable facts before any replay can perform orphan recovery.
+                        let row = observer.client().query_one(sql, &[&receipt.id]).await.expect("independent original conclusion");
+                        assert_eq!(row.get::<_, &str>("status"), "unknown");
+                        let finished_at = row.get::<_, DateTime<Utc>>("finished_at");
+                        let id = row.get::<_, message::Id>("id");
+                        assert_eq!(id, original.get::<_, message::Id>("id"));
+                        for field in ["permit", "proof", "claim"] {
+                            assert_eq!(row.get::<_, &str>(field), original.get::<_, &str>(field));
+                        }
+                        let replay = service.send(input(operation_id, "13800000000", "192.0.2.1")).await.expect("original unknown replay");
+                        assert_eq!(replay.id(), id);
+                        assert_eq!(replay.status(), message::Status::Unknown { finished_at });
+                        stop(context, service).await;
+                        let operation = operation_id.to_string();
+                        logs_assert(|lines| {
+                            let events: Vec<_> = lines.iter().filter(|line| line.contains(&operation) && line.contains("authentication_completion")).collect();
+                            assert_eq!(events.len(), 1, "one final failure for {mode}: {events:?}");
+                            let event = events[0];
+                            assert!(event.contains(&expected), "{event}");
+                            assert!(event.contains("elapsed:"), "{event}");
+                            for secret in ["13800000000", code.as_str(), "FictionalAccessKey", "fictional-secret", "fictional-sensitive-body", "SendSmsVerifyCode", "TemplateParam", "Authorization"] {
+                                assert!(!event.contains(secret), "secret appeared in final event");
+                            }
+                            Ok(())
+                        });
+                    };
+                    tokio::select! {
+                        biased;
+                        _ = supplier.request() => panic!("failure, replay or drain repeated PNVS"),
+                        _ = challenge.request() => panic!("failure, replay or drain repeated verification"),
+                        () = completion => {}
+                    }
+                    observer.terminate().await.expect("observer ended");
+                    supplier.stop().await;
+                    challenge.stop().await;
+                }
+            }).await.expect("PNVS final diagnostics bounded");
+        });
+    }
+
+    #[test]
+    #[tracing_test::traced_test]
+    fn pnvs_final_event_preserves_supplier_and_unconfirmed_conclusion_causes() {
+        use fixture::database_proxy::{Fault, Proxy};
+        use tracing::Instrument;
+
+        let server = server();
+        Runtime::new().expect("runtime").block_on(async {
+            timeout(Duration::from_secs(30), async {
+                let database = Database::initialized(Arc::clone(&server)).await;
+                let mut challenge = Supplier::new().await;
+                let mut supplier = fixture::supplier::Supplier::start().await;
+                let proxy = Proxy::start(&server).await;
+                let context = Context::new(proxied(&database, &proxy)).await.expect("context");
+                let service = Service::start(
+                    Barrier::begin(context.clone()).await.expect("barrier"), keys(),
+                    crate::startup::Settings::new(4, message::Limits::default(),
+                        crate::identity::authentication::verification::tests::session_settings(),
+                        crate::registration::Limits::default(),
+                        crate::identity::authentication::verification::tests::avatar_settings()).expect("settings"),
+                    challenge.client(), client(&supplier),
+                ).await.expect("service");
+                let operation_id = Uuid::new_v4();
+                let receipt = passed(&database, &service, &mut challenge, operation_id, "13800000000", "192.0.2.1").await;
+                let sender = service.clone();
+                let task = tokio::spawn(async move {
+                    sender.send(input(operation_id, "13800000000", "192.0.2.1")).await
+                }.in_current_span());
+                let request = supplier.request().await;
+                // A received PNVS request proves the earlier claim already committed.
+                proxy.arm(Fault::UnknownCommit);
+                request.reply.send(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n".to_vec()).expect("503 response");
+                let completion = async {
+                    timeout(Duration::from_secs(5), proxy.intercepted()).await.expect("conclusion commit intercepted");
+                    let error = task.await.expect("sender task").expect_err("conclusion outcome unresolved");
+                    assert_eq!(error.failure(), crate::identity::authentication::Failure::Unknown);
+                    let Error::MessageConclusion { cause, persistence } = &error else { panic!("both failures retained: {error:?}"); };
+                    assert!(matches!(cause.as_ref(), Error::MessageOutcome { reason: message::response::Unknown::HttpStatus, status: reqwest::StatusCode::SERVICE_UNAVAILABLE, .. }));
+                    let Error::Unknown { cause: write, recovery } = persistence.as_ref() else { panic!("both persistence attempts retained: {persistence:?}"); };
+                    assert!(format!("{write:?}").contains("Query"));
+                    assert!(format!("{recovery:?}").contains("Query"));
+                    proxy.release();
+                    let observer = database.connections(&database.user).recover().await.expect("independent observer");
+                    let row = timeout(Duration::from_secs(5), async {
+                        loop {
+                            let row = observer.client().query_one(
+                                "SELECT message.id, message.status, message.finished_at,
+                                 checks.id AS check_id, claim.id AS claim_id,
+                                 message.worker_id, claim.worker_id AS claim_worker_id
+                                 FROM identity.messages message
+                                 JOIN identity.checks checks ON checks.id=message.id
+                                 JOIN identity.claims claim ON claim.id=message.id
+                                 WHERE message.challenge_id=$1", &[&receipt.id]
+                            ).await.expect("independent late commit observation");
+                            if row.get::<_, &str>("status") == "unknown" { break row; }
+                            tokio::task::yield_now().await;
+                        }
+                    }).await.expect("original conclusion committed before replay");
+                    let id = row.get::<_, message::Id>("id");
+                    assert_eq!(row.get::<_, message::Id>("check_id"), id);
+                    assert_eq!(row.get::<_, message::Id>("claim_id"), id);
+                    assert_eq!(row.get::<_, worker::Id>("worker_id"), row.get::<_, worker::Id>("claim_worker_id"));
+                    let replay = service.send(input(operation_id, "13800000000", "192.0.2.1")).await.expect("original unknown replay");
+                    assert_eq!(replay.id(), id);
+                    assert_eq!(replay.status(), message::Status::Unknown { finished_at: row.get("finished_at") });
+                    stop(context, service).await;
+                    let operation = operation_id.to_string();
+                    logs_assert(|lines| {
+                        let events: Vec<_> = lines.iter().filter(|line| line.contains(&operation) && line.contains("authentication_completion")).collect();
+                        assert_eq!(events.len(), 1, "{events:?}");
+                        let event = events[0];
+                        assert!(event.contains(&format!("{error:?}")), "{event}");
+                        assert!(event.contains("elapsed:"));
+                        assert!(!event.contains("13800000000"));
+                        assert!(!event.contains("fictional-secret"));
+                        assert!(!event.contains("SendSmsVerifyCode"));
+                        Ok(())
+                    });
+                    observer.terminate().await.expect("observer ended");
+                };
+                tokio::select! {
+                    biased;
+                    _ = supplier.request() => panic!("conclusion recovery, replay or drain repeated PNVS"),
+                    _ = challenge.request() => panic!("conclusion recovery, replay or drain repeated verification"),
+                    () = completion => {}
+                }
+                supplier.stop().await;
+                challenge.stop().await;
+                proxy.stop().await;
+            }).await.expect("combined PNVS diagnostic bounded");
+        });
+    }
+
+    pub(crate) fn proxied(
         database: &Database,
         proxy: &fixture::database_proxy::Proxy,
     ) -> platform::database::Connections {
@@ -513,12 +847,123 @@ pub(super) mod tests {
     }
 
     #[test]
+    fn known_refusals_preserve_rollback_failures_without_new_effects() {
+        use fixture::database_proxy::{Fault, Proxy};
+
+        use crate::identity::authentication::{Failure, session};
+
+        let server = server();
+        Runtime::new().expect("runtime").block_on(async {
+            timeout(Duration::from_secs(30), async {
+                let database = Database::initialized(Arc::clone(&server)).await;
+                let mut challenge = Supplier::new().await;
+                let mut supplier = fixture::supplier::Supplier::start().await;
+                let proxy = Proxy::start(&server).await;
+                let context = Context::new(proxied(&database, &proxy)).await.expect("context");
+                let service = Service::start(
+                    Barrier::begin(context.clone()).await.expect("barrier"),
+                    keys(),
+                    crate::startup::Settings::new(4, message::Limits::default(),
+                        crate::identity::authentication::verification::tests::session_settings(),
+                        crate::registration::Limits::default(),
+                        crate::identity::authentication::verification::tests::avatar_settings()).expect("settings"),
+                    challenge.client(), client(&supplier),
+                ).await.expect("service");
+                let first = Uuid::new_v4();
+                let receipt = passed(&database, &service, &mut challenge, first, "13800000000", "192.0.2.1").await;
+                let original = input(first, "13800000000", "192.0.2.1");
+                let (Preparation::Ready(prepared), None) = service.0.prepare(&original, receipt).await.expect("first permit") else { panic!("new permit"); };
+                let retry_at = prepared.message.created_at() + chrono::TimeDelta::seconds(60);
+                service.0.finish_message(&original, receipt.id, prepared.message.worker_id(), Conclusion::Failed).await.expect("failed send retains quota");
+                let second = Uuid::new_v4();
+                passed(&database, &service, &mut challenge, second, "13800000000", "192.0.2.1").await;
+                let absent_message = message::Id::new();
+                let observer = database.connections(&database.user).recover().await.expect("independent observer");
+                let snapshot = "SELECT jsonb_build_object(
+                    'challenges', (SELECT jsonb_agg(to_jsonb(challenge) ORDER BY id) FROM identity.challenges challenge),
+                    'messages', (SELECT jsonb_agg(to_jsonb(message) ORDER BY id) FROM identity.messages message),
+                    'checks', (SELECT jsonb_agg(to_jsonb(checks) ORDER BY id) FROM identity.checks checks),
+                    'claims', (SELECT jsonb_agg(to_jsonb(claim) ORDER BY id) FROM identity.claims claim),
+                    'authentications', (SELECT jsonb_agg(to_jsonb(authentication) ORDER BY id) FROM identity.authentications authentication)
+                )::text";
+                let before: String = observer.client().query_one(snapshot, &[]).await.expect("initial facts").get(0);
+                let held = context.connections().lease().await.expect("occupy other pool slot");
+                for case in ["challenge", "quota", "session"] {
+                    for failed in [false, true] {
+                        let lease = context.connections().lease().await.expect("selected backend");
+                        let pid: i32 = lease.client().query_one("SELECT pg_backend_pid()", &[]).await.expect("backend PID").get(0);
+                        lease.release();
+                        if failed { proxy.arm(Fault::RejectedRollback); }
+                        let (result, expected) = match case {
+                            "challenge" => {
+                                let mut request = input(second, "13800000000", "192.0.2.1");
+                                request.token = "different-fictional-token".parse().expect("wrong proof");
+                                (service.verify(request).await.map(|_| ()), Failure::Proof)
+                            }
+                            "quota" => (service.send(input(second, "13800000000", "192.0.2.1")).await.map(|_| ()), Failure::Quota { retry_at }),
+                            _ => (service.create_session(session::tests::input(second, absent_message, "13800000000", session::tests::CODE)).await.map(|_| ()), Failure::Verification),
+                        };
+                        let error = result.expect_err("known refusal");
+                        if failed {
+                            timeout(Duration::from_secs(2), proxy.intercepted()).await.expect("actual ROLLBACK intercepted");
+                            assert_eq!(error.failure(), Failure::Unavailable);
+                            let error = match error {
+                                Error::Combined { cause, termination } => {
+                                    assert!(matches!(termination, platform::database::Error::Postgres(_)), "{termination:?}");
+                                    *cause
+                                }
+                                error => error,
+                            };
+                            let Error::Rollback { cause, rollback: EndError::Rollback(rollback) } = error else { panic!("refusal and actual rollback query failure required: {error:?}"); };
+                            assert_eq!(cause.failure(), expected);
+                            assert!(rollback.0.is_closed(), "{rollback:?}");
+                        } else {
+                            assert_eq!(error.failure(), expected);
+                        }
+                        // Independent observation precedes the next request or replay.
+                        let after: String = observer.client().query_one(snapshot, &[]).await.expect("facts after refusal").get(0);
+                        assert_eq!(before, after);
+                        if failed {
+                            timeout(Duration::from_secs(2), async {
+                                loop {
+                                    let gone: bool = observer.client().query_one("SELECT NOT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid=$1)", &[&pid]).await.expect("old backend lifetime").get(0);
+                                    if gone { break; }
+                                    tokio::task::yield_now().await;
+                                }
+                            }).await.expect("discarded backend ended");
+                        }
+                        let lease = context.connections().lease().await.expect("next backend");
+                        let next: i32 = lease.client().query_one("SELECT pg_backend_pid()", &[]).await.expect("next PID").get(0);
+                        assert_eq!(pid == next, !failed);
+                        lease.release();
+                    }
+                }
+                held.release();
+                observer.terminate().await.expect("observer ended");
+                stop(context, service).await;
+                assert!(timeout(Duration::from_millis(50), challenge.request()).await.is_err());
+                assert!(timeout(Duration::from_millis(50), supplier.request()).await.is_err());
+                challenge.stop().await;
+                supplier.stop().await;
+                proxy.stop().await;
+            }).await.expect("bounded refusals and cleanup");
+        });
+    }
+
+    #[test]
     fn permit_recovery_confirms_original_code_before_sending_once() {
         use fixture::database_proxy::{Fault, Proxy};
         let server = server();
-        Runtime::new().expect("runtime").block_on(async {
-            for fault in [Fault::LostCommit, Fault::DelayedCommit, Fault::RolledBack] {
-                let database = Database::new(Arc::clone(&server)).await;
+        tokio::runtime::Builder::new_current_thread().enable_all().build().expect("actual driver scheduling").block_on(async {
+            for (fault, option) in [
+                (Fault::LostCommit, None),
+                (Fault::DelayedCommit, None),
+                (Fault::RolledBack, None),
+                (Fault::DelayedCommit, Some(Fault::LostReadCommit)),
+                (Fault::DelayedCommit, Some(Fault::ReadCommitTermination)),
+            ] {
+                let driver = matches!(option, Some(Fault::ReadCommitTermination));
+                let database = Database::initialized(Arc::clone(&server)).await;
                 let mut challenge = Supplier::new().await;
                 let mut supplier = fixture::supplier::Supplier::start().await;
                 let proxy = Proxy::start(&server).await;
@@ -528,7 +973,7 @@ pub(super) mod tests {
                 let service = Service::start(
                     Barrier::begin(context.clone()).await.expect("barrier"),
                     keys(),
-                    authentication::Settings::new(4, message::Limits::default())
+                    crate::startup::Settings::new(4, message::Limits::default(), crate::identity::authentication::verification::tests::session_settings(), crate::registration::Limits::default(), crate::identity::authentication::verification::tests::avatar_settings())
                         .expect("settings"),
                     challenge.client(),
                     client(&supplier),
@@ -592,7 +1037,7 @@ pub(super) mod tests {
                 let delayed = matches!(fault, Fault::DelayedCommit);
                 let rolled_back = matches!(fault, Fault::RolledBack);
                 proxy.arm(fault);
-                let task = sending(&service, operation_id, "13800000000", "192.0.2.1");
+                let mut task = sending(&service, operation_id, "13800000000", "192.0.2.1");
                 timeout(Duration::from_secs(5), proxy.intercepted())
                     .await
                     .expect("permit COMMIT intercepted");
@@ -649,7 +1094,17 @@ pub(super) mod tests {
                 } else {
                     spacing
                 };
+                let cleanup = option.is_some();
+                if let Some(fault) = option {
+                    proxy.arm(fault);
+                }
                 proxy.release();
+                if cleanup {
+                    timeout(Duration::from_secs(5), proxy.intercepted())
+                        .await
+                        .expect("completed permit readback COMMIT intercepted");
+                    proxy.release();
+                }
                 if rolled_back {
                     drop(spacing);
                     tokio::select! {
@@ -687,16 +1142,17 @@ pub(super) mod tests {
                     assert_eq!(original.get::<_, Option<worker::Id>>("claim_worker_id"), None);
                     assert_eq!(original.get::<_, Option<DateTime<Utc>>>("claimed_at"), None);
                     assert_eq!(original.get::<_, DateTime<Utc>>("check_expires_at"), expires_at);
-                    assert!(!task.is_finished());
                     let unchanged = |row: &Row| {
                         for column in ["permit", "proof"] {
                             assert_eq!(row.get::<_, &str>(column), original.get::<_, &str>(column));
                         }
                     };
                     drop(spacing);
-                    let request = timeout(Duration::from_secs(5), supplier.request())
-                        .await
-                        .expect("one PNVS call after permit recovery");
+                    let request = tokio::select! {
+                        result = &mut task => panic!("known permit must remain sendable after readback cleanup: {result:?}"),
+                        result = timeout(Duration::from_secs(5), supplier.request()) =>
+                            result.expect("one PNVS call after permit recovery"),
+                    };
                     let claimed = read().await.expect("claim committed before the PNVS call");
                     unchanged(&claimed);
                     assert_eq!(claimed.get::<_, &str>("status"), "sending");
@@ -721,28 +1177,33 @@ pub(super) mod tests {
                             .verify(message_id, &code, &original.get("hash"))
                             .expect("sent code matches the original permit")
                     );
-                    reply(request, "sent");
+                    if driver {
+                        request.reply.send(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec()).expect("supplier 503");
+                    } else {
+                        reply(request, "sent");
+                    }
                     tokio::select! {
                         biased;
                         _ = supplier.request() => panic!("permit recovery and replay must not resend"),
                         _ = async {
-                            let conclusion = timeout(Duration::from_secs(5), task)
+                            let result = timeout(Duration::from_secs(5), task)
                                 .await
                                 .expect("sender bounded")
-                                .expect("sender")
-                                .expect("original sender finishes");
+                                .expect("sender");
+                            let option = if driver {
+                                let Error::MessagePreparation { cause, preparation } = result.expect_err("supplier failure retains preparation cleanup") else { panic!("both actual errors required") };
+                                assert!(matches!(*cause, Error::MessageOutcome { reason: message::response::Unknown::HttpStatus, status: reqwest::StatusCode::SERVICE_UNAVAILABLE, .. }));
+                                assert!(matches!(*preparation, Error::MessageReadback { commit: Ok(()), termination: Err(platform::database::Error::Postgres(ref error)), .. } if error.code()==Some(&tokio_postgres::error::SqlState::CONNECTION_FAILURE)));
+                                None
+                            } else { Some(result.expect("original sender finishes")) };
                             // Read before replay so another request cannot repair the facts.
                             let stored = read().await.expect("original sender saved its conclusion");
                             unchanged(&stored);
                             assert_eq!(stored.get::<_, worker::Id>("claim_worker_id"), worker_id);
                             assert_eq!(stored.get::<_, DateTime<Utc>>("claimed_at"), claimed_at);
-                            assert_eq!(stored.get::<_, &str>("status"), "sent");
+                            assert_eq!(stored.get::<_, &str>("status"), if driver {"unknown"} else {"sent"});
                             let finished_at: DateTime<Utc> = stored.get("finished_at");
                             assert!(finished_at >= claimed_at);
-                            assert_eq!(conclusion.id(), message_id);
-                            assert_eq!(conclusion.created_at(), created_at);
-                            assert_eq!(conclusion.expires_at(), expires_at);
-                            assert_eq!(conclusion.status(), message::Status::Sent { finished_at });
                             let replay = timeout(
                                 Duration::from_secs(5),
                                 service.send(input(operation_id, "13800000000", "192.0.2.1")),
@@ -750,15 +1211,138 @@ pub(super) mod tests {
                             .await
                             .expect("replay bounded")
                             .expect("original result");
-                            assert_eq!(replay, conclusion);
+                            assert_eq!(replay.id(), message_id);
+                            assert_eq!(replay.created_at(), created_at);
+                            assert_eq!(replay.expires_at(), expires_at);
+                            assert_eq!(replay.status(), if driver {message::Status::Unknown {finished_at}} else {message::Status::Sent {finished_at}});
+                            if let Some(conclusion) = option { assert_eq!(replay, conclusion); }
                             stop(context, service).await;
                         } => {}
                     }
                 }
                 observer.terminate().await.expect("permit observer ends");
+                assert!(timeout(Duration::from_millis(50), challenge.request()).await.is_err());
+                assert!(timeout(Duration::from_millis(50), supplier.request()).await.is_err());
                 challenge.stop().await;
+                supplier.stop().await;
                 proxy.stop().await;
             }
+        });
+    }
+
+    async fn waiting_permit(client: &tokio_postgres::Client) -> (i32, i32) {
+        timeout(Duration::from_secs(3), async { loop {
+            // Independent LP(challenge/operation, nil UUID) SHA-256 prefix.
+            if let Some(row) = client.query_opt("SELECT waiting.pid, held.pid FROM pg_locks waiting JOIN pg_locks held USING(locktype,database,classid,objid,objsubid) WHERE waiting.locktype='advisory' AND NOT waiting.granted AND held.granted AND waiting.mode='ExclusiveLock' AND held.mode='ExclusiveLock' AND waiting.classid=2647903637::oid AND waiting.objid=2112932477::oid AND waiting.objsubid=1 AND waiting.database=(SELECT oid FROM pg_database WHERE datname=current_database()) AND held.pid=ANY(pg_blocking_pids(waiting.pid))", &[]).await.expect("exact permit operation lock") {
+                break (row.get(0), row.get(1));
+            }
+            tokio::task::yield_now().await;
+        }}).await.expect("permit recovery waits for original write")
+    }
+
+    #[test]
+    fn preparation_readback_distinguishes_absence_from_incomplete_qualification() {
+        use fixture::database_proxy::{Fault, Proxy};
+
+        let server = server();
+        Runtime::new().expect("runtime").block_on(async {
+            timeout(Duration::from_secs(20), async {
+                for absent in [true, false] {
+                    let database = Database::initialized(Arc::clone(&server)).await;
+                    let mut challenge = Supplier::new().await;
+                    let mut supplier = fixture::supplier::Supplier::start().await;
+                    let proxy = Proxy::start(&server).await;
+                    let context = Context::new(proxied(&database, &proxy)).await.expect("context");
+                    let service = Service::start(Barrier::begin(context.clone()).await.expect("barrier"), keys(), crate::startup::Settings::new(4, message::Limits::default(), crate::identity::authentication::verification::tests::session_settings(), crate::registration::Limits::default(), crate::identity::authentication::verification::tests::avatar_settings()).expect("settings"), challenge.client(), client(&supplier)).await.expect("service");
+                    let receipt = passed(&database, &service, &mut challenge, Uuid::nil(), "13800000000", "192.0.2.1").await;
+                    let observer = database.connections(&database.user).recover().await.expect("observer");
+                    proxy.arm(Fault::DelayedCommit);
+                    let task = sending(&service, Uuid::nil(), "13800000000", "192.0.2.1");
+                    timeout(Duration::from_secs(3), proxy.intercepted()).await.expect("permit write held");
+                    let (recovery, original) = waiting_permit(observer.client()).await;
+                    proxy.arm(if absent { Fault::LostReadCommit } else { Fault::StalledQuery });
+                    if absent {
+                        let admin = database.connections("postgres").recover().await.expect("isolated backend control");
+                        assert!(admin.client().query_one("SELECT pg_terminate_backend($1)", &[&original]).await.expect("roll back original held write").get::<_,bool>(0));
+                        admin.terminate().await.expect("admin ended");
+                    }
+                    proxy.release();
+                    timeout(Duration::from_secs(3), proxy.intercepted()).await.expect("readback fault");
+                    if absent { proxy.release(); }
+                    let error = tokio::select! {
+                        _ = supplier.request() => panic!("absence or incomplete qualification must not call PNVS"),
+                        result = timeout(Duration::from_secs(12), task) => result.expect("readback transaction deadline").expect("worker").expect_err("no send qualification"),
+                    };
+                    if absent {
+                        let Error::NotCommitted { cause } = error else { panic!("known absence: {error:?}") };
+                        assert!(matches!(*cause, Error::MessageReadback { commit: Err(EndError::Commit(ref cause)), .. } if cause.0.is_closed()));
+                    } else {
+                        let Error::Unknown { recovery, .. } = error else { panic!("incomplete readback: {error:?}") };
+                        let cause = match *recovery { Error::Combined { cause, .. } => *cause, cause => cause };
+                        assert!(matches!(cause, Error::Timeout(_)), "necessary read did not finish: {cause:?}");
+                        assert!(service.0.registry.ready().is_ok(), "ordinary read timeout is limited to this operation");
+                    }
+                    let row = observer.client().query_one("SELECT (SELECT count(*) FROM identity.messages WHERE challenge_id=$1) AS messages, (SELECT count(*) FROM identity.checks) AS checks, (SELECT count(*) FROM identity.claims) AS claims", &[&receipt.id()]).await.expect("durable facts before replay or next work");
+                    assert_eq!(row.get::<_,i64>("messages"), i64::from(!absent));
+                    assert_eq!(row.get::<_,i64>("checks"), i64::from(!absent));
+                    assert_eq!(row.get::<_,i64>("claims"), 0);
+                    proxy.release();
+                    timeout(Duration::from_secs(3), async { loop {
+                        if observer.client().query_one("SELECT NOT EXISTS(SELECT 1 FROM pg_stat_activity WHERE pid=$1 OR pid=$2)", &[&original,&recovery]).await.expect("actual backends end").get::<_,bool>(0) { break; }
+                        tokio::task::yield_now().await;
+                    }}).await.expect("original and readback backends ended");
+                    stop(context, service).await;
+                    assert!(timeout(Duration::from_millis(30), challenge.request()).await.is_err());
+                    assert!(timeout(Duration::from_millis(30), supplier.request()).await.is_err());
+                    observer.terminate().await.expect("observer ended"); challenge.stop().await; supplier.stop().await; proxy.stop().await;
+                }
+            }).await.expect("absence and qualification cases bounded");
+        });
+    }
+
+    #[test]
+    fn original_message_read_cleanup_keeps_terminal_and_unclaimed_facts() {
+        use fixture::database_proxy::{Fault, Proxy};
+
+        let server = server();
+        Runtime::new().expect("runtime").block_on(async {
+            timeout(Duration::from_secs(15), async {
+                for terminal in [false, true] {
+                    let database = Database::initialized(Arc::clone(&server)).await;
+                    let mut challenge = Supplier::new().await;
+                    let mut supplier = fixture::supplier::Supplier::start().await;
+                    let proxy = Proxy::start(&server).await;
+                    let context = Context::new(proxied(&database, &proxy)).await.expect("context");
+                    let service = Service::start(Barrier::begin(context.clone()).await.expect("barrier"), keys(), crate::startup::Settings::new(4, message::Limits::default(), crate::identity::authentication::verification::tests::session_settings(), crate::registration::Limits::default(), crate::identity::authentication::verification::tests::avatar_settings()).expect("settings"), challenge.client(), client(&supplier)).await.expect("service");
+                    let receipt = passed(&database, &service, &mut challenge, Uuid::nil(), "13800000000", "192.0.2.1").await;
+                    let input = input(Uuid::nil(), "13800000000", "192.0.2.1");
+                    let (Preparation::Ready(prepared), None) = service.0.prepare(&input, receipt).await.expect("new permit") else { panic!("new permit") };
+                    if terminal { service.0.finish_message(&input, receipt.id(), prepared.message.worker_id(), Conclusion::Failed).await.expect("known terminal"); }
+                    let observer = database.connections(&database.user).recover().await.expect("observer");
+                    let sql = "SELECT (to_jsonb(message)-'status'-'finished_at')::text, to_jsonb(check_row)::text, to_jsonb(claim)::text, message.status, message.finished_at FROM identity.messages message JOIN identity.checks check_row ON check_row.id=message.id LEFT JOIN identity.claims claim ON claim.id=message.id WHERE message.challenge_id=$1";
+                    let before = observer.client().query_one(sql, &[&receipt.id()]).await.expect("original durable graph");
+                    proxy.arm(Fault::LostReadCommit);
+                    let (message, Some(cause)) = service.0.send_message(&input, receipt).await.expect("known original despite initial read cleanup") else { panic!("original with diagnostic") };
+                    let cause = match *cause { Error::Combined { cause, .. } => *cause, cause => cause };
+                    assert!(matches!(cause, Error::Query(cause) if cause.0.is_closed()));
+                    assert_eq!(message.id(), prepared.message.id());
+                    assert!(matches!(message.status(), message::Status::Failed { .. }));
+                    let after = observer.client().query_one(sql, &[&receipt.id()]).await.expect("independent unchanged facts before replay");
+                    for column in 0..3 { assert_eq!(before.get::<_,Option<String>>(column), after.get::<_,Option<String>>(column)); }
+                    assert_eq!(after.get::<_,&str>(3), "failed");
+                    if terminal { assert_eq!(before.get::<_,DateTime<Utc>>(4), after.get::<_,DateTime<Utc>>(4)); }
+                    else { assert!(before.get::<_,Option<DateTime<Utc>>>(4).is_none()); assert!(after.get::<_,Option<DateTime<Utc>>>(4).is_some()); }
+                    proxy.release();
+                    let replay = service.send(input).await.expect("original terminal or orphan closure");
+                    assert_eq!(replay.id(), prepared.message.id());
+                    assert!(matches!(replay.status(), message::Status::Failed { .. }));
+                    assert_eq!(observer.client().query_one("SELECT count(*) FROM identity.claims", &[]).await.expect("no transferred claim").get::<_,i64>(0), 0);
+                    stop(context, service).await;
+                    assert!(timeout(Duration::from_millis(30), challenge.request()).await.is_err());
+                    assert!(timeout(Duration::from_millis(30), supplier.request()).await.is_err());
+                    observer.terminate().await.expect("observer ended"); challenge.stop().await; supplier.stop().await; proxy.stop().await;
+                }
+            }).await.expect("original read cleanup bounded");
         });
     }
 
@@ -766,9 +1350,16 @@ pub(super) mod tests {
     fn conclusion_recovery_preserves_original_supplier_result() {
         use fixture::database_proxy::{Fault, Proxy};
         let server = server();
-        Runtime::new().expect("runtime").block_on(async {
-            for fault in [Fault::LostCommit, Fault::DelayedCommit, Fault::RolledBack] {
-                let database = Database::new(Arc::clone(&server)).await;
+        tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime").block_on(async {
+            for (fault, option) in [
+                (Fault::LostCommit, None),
+                (Fault::DelayedCommit, None),
+                (Fault::RolledBack, None),
+                (Fault::DelayedCommit, Some(Fault::LostReadCommit)),
+                (Fault::DelayedCommit, Some(Fault::StalledReadCommit)),
+                (Fault::DelayedCommit, Some(Fault::ReadCommitTermination)),
+            ] {
+                let database = Database::initialized(Arc::clone(&server)).await;
                 let mut challenge = Supplier::new().await;
                 let mut supplier = fixture::supplier::Supplier::start().await;
                 let proxy = Proxy::start(&server).await;
@@ -778,7 +1369,14 @@ pub(super) mod tests {
                 let service = Service::start(
                     Barrier::begin(context.clone()).await.expect("barrier"),
                     keys(),
-                    authentication::Settings::new(4, message::Limits::default()).expect("settings"),
+                    crate::startup::Settings::new(
+                        4,
+                        message::Limits::default(),
+                        crate::identity::authentication::verification::tests::session_settings(),
+                        crate::registration::Limits::default(),
+                        crate::identity::authentication::verification::tests::avatar_settings(),
+                    )
+                    .expect("settings"),
                     challenge.client(),
                     client(&supplier),
                 )
@@ -827,40 +1425,49 @@ pub(super) mod tests {
                     None
                 );
                 let delayed = matches!(fault, Fault::DelayedCommit);
+                let readback = option.is_some();
+                let stalled = matches!(option, Some(Fault::StalledReadCommit));
+                let driver = matches!(option, Some(Fault::ReadCommitTermination));
+                let unavailable = stalled || driver;
                 proxy.arm(fault);
-                reply(request, "sent");
+                if unavailable {
+                    request.reply.send(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec()).expect("supplier 503");
+                } else {
+                    reply(request, "sent");
+                }
                 let recovery = async {
                     timeout(Duration::from_secs(5), proxy.intercepted())
                         .await
                         .expect("conclusion COMMIT intercepted");
-                    if delayed {
+                    let option = if delayed {
                         // Independent SHA-256 vector: E("challenge/operation", nil UUID
                         // bytes) starts with 9dd3cd95 7df0ca7d. PostgreSQL exposes the
                         // bigint lock's high/low halves as classid/objid, with objsubid=1.
                         let lock = (2_647_903_637_u32, 2_112_932_477_u32);
-                        timeout(Duration::from_secs(5), async {
+                        let backends = timeout(Duration::from_secs(5), async {
                             loop {
-                                let waiting: bool = observer
+                                let option = observer
                                     .client()
-                                    .query_one(
-                                        "SELECT EXISTS (
-                                        SELECT 1 FROM pg_catalog.pg_locks
-                                        WHERE locktype = 'advisory' AND NOT granted
-                                          AND mode = 'ExclusiveLock'
-                                          AND classid = $1 AND objid = $2 AND objsubid = 1
-                                          AND database = (
+                                    .query_opt(
+                                        "SELECT waiting.pid AS recovery, held.pid AS original
+                                        FROM pg_catalog.pg_locks waiting
+                                        JOIN pg_catalog.pg_locks held
+                                          USING (locktype, database, classid, objid, objsubid, mode)
+                                        WHERE waiting.locktype = 'advisory' AND NOT waiting.granted
+                                          AND held.granted AND waiting.mode = 'ExclusiveLock'
+                                          AND waiting.classid = $1 AND waiting.objid = $2
+                                          AND waiting.objsubid = 1
+                                          AND held.pid = ANY(pg_catalog.pg_blocking_pids(waiting.pid))
+                                          AND waiting.database = (
                                               SELECT oid FROM pg_catalog.pg_database
                                               WHERE datname = current_database()
-                                          )
-                                          AND cardinality(pg_catalog.pg_blocking_pids(pid)) > 0
-                                    )",
+                                          )",
                                         &[&lock.0, &lock.1],
                                     )
                                     .await
-                                    .expect("conclusion recovery lock observation")
-                                    .get(0);
-                                if waiting {
-                                    break;
+                                    .expect("conclusion recovery lock observation");
+                                if let Some(row) = option {
+                                    break (row.get::<_, i32>("original"), row.get::<_, i32>("recovery"));
                                 }
                                 tokio::task::yield_now().await;
                             }
@@ -875,13 +1482,21 @@ pub(super) mod tests {
                         assert_eq!(pending.get::<_, &str>("status"), "sending");
                         assert_eq!(pending.get::<_, Option<DateTime<Utc>>>("finished_at"), None);
                         assert!(!task.is_finished());
-                    }
+                        assert_ne!(backends.0, backends.1);
+                        if let Some(fault) = option {
+                            proxy.arm(fault);
+                        }
+                        Some(backends)
+                    } else { None };
                     proxy.release();
-                    let conclusion = timeout(Duration::from_secs(5), task)
+                    if readback {
+                        timeout(Duration::from_secs(5), proxy.intercepted()).await.expect("readback COMMIT intercepted");
+                        if !stalled { proxy.release(); }
+                    }
+                    let conclusion = timeout(Duration::from_secs(15), task)
                         .await
                         .expect("recovery bounded")
-                        .expect("worker")
-                        .expect("retained result");
+                        .expect("worker");
                     // Inspect before replay so a later request cannot repair the conclusion.
                     let stored = observer
                         .client()
@@ -892,24 +1507,51 @@ pub(super) mod tests {
                     assert_eq!(stored.get::<_, worker::Id>("worker_id"), worker_id);
                     assert_eq!(stored.get::<_, worker::Id>("claim_worker_id"), worker_id);
                     assert_eq!(stored.get::<_, DateTime<Utc>>("claimed_at"), claimed_at);
-                    assert_eq!(stored.get::<_, &str>("status"), "sent");
+                    assert_eq!(stored.get::<_, &str>("status"), if unavailable { "unknown" } else { "sent" });
                     let finished_at: DateTime<Utc> = stored.get("finished_at");
                     assert!(finished_at >= claimed_at);
-                    assert_eq!(conclusion.id(), message_id);
-                    assert_eq!(conclusion.status(), message::Status::Sent { finished_at });
-                    for (column, actual) in [
-                        ("created_at", conclusion.created_at()),
-                        ("expires_at", conclusion.expires_at()),
-                    ] {
+                    let expected = if unavailable { message::Status::Unknown { finished_at } } else { message::Status::Sent { finished_at } };
+                    if unavailable {
+                        let error = conclusion.expect_err("original supplier failure survives known persistence");
+                        assert_eq!(error.failure(), crate::identity::authentication::Failure::Unavailable);
+                        let Error::MessageTransition { cause, transition } = error else { panic!("supplier and cleanup errors must remain") };
+                        assert!(matches!(*cause, Error::MessageOutcome { reason: message::response::Unknown::HttpStatus, status: reqwest::StatusCode::SERVICE_UNAVAILABLE, .. }));
+                        let Error::MessageReadback { cause, commit, termination } = *transition else { panic!("readback causes remain typed") };
+                        assert!(matches!(*cause, Error::Query(ref error) if error.0.is_closed()) || matches!(*cause, Error::Combined { cause, .. } if matches!(*cause, Error::Query(ref error) if error.0.is_closed())));
+                        if stalled {
+                            assert!(matches!(commit, Err(EndError::CommitTimeout(_))));
+                            assert!(termination.is_ok());
+                        } else {
+                            assert!(commit.is_ok());
+                            assert!(matches!(termination, Err(platform::database::Error::Postgres(ref error)) if error.code()==Some(&tokio_postgres::error::SqlState::CONNECTION_FAILURE)));
+                        }
+                    } else {
+                        let conclusion = conclusion.expect("the independently confirmed conclusion survives readback cleanup");
+                        assert_eq!(conclusion.id(), message_id);
+                        assert_eq!(conclusion.status(), expected);
+                        assert_eq!(conclusion.created_at(), original.get::<_, DateTime<Utc>>("created_at"));
+                        assert_eq!(conclusion.expires_at(), original.get::<_, DateTime<Utc>>("expires_at"));
+                    }
+                    for column in ["created_at", "expires_at"] {
                         let expected: DateTime<Utc> = original.get(column);
                         assert_eq!(stored.get::<_, DateTime<Utc>>(column), expected);
-                        assert_eq!(actual, expected);
+                    }
+                    proxy.release();
+                    if let Some((original, recovery)) = option {
+                        timeout(Duration::from_secs(3), async { loop {
+                            let ended: bool = observer.client().query_one("SELECT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity WHERE pid = ANY($1))", &[&vec![original,recovery]]).await.expect("backend completion").get(0);
+                            if ended { break; }
+                            tokio::task::yield_now().await;
+                        }}).await.expect("both backends actually end");
                     }
                     let replay = timeout(Duration::from_secs(5), service.send(input))
                         .await
                         .expect("replay bounded")
                         .expect("original conclusion");
-                    assert_eq!(replay, conclusion);
+                    assert_eq!(replay.id(), message_id);
+                    assert_eq!(replay.status(), expected);
+                    assert_eq!(replay.created_at(), original.get::<_, DateTime<Utc>>("created_at"));
+                    assert_eq!(replay.expires_at(), original.get::<_, DateTime<Utc>>("expires_at"));
                     observer
                         .terminate()
                         .await
@@ -935,9 +1577,9 @@ pub(super) mod tests {
     fn claim_recovery_confirms_original_ownership_before_sending_once() {
         use fixture::database_proxy::{Fault, Proxy};
         let server = server();
-        Runtime::new().expect("runtime").block_on(async {
-            for fault in [Fault::LostCommit, Fault::DelayedCommit, Fault::RolledBack] {
-                let database = Database::new(Arc::clone(&server)).await;
+        tokio::runtime::Builder::new_current_thread().enable_all().build().expect("runtime").block_on(async {
+            for (fault, driver) in [(Fault::LostCommit, false), (Fault::DelayedCommit, false), (Fault::RolledBack, false), (Fault::DelayedCommit, true)] {
+                let database = Database::initialized(Arc::clone(&server)).await;
                 let mut challenge = Supplier::new().await;
                 let mut supplier = fixture::supplier::Supplier::start().await;
                 let proxy = Proxy::start(&server).await;
@@ -947,7 +1589,7 @@ pub(super) mod tests {
                 let service = Service::start(
                     Barrier::begin(context.clone()).await.expect("barrier"),
                     keys(),
-                    authentication::Settings::new(4, message::Limits::default())
+                    crate::startup::Settings::new(4, message::Limits::default(), crate::identity::authentication::verification::tests::session_settings(), crate::registration::Limits::default(), crate::identity::authentication::verification::tests::avatar_settings())
                         .expect("settings"),
                     challenge.client(),
                     client(&supplier),
@@ -1037,15 +1679,17 @@ pub(super) mod tests {
                                         .client()
                                         .query_one(
                                             "SELECT EXISTS (
-                                                SELECT 1 FROM pg_catalog.pg_locks
-                                                WHERE locktype = 'advisory' AND NOT granted
-                                                  AND mode = 'ExclusiveLock'
-                                                  AND classid = $1 AND objid = $2 AND objsubid = 1
-                                                  AND database = (
+                                                SELECT 1 FROM pg_catalog.pg_locks waiting
+                                                JOIN pg_catalog.pg_locks held
+                                                  USING (locktype, database, classid, objid, objsubid, mode)
+                                                WHERE waiting.locktype = 'advisory' AND NOT waiting.granted
+                                                  AND held.granted AND waiting.mode = 'ExclusiveLock'
+                                                  AND waiting.classid = $1 AND waiting.objid = $2 AND waiting.objsubid = 1
+                                                  AND waiting.database = (
                                                       SELECT oid FROM pg_catalog.pg_database
                                                       WHERE datname = current_database()
                                                   )
-                                                  AND cardinality(pg_catalog.pg_blocking_pids(pid)) > 0
+                                                  AND held.pid = ANY(pg_catalog.pg_blocking_pids(waiting.pid))
                                             )",
                                             &[&lock.0, &lock.1],
                                         )
@@ -1070,7 +1714,9 @@ pub(super) mod tests {
                         } => {}
                     }
                 }
+                if driver { proxy.arm(Fault::ReadCommitTermination); }
                 proxy.release();
+                if driver { timeout(Duration::from_secs(5),proxy.intercepted()).await.expect("original claim readback ended with driver failure"); }
                 let request = timeout(Duration::from_secs(5), supplier.request())
                     .await
                     .expect("one PNVS call after claim recovery");
@@ -1098,7 +1744,9 @@ pub(super) mod tests {
                         .verify(message_id, &code, &original.get("hash"))
                         .expect("sent code matches the original permit")
                 );
-                reply(request, "sent");
+                if driver {
+                    request.reply.send(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec()).expect("supplier 503");
+                } else { reply(request, "sent"); }
                 tokio::select! {
                     biased;
                     _ = supplier.request() => panic!("claim recovery and replay must not resend"),
@@ -1106,20 +1754,29 @@ pub(super) mod tests {
                         let conclusion = timeout(Duration::from_secs(5), task)
                             .await
                             .expect("sender bounded")
-                            .expect("sender")
-                            .expect("original sender finishes");
+                            .expect("sender");
                         // Read before replay so another request cannot repair the facts.
                         let stored = read().await.expect("original sender saved its conclusion");
                         unchanged(&stored);
                         assert_eq!(stored.get::<_, worker::Id>("claim_worker_id"), worker_id);
                         assert_eq!(stored.get::<_, DateTime<Utc>>("claimed_at"), claimed_at);
-                        assert_eq!(stored.get::<_, &str>("status"), "sent");
+                        assert_eq!(stored.get::<_, &str>("status"), if driver { "unknown" } else { "sent" });
                         let finished_at: DateTime<Utc> = stored.get("finished_at");
                         assert!(finished_at >= claimed_at);
-                        assert_eq!(conclusion.id(), message_id);
-                        assert_eq!(conclusion.created_at(), created_at);
-                        assert_eq!(conclusion.expires_at(), expires_at);
-                        assert_eq!(conclusion.status(), message::Status::Sent { finished_at });
+                        let expected = if driver { message::Status::Unknown { finished_at } } else { message::Status::Sent { finished_at } };
+                        if driver {
+                            let error = conclusion.expect_err("PNVS error retains claim cleanup");
+                            assert_eq!(error.failure(),crate::identity::authentication::Failure::Unavailable);
+                            let Error::MessageTransition { cause, transition } = error else { panic!("both stages retained") };
+                            assert!(matches!(*cause, Error::MessageOutcome { status: reqwest::StatusCode::SERVICE_UNAVAILABLE, .. }));
+                            assert!(matches!(*transition,Error::MessageReadback { commit:Ok(()),termination:Err(platform::database::Error::Postgres(ref error)),.. } if error.code()==Some(&tokio_postgres::error::SqlState::CONNECTION_FAILURE)));
+                        } else {
+                            let conclusion = conclusion.expect("original sender finishes");
+                            assert_eq!(conclusion.id(), message_id);
+                            assert_eq!(conclusion.created_at(), created_at);
+                            assert_eq!(conclusion.expires_at(), expires_at);
+                            assert_eq!(conclusion.status(), expected);
+                        }
                         let replay = timeout(
                             Duration::from_secs(5),
                             service.send(input(operation_id, "13800000000", "192.0.2.1")),
@@ -1127,7 +1784,10 @@ pub(super) mod tests {
                         .await
                         .expect("replay bounded")
                         .expect("original result");
-                        assert_eq!(replay, conclusion);
+                        assert_eq!(replay.id(), message_id);
+                        assert_eq!(replay.created_at(), created_at);
+                        assert_eq!(replay.expires_at(), expires_at);
+                        assert_eq!(replay.status(), expected);
                         stop(context, service).await;
                     } => {}
                 }
@@ -1142,14 +1802,14 @@ pub(super) mod tests {
     fn quota_and_replays_keep_the_first_source_and_do_not_refund_failed_permits() {
         let server = server();
         Runtime::new().expect("runtime").block_on(async {
-            let database=Database::new(server).await;
+            let database=Database::initialized(server).await;
             let mut challenge=Supplier::new().await;
             let supplier=fixture::supplier::Supplier::start().await;
             let (context,service)=start(&database,&challenge,&supplier,message::Limits::default()).await;
             let operation_id=Uuid::new_v4();
             let receipt=passed(&database,&service,&mut challenge,operation_id,"13800000000","192.0.2.1").await;
             let original=input(operation_id,"13800000000","192.0.2.99");
-            let Preparation::Ready(prepared)=service.0.prepare(&original,receipt).await.expect("permit") else {panic!("new");};
+            let (Preparation::Ready(prepared), None)=service.0.prepare(&original,receipt).await.expect("permit") else {panic!("new");};
             let permit=super::Receipt::new(&prepared.message);
             service.0.finish_message(&original,receipt.id,prepared.message.worker_id(),Conclusion::Failed).await.expect("failed send");
             let second_operation_id=Uuid::new_v4();
@@ -1175,33 +1835,34 @@ pub(super) mod tests {
         use tokio_postgres::error::SqlState;
         let server = server();
         Runtime::new().expect("runtime").block_on(async {
-            let database=Database::new(server).await;
+            let database=Database::initialized(server).await;
             let mut challenge=Supplier::new().await;
             let supplier=fixture::supplier::Supplier::start().await;
             let (context,service)=start(&database,&challenge,&supplier,message::Limits::default()).await;
             let operation_id=Uuid::new_v4();
             let receipt=passed(&database,&service,&mut challenge,operation_id,"13800000000","192.0.2.1").await;
             let input=input(operation_id,"13800000000","192.0.2.1");
-            let Preparation::Ready(prepared)=service.0.prepare(&input,receipt).await.expect("permit") else {panic!("new");};
+            let (Preparation::Ready(prepared), None)=service.0.prepare(&input,receipt).await.expect("permit") else {panic!("new");};
+            let other_operation_id=Uuid::new_v4();
+            let other_receipt=passed(&database,&service,&mut challenge,other_operation_id,"13900000000","192.0.2.2").await;
             let runtime=database.connections(&database.user).recover().await.expect("runtime");
             let message_id=prepared.message.id();
             let error=runtime.client().execute("UPDATE identity.messages SET status='sent',finished_at=clock_timestamp() WHERE id=$1",&[&message_id]).await.expect_err("sent requires claim");
             assert_eq!(error.code(),Some(&SqlState::CHECK_VIOLATION));
             let error=runtime.client().execute("INSERT INTO identity.claims (id,worker_id,created_at) VALUES($1,$2,clock_timestamp())",&[&message_id,&worker::Id::new()]).await.expect_err("other worker cannot claim");
             assert_eq!(error.code(),Some(&SqlState::CHECK_VIOLATION));
-            let wrong_code = if prepared.code.as_ref() == "00000000" { "00000001" } else { "00000000" }.parse().expect("different valid code");
+            let wrong_code = if prepared.code.as_ref() == "000000" { "000001" } else { "000000" }.parse().expect("different valid code");
             for (change, field) in [
                 (Change::Claim { worker_id: worker::Id::new(), code: &prepared.code }, "worker"),
                 (Change::Claim { worker_id: prepared.message.worker_id(), code: &wrong_code }, "code"),
             ] {
                 let error = service.0.change_message(&input, receipt.id, &change).await.err().expect("claim invariant rejected");
-                let Error::Unknown { cause, recovery } = &error else {
-                    panic!("both local attempts remain represented");
+                let Error::MessageReadback { cause, commit: Ok(()), termination: Ok(()) } = &error else {
+                    panic!("original violation and complete read-only recovery remain represented: {error:?}");
                 };
-                for failure in [cause, recovery] {
-                    assert!(matches!(failure.as_ref(), Error::Facts { stage: Stage::MessageClaim, rule } if rule.contains(field)));
-                }
+                assert!(matches!(cause.as_ref(), Error::Facts { stage: Stage::MessageClaim, rule } if rule.contains(field)));
                 assert!(error.unreliable());
+                assert!(matches!(service.0.registry.ready(), Err(crate::runtime::work::Error::Closed)));
                 let diagnostic = format!("{error:?} {error}");
                 for secret in [input.mobile.as_ref(), input.token.as_ref(), prepared.code.as_ref(), wrong_code.as_ref()] {
                     assert!(!diagnostic.contains(secret));
@@ -1213,12 +1874,10 @@ pub(super) mod tests {
             service.0.finish_message(&input,receipt.id,prepared.message.worker_id(),Conclusion::Sent).await.expect("sent");
             let error=runtime.client().execute("UPDATE identity.messages SET status='failed',finished_at=clock_timestamp() WHERE id=$1",&[&message_id]).await.expect_err("terminal immutable");
             assert_eq!(error.code(),Some(&SqlState::CHECK_VIOLATION));
-            let other_operation_id=Uuid::new_v4();
-            let receipt=passed(&database,&service,&mut challenge,other_operation_id,"13900000000","192.0.2.2").await;
             runtime.client().batch_execute("BEGIN").await.expect("begin");
-            runtime.client().execute("INSERT INTO identity.messages(id,challenge_id,ordinal,worker_id,created_at,expires_at) VALUES($1,$2,2,$3,clock_timestamp(),clock_timestamp()+interval '300 seconds')",&[&message::Id::new(),&receipt.id,&worker::Id::new()]).await.expect("message before paired check");
+            runtime.client().execute("INSERT INTO identity.messages(id,challenge_id,ordinal,worker_id,created_at,expires_at) VALUES($1,$2,2,$3,clock_timestamp(),clock_timestamp()+interval '300 seconds')",&[&message::Id::new(),&other_receipt.id,&worker::Id::new()]).await.expect("message before paired check");
             let error=runtime.client().batch_execute("COMMIT").await.expect_err("unpaired permit cannot commit");
-            assert_eq!(error.code(),Some(&SqlState::FOREIGN_KEY_VIOLATION));
+            assert_eq!(error.code(),Some(&SqlState::CHECK_VIOLATION));
             runtime.terminate().await.expect("end runtime");
             stop(context,service).await;
             challenge.stop().await;
@@ -1230,7 +1889,7 @@ pub(super) mod tests {
         let server = server();
         Runtime::new().expect("runtime").block_on(async {
             for daily in [1, 2] {
-                let database = Database::new(Arc::clone(&server)).await;
+                let database = Database::initialized(Arc::clone(&server)).await;
                 let mut challenge = Supplier::new().await;
                 let supplier = fixture::supplier::Supplier::start().await;
                 let limits = message::Limits::new(
@@ -1273,14 +1932,15 @@ pub(super) mod tests {
                 .expect("bounded concurrent permits");
                 if daily == 1 {
                     let (permit, error) = match (first, second) {
-                        (Ok(Preparation::Ready(permit)), Err(error))
-                        | (Err(error), Ok(Preparation::Ready(permit))) => (permit, error),
+                        (Ok((Preparation::Ready(permit), None)), Err(error))
+                        | (Err(error), Ok((Preparation::Ready(permit), None))) => (permit, error),
                         _ => panic!("exactly one quota winner"),
                     };
                     assert!(matches!(error, Error::Quota { retry_at }
                         if retry_at == permit.message.created_at() + chrono::TimeDelta::hours(24)));
                 } else {
-                    let (Ok(Preparation::Ready(_)), Ok(Preparation::Ready(_))) = (first, second)
+                    let (Ok((Preparation::Ready(_), None)), Ok((Preparation::Ready(_), None))) =
+                        (first, second)
                     else {
                         panic!("both permits fit the quota");
                     };
@@ -1319,7 +1979,7 @@ pub(super) mod tests {
                 ("13800000000", true),
                 ("13900000000", false),
             ] {
-                let database = Database::new(Arc::clone(&server)).await;
+                let database = Database::initialized(Arc::clone(&server)).await;
                 let mut challenge = Supplier::new().await;
                 let mut supplier = fixture::supplier::Supplier::start().await;
                 let proxy = Proxy::start(&server).await;
@@ -1329,7 +1989,7 @@ pub(super) mod tests {
                 let service = Service::start(
                     Barrier::begin(context.clone()).await.expect("barrier"),
                     keys(),
-                    authentication::Settings::new(4, message::Limits::default()).expect("settings"),
+                    crate::startup::Settings::new(4, message::Limits::default(), crate::identity::authentication::verification::tests::session_settings(), crate::registration::Limits::default(), crate::identity::authentication::verification::tests::avatar_settings()).expect("settings"),
                     challenge.client(),
                     client(&supplier),
                 )
@@ -1565,7 +2225,7 @@ pub(super) mod tests {
                         .as_str()
                         .expect("code")
                         .parse()
-                        .expect("eight-digit code");
+                        .expect("six-digit code");
                     assert!(
                         keys()
                             .message
@@ -1704,11 +2364,13 @@ pub(super) mod tests {
         Runtime::new().expect("runtime").block_on(async {
             for mode in ["sent", "lost", "unknown"] {
                 for rollback in [false, true] {
-                    let database = Database::new(Arc::clone(&server)).await;
+                    let database = Database::initialized(Arc::clone(&server)).await;
                     let mut challenge = Supplier::new().await;
                     let mut supplier = fixture::supplier::Supplier::start().await;
-                    let (context, service) =
-                        start(&database, &challenge, &supplier, message::Limits::default()).await;
+                    let proxy = fixture::database_proxy::Proxy::start(&server).await;
+                    let (context, service) = start_on(
+                        proxied(&database, &proxy), &challenge, &supplier, message::Limits::default()
+                    ).await;
                     let operation_id = Uuid::new_v4();
                     let receipt = passed(
                         &database,
@@ -1782,11 +2444,15 @@ pub(super) mod tests {
                         .await
                         .expect("fixture admin");
                     if rollback {
-                        admin.client().batch_execute("UPDATE security.clocks SET observed_at=clock_timestamp()+interval '1 hour'").await.expect("future clock fixture");
+                        proxy.arm(fixture::database_proxy::Fault::RewoundCurrent);
                     } else {
                         admin.client().batch_execute("CREATE FUNCTION identity.reject_message() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fictional-sensitive-detail' USING ERRCODE='23514'; END $$; CREATE TRIGGER messages_rejected BEFORE UPDATE ON identity.messages FOR EACH ROW EXECUTE FUNCTION identity.reject_message()").await.expect("failed local writes fixture");
                     }
                     reply(request, mode);
+                    if rollback {
+                        timeout(Duration::from_secs(2), proxy.intercepted()).await.expect("conclusion observes rewound time");
+                        proxy.release();
+                    }
                     let recovery = async {
                         let error = timeout(Duration::from_secs(5), task)
                             .await
@@ -1803,15 +2469,13 @@ pub(super) mod tests {
                                 "lost" => {
                                     assert!(matches!(
                                         cause.as_ref(),
-                                        Error::MessageRequest(message::request::Error::Reqwest(_))
+                                        Error::MessageRequest { cause: message::request::Error::Reqwest(_), .. }
                                     ));
                                 }
                                 "unknown" => {
                                     assert!(matches!(
                                         cause.as_ref(),
-                                        Error::MessageOutcome(
-                                            message::response::Unknown::UnrecognizedCode(_)
-                                        )
+                                        Error::MessageOutcome { reason: message::response::Unknown::UnrecognizedCode(_), .. }
                                     ));
                                 }
                                 _ => unreachable!(),
@@ -1924,6 +2588,7 @@ pub(super) mod tests {
                     }
                     observer.terminate().await.expect("observer ended");
                     challenge.stop().await;
+                    proxy.stop().await;
                 }
             }
         });
@@ -1934,7 +2599,7 @@ pub(super) mod tests {
         let server = server();
         Runtime::new().expect("runtime").block_on(async {
             for delayed_commit in [false, true] {
-                let database = Database::new(Arc::clone(&server)).await;
+                let database = Database::initialized(Arc::clone(&server)).await;
                 let mut challenge = Supplier::new().await;
                 let mut supplier = fixture::supplier::Supplier::start().await;
                 let (context, service) =
@@ -2069,7 +2734,6 @@ pub(super) mod tests {
                     );
                     assert_eq!(original.get::<_, Option<DateTime<Utc>>>("claimed_at"), None);
                     let released_at;
-                    let claimed_at;
                     if delayed_commit {
                         assert!(
                             database.now().await < cutoff,
@@ -2111,14 +2775,6 @@ pub(super) mod tests {
                         let held = read().await.expect("permit while commit is held");
                         assert_eq!(held.get::<_, &str>("status"), "sending");
                         assert_eq!(held.get::<_, Option<DateTime<Utc>>>("claimed_at"), None);
-                        let sample: DateTime<Utc> = observer
-                            .client()
-                            .query_one("SELECT observed_at FROM security.clocks WHERE id", &[])
-                            .await
-                            .expect("persisted claim sample")
-                            .get(0);
-                        assert!(sample >= created_at && sample <= cutoff);
-                        claimed_at = Some(sample);
                         released_at = timeout(Duration::from_secs(8), async {
                             // Wait for the measured deadline, with a one-second margin;
                             // the gate, rather than a sleep, establishes the interleaving.
@@ -2146,7 +2802,6 @@ pub(super) mod tests {
                             released_at > cutoff,
                             "less than sixty seconds remain before claim"
                         );
-                        claimed_at = None;
                         drop(spacing);
                     }
                     let receipt = timeout(Duration::from_secs(5), task)
@@ -2164,10 +2819,11 @@ pub(super) mod tests {
                         );
                     }
                     assert_eq!(stored.get::<_, &str>("status"), "failed");
-                    assert_eq!(
-                        stored.get::<_, Option<DateTime<Utc>>>("claimed_at"),
-                        claimed_at
-                    );
+                    let claimed_at = stored.get::<_, Option<DateTime<Utc>>>("claimed_at");
+                    assert_eq!(claimed_at.is_some(), delayed_commit);
+                    if let Some(claimed_at) = claimed_at {
+                        assert!(claimed_at >= created_at && claimed_at <= cutoff);
+                    }
                     assert_eq!(
                         stored.get::<_, Option<worker::Id>>("claim_worker_id"),
                         claimed_at.map(|_| original.get::<_, worker::Id>("worker_id"))
@@ -2209,14 +2865,14 @@ pub(super) mod tests {
         let server = server();
         Runtime::new().expect("runtime").block_on(async {
             for rejected in [false, true] {
-                let database = Database::new(Arc::clone(&server)).await;
+                let database = Database::initialized(Arc::clone(&server)).await;
                 let mut challenge = Supplier::new().await;
                 let mut supplier = fixture::supplier::Supplier::start().await;
                 let (context, service) = start(&database, &challenge, &supplier, message::Limits::default()).await;
                 let operation_id = Uuid::new_v4();
                 let receipt = passed(&database, &service, &mut challenge, operation_id, "13800000000", "192.0.2.1").await;
                 let input = input(operation_id, "13800000000", "192.0.2.1");
-                let Preparation::Ready(prepared) = service.0.prepare(&input, receipt).await.expect("original permit") else {
+                let (Preparation::Ready(prepared), None) = service.0.prepare(&input, receipt).await.expect("original permit") else {
                     panic!("first message has its original code");
                 };
                 service.0.change_message(&input, receipt.id, &Change::Claim {
@@ -2271,7 +2927,7 @@ pub(super) mod tests {
     fn signing_sample_starts_after_waiting_for_the_claim_connection() {
         let server = server();
         Runtime::new().expect("runtime").block_on(async {
-            let database = Database::new(server).await;
+            let database = Database::initialized(server).await;
             let mut challenge = Supplier::new().await;
             let supplier = fixture::supplier::Supplier::start().await;
             let (context, service) =
@@ -2287,7 +2943,7 @@ pub(super) mod tests {
             )
             .await;
             let input = input(operation_id, "13800000000", "192.0.2.1");
-            let Preparation::Ready(prepared) =
+            let (Preparation::Ready(prepared), None) =
                 service.0.prepare(&input, receipt).await.expect("permit")
             else {
                 panic!("new");
@@ -2316,10 +2972,11 @@ pub(super) mod tests {
             let released_at = tokio::time::Instant::now();
             first.release();
             second.release();
-            let (_, sample) = timeout(Duration::from_secs(5), &mut work)
+            let (_, sample, option) = timeout(Duration::from_secs(5), &mut work)
                 .await
                 .expect("claim budget")
                 .expect("claim");
+            assert!(option.is_none());
             assert!(
                 sample.started_at() >= released_at,
                 "pool wait is not added to a newer database time"
@@ -2337,7 +2994,7 @@ pub(super) mod tests {
         Runtime::new().expect("runtime").block_on(async {
             for mode in ["sent", "failed", "lost"] {
                 timeout(Duration::from_secs(20), async {
-                    let database = Database::new(Arc::clone(&server)).await;
+                    let database = Database::initialized(Arc::clone(&server)).await;
                     let mut challenge = Supplier::new().await;
                     let mut supplier = fixture::supplier::Supplier::start().await;
                     let context = Context::new(database.connections(&database.user))
@@ -2346,7 +3003,7 @@ pub(super) mod tests {
                     let service = Service::start(
                         Barrier::begin(context.clone()).await.expect("barrier"),
                         keys(),
-                        authentication::Settings::new(8, message::Limits::default())
+                        crate::startup::Settings::new(8, message::Limits::default(), crate::identity::authentication::verification::tests::session_settings(), crate::registration::Limits::default(), crate::identity::authentication::verification::tests::avatar_settings())
                             .expect("settings"),
                         challenge.client(),
                         // Leave time to observe the second committed permit while holding the first reply.
@@ -2445,7 +3102,7 @@ pub(super) mod tests {
                         if mode == "lost" {
                             assert!(matches!(
                                 first,
-                                Err(Error::MessageRequest(message::request::Error::Reqwest(ref error)))
+                                Err(Error::MessageRequest { cause: message::request::Error::Reqwest(ref error), .. })
                                     if !error.is_timeout()
                             ));
                         } else {
@@ -2511,7 +3168,7 @@ pub(super) mod tests {
     fn restarting_does_not_reset_actual_send_spacing() {
         let server = server();
         Runtime::new().expect("runtime").block_on(async {
-            let database = Database::new(server).await;
+            let database = Database::initialized(server).await;
             let mut challenge = Supplier::new().await;
             let mut supplier = fixture::supplier::Supplier::start().await;
             let (context, service) =
@@ -2563,7 +3220,7 @@ pub(super) mod tests {
         let server = server();
         Runtime::new().expect("runtime").block_on(async {
             for mode in ["sent", "failed", "lost", "unknown"] {
-                let database = Database::new(Arc::clone(&server)).await;
+                let database = Database::initialized(Arc::clone(&server)).await;
                 let mut challenge = Supplier::new().await;
                 let mut supplier = fixture::supplier::Supplier::start().await;
                 let (context, service) =
@@ -2590,7 +3247,7 @@ pub(super) mod tests {
                     .as_str()
                     .expect("code")
                     .parse()
-                    .expect("eight digits");
+                    .expect("six digits");
                 assert_eq!(fields["PhoneNumber"], "13800000000");
                 assert_eq!(fields["AutoRetry"], "0");
                 let reader = database
@@ -2676,7 +3333,7 @@ pub(super) mod tests {
         let server = server();
         Runtime::new().expect("runtime").block_on(async {
             for claimed in [false, true] {
-                let database = Database::new(Arc::clone(&server)).await;
+                let database = Database::initialized(Arc::clone(&server)).await;
                 let mut challenge = Supplier::new().await;
                 let mut supplier = fixture::supplier::Supplier::start().await;
                 let (context, service) =
@@ -2692,7 +3349,7 @@ pub(super) mod tests {
                 )
                 .await;
                 let input = input(operation_id, "13800000000", "192.0.2.1");
-                let Preparation::Ready(prepared) =
+                let (Preparation::Ready(prepared), None) =
                     service.0.prepare(&input, receipt).await.expect("permit")
                 else {
                     panic!("new permit");
@@ -2764,7 +3421,7 @@ pub(super) mod tests {
                         let service = Service::start(
                             Barrier::begin(context.clone()).await.expect("barrier"),
                             keys(),
-                            authentication::Settings::new(8, message::Limits::default())
+                            crate::startup::Settings::new(8, message::Limits::default(), crate::identity::authentication::verification::tests::session_settings(), crate::registration::Limits::default(), crate::identity::authentication::verification::tests::avatar_settings())
                                 .expect("settings"),
                             challenge_client,
                             message_client,
@@ -2855,7 +3512,7 @@ pub(super) mod tests {
                 .as_str()
                 .expect("code")
                 .parse()
-                .expect("eight-digit code");
+                .expect("six-digit code");
             assert!(
                 keys()
                     .message
@@ -2890,7 +3547,7 @@ pub(super) mod tests {
 
         let server = server();
         Runtime::new().expect("runtime").block_on(async {
-            let database = Database::new(Arc::clone(&server)).await;
+            let database = Database::initialized(Arc::clone(&server)).await;
             let mut challenge = Supplier::new().await;
             let mut supplier = fixture::supplier::Supplier::start().await;
             let proxy = Proxy::start(&server).await;
@@ -2900,7 +3557,7 @@ pub(super) mod tests {
             let service = Service::start(
                 Barrier::begin(context.clone()).await.expect("barrier"),
                 keys(),
-                authentication::Settings::new(4, message::Limits::default()).expect("settings"),
+                crate::startup::Settings::new(4, message::Limits::default(), crate::identity::authentication::verification::tests::session_settings(), crate::registration::Limits::default(), crate::identity::authentication::verification::tests::avatar_settings()).expect("settings"),
                 challenge.client(),
                 client(&supplier),
             )
@@ -3213,7 +3870,7 @@ pub(super) mod tests {
     fn cancelled_waiter_and_stop_still_wait_for_the_original_sending_work() {
         let server = server();
         Runtime::new().expect("runtime").block_on(async {
-            let database = Database::new(server).await;
+            let database = Database::initialized(server).await;
             let mut challenge = Supplier::new().await;
             let mut supplier = fixture::supplier::Supplier::start().await;
             let (context, service) =

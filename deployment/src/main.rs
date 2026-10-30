@@ -1,24 +1,35 @@
-use std::{env, process::ExitCode};
+use std::process::ExitCode;
 
-use deployment::{database, keys, migration, permissions, settings::Settings};
+use clap::{Parser, Subcommand};
+use deployment::{database, instance, keys, migration, permissions, settings::Settings};
 use tokio::runtime::Runtime;
 
+#[derive(Parser)]
+struct Arguments {
+    #[command(subcommand)]
+    command: Command,
+}
+
+#[derive(Subcommand)]
 enum Command {
     Migrate,
-    InitializeKeys,
+    Keys {
+        #[command(subcommand)]
+        action: Keys,
+    },
+    Admin {
+        #[command(subcommand)]
+        action: deployment::admin::Action,
+    },
+}
+
+#[derive(Subcommand)]
+enum Keys {
+    Init,
 }
 
 fn main() -> ExitCode {
-    let arguments: Vec<_> = env::args_os().skip(1).collect();
-    let command = match arguments.as_slice() {
-        [argument] if argument == "migrate" => Command::Migrate,
-        [argument] if argument == "initialize-keys" => Command::InitializeKeys,
-        _ => {
-            eprintln!("usage: deployment <migrate|initialize-keys>");
-            return ExitCode::FAILURE;
-        }
-    };
-    match run(command) {
+    match run(Arguments::parse().command) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("{error:?}");
@@ -28,20 +39,95 @@ fn main() -> ExitCode {
 }
 
 fn run(command: Command) -> Result<(), Box<dyn std::error::Error>> {
-    let settings = Settings::load()?;
     let runtime = Runtime::new()?;
     match command {
         Command::Migrate => {
+            let settings = Settings::load()?;
             let runtime_user = settings.runtime_user().to_owned();
             let connections = database::load(settings.into_database())?;
-            runtime.block_on(migration::run(&connections, &runtime_user))?;
-            runtime.block_on(permissions::verify(&connections, &runtime_user))?;
+            // Migration holds the exclusive runtime barrier for its session, so no
+            // application can start, and advance a generation, until it ends.
+            runtime.block_on(instance::exclusive(&connections, |_| async {
+                migration::run(&connections, &runtime_user).await?;
+                permissions::verify(&connections, &runtime_user).await?;
+                Ok::<_, Migration>(())
+            }))?;
         }
-        Command::InitializeKeys => {
+        Command::Keys { action: Keys::Init } => {
+            let settings = Settings::load()?;
             let connections = database::load(settings.into_database())?;
             let metadata = keys::credentials::load()?;
-            runtime.block_on(keys::initialize(&connections, &metadata))?;
+            runtime.block_on(instance::exclusive(&connections, |fence| {
+                keys::initialize(&connections, metadata.metadata(), fence)
+            }))?;
         }
+        Command::Admin { action } => runtime.block_on(action.run())?,
     }
     Ok(())
+}
+
+/// Migration and its permission check run under one instance lock.
+#[derive(Debug, thiserror::Error)]
+enum Migration {
+    #[error("{0}")]
+    Run(#[from] migration::Error),
+    #[error("{0}")]
+    Permissions(#[from] permissions::Error),
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use clap::Parser;
+
+    use crate::Arguments;
+
+    #[test]
+    fn admin_requires_original_operation_and_private_input() {
+        for action in ["initialize", "appoint", "correct", "correct-affiliation"] {
+            let base = [
+                "deployment",
+                "admin",
+                action,
+                "--input",
+                "input.json",
+                "--operation",
+                "00000000-0000-4000-8000-000000000001",
+            ];
+            Arguments::try_parse_from(base).expect("complete admin command");
+            Arguments::try_parse_from(base.into_iter().chain(["--dry-run"]))
+                .expect("validation without business writes");
+            for omitted in ["--input", "--operation"] {
+                let mut arguments = base[..3].to_vec();
+                arguments.extend(
+                    base[3..]
+                        .chunks(2)
+                        .filter(|pair| pair[0] != omitted)
+                        .flatten()
+                        .copied(),
+                );
+                assert!(
+                    Arguments::try_parse_from(arguments).is_err(),
+                    "{action} {omitted}"
+                );
+            }
+            assert!(
+                Arguments::try_parse_from(base.into_iter().chain(["--mobile", "13800000000"]))
+                    .is_err()
+            );
+        }
+        assert!(
+            Arguments::try_parse_from([
+                "deployment",
+                "operate-access",
+                "correct",
+                "inspect",
+                "--operator-file",
+                "operator.json",
+            ])
+            .is_err(),
+            "the retired offline command is not accepted"
+        );
+        Arguments::try_parse_from(["deployment", "keys", "init"]).expect("key metadata command");
+    }
 }

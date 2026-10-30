@@ -21,6 +21,11 @@
 /files
 /logs
 /node_modules
+/halo/node_modules
+/halo/build
+/halo/.react-router
+/halo/test-results
+/halo/playwright-report
 /.cache/nucleus-tools/
 /storage
 
@@ -45,3 +50,10 @@ probes/Cargo.lock
 # ⚠️ 它的 Cargo.lock 是提交的，和 probes 不同：渲染出的字节取决于 tiny-skia 的版本，
 # 锁住版本是重跑能重现已提交 PNG 的必要条件（不是充分条件 —— 平台差异不在锁的管辖内）。
 tools/mascots/target/
+
+# design/ 的工牌字体是生产业务数据（生产系统按 fonts 资源上传），字节不进仓库：
+# 主字体（微软雅黑）的许可通知只允许随其所属产品显示、打印并按嵌入限制嵌入，
+# 不授予再分发；备选字体（得意黑）是 OFL，但入库须随附完整许可文本。
+# 评审时把主备字体放进 design/assets/fonts.local/，规格见 docs/client/pages.md#页面设计稿。
+design/assets/fonts.local/
+design/assets/*.ttf

@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="司籍处网站本人注销账户与结果确认设计。"
+    />
+    <title>注销账户 · 司籍处</title>
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/tokens.css" />
+    <link rel="stylesheet" href="assets/halo-home.css" />
+    <link rel="stylesheet" href="assets/halo-account.css" />
+    <link rel="stylesheet" href="assets/halo-cancellation.css" />
+    <script src="assets/halo-cancellation.js" defer></script>
+  </head>
+  <body class="cancellation-page">
+    <a class="skip-link" href="#cancellation">跳到主要内容</a>
+    <div class="preview-tools" aria-label="设计预览工具">
+      <div class="preview-caption">
+        <strong>HALO · 设计预览</strong><span>虚构资料，不注销真实账户</span>
+      </div>
+      <button
+        class="preview-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="preview-tools-content"
+      >
+        展开预览工具
+      </button>
+      <div
+        class="preview-tools-content"
+        id="preview-tools-content"
+        hidden
+      >
+        <div class="preview-controls">
+          <label for="scenario-picker">页面状态</label
+          ><select id="scenario-picker"></select>
+        </div>
+        <details class="design-notes">
+          <summary>设计说明与状态依据</summary>
+          <div>
+            <p id="state-basis"></p>
+            <p>
+              本稿只演示注销当前本人账户，不发送请求、不读写真实账户或办理材料。姓名、证件尾号和注销时间均为虚构示例。
+            </p>
+            <p>
+              入口只展示完整姓名与身份证尾四位，不补造手机号。注销成功后账户不能恢复，全部登录和本人服务结束；必要业务记录和已保存的发放保留，原工号不自动释放。
+            </p>
+            <p>
+              结果未知时停止自动重发，也不提供注销结果查询。检查登录状态只读取当前账户，不能证明注销结果；手机号登录进入现有登录稿，新注册或另一账户不承接本次注销。
+            </p>
+            <p>
+              注销成功后只保留一个结果画面。本稿不扩展注销历史、管理注销、客服或恢复入口。预览选择只切换虚构状态，不是原办理证明，也不接受任意回跳地址或操作标识。
+            </p>
+            <label for="submit-outcome">确认后的示例结果</label
+            ><select id="submit-outcome">
+              <option value="success">可信成功</option>
+              <option value="unknown">结果未知</option>
+              <option value="not-accepted">首次受限 · 未受理</option>
+              <option value="target-changed">账户资料已变化</option>
+              <option value="request-mismatch">与此前请求不一致</option>
+              <option value="dependency-failed">已知依赖失败 · 未完成</option>
+              <option value="submit-invalid">确认信息未被接受</option>
+              <option value="submit-session-invalid">
+                首次请求登录失效 · 未受理
+              </option>
+              <option value="submit-forbidden">首次请求被拒绝 · 未受理</option>
+              <option value="save-failed">发送前保存失败 · 未提交</option>
+            </select>
+            <label for="current-outcome">检查当前登录的示例结果</label
+            ><select id="current-outcome">
+              <option value="same-account">同一账户仍有效</option>
+              <option value="read-failed">读取失败</option>
+              <option value="limited">暂时受限</option>
+              <option value="session-invalid">登录失效 · 失权</option>
+              <option value="no-selection">没有当前登录</option>
+              <option value="selection-unavailable">登录选择存储不可用或损坏</option>
+              <option value="forbidden">读取被拒绝</option>
+              <option value="selection-changed">登录选择变化</option>
+              <option value="other-account">另一账户</option>
+            </select>
+            <label for="theme-picker">外观</label
+            ><select id="theme-picker">
+              <option value="system">跟随系统</option>
+              <option value="light">浅色</option>
+              <option value="dark">深色</option>
+            </select>
+            <div class="demo-actions">
+              <button type="button" data-demo="end-wait">结束示例等待</button>
+            </div>
+            <p>
+              状态切换、确认弹窗和离开提示只用于评审可见流程。页面实际布局、焦点、浅深主题及
+              1440、768、390、320 像素宽度仍须在浏览器中验收。
+            </p>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="halo-home.html" data-leave aria-label="司籍处首页"
+          ><img src="assets/logo.png" width="56" height="56" alt="" /><span
+            class="brand-copy"
+            ><strong>司籍处</strong><span>中医药文化宣传与推广中心</span></span
+          ></a
+        >
+        <nav class="account-navigation" aria-label="网站导航">
+          <a id="services-navigation" href="halo-services.html" data-leave>员工服务</a
+          ><a
+            id="account-navigation"
+            href="halo-account.html"
+            data-leave
+            aria-current="page"
+            >个人账户</a
+          ><a class="public-return" href="halo-home.html" data-leave
+            >返回首页 ↗</a
+          >
+        </nav>
+      </div>
+    </header>
+
+    <main class="cancellation-layout" id="cancellation" tabindex="-1">
+      <div class="page-heading cancellation-heading">
+        <div>
+          <p class="section-kicker" id="page-kicker">账户管理 · 仅限本人</p>
+          <h1 id="page-title" tabindex="-1">注销账户</h1>
+          <p class="page-introduction" id="page-introduction">
+            注销前，请核对当前账户并了解后果。
+          </p>
+        </div>
+        <a
+          class="back-to-services"
+          id="account-back"
+          href="halo-account.html"
+          data-leave
+          >← 返回个人账户</a
+        >
+      </div>
+      <div id="cancellation-content" aria-live="polite">
+        <section class="reading-state" aria-labelledby="initial-title" aria-busy="true">
+          <span class="reading-symbol" aria-hidden="true"></span>
+          <h2 id="initial-title">正在检查当前账户</h2>
+          <p>检查完成后，再展示本人资料与注销确认。</p>
+        </section>
+      </div>
+      <noscript>
+        <p class="page-notice">请开启 JavaScript 查看本页设计演示。</p>
+      </noscript>
+    </main>
+
+    <footer class="cancellation-footer">司籍处 · 本人账户</footer>
+
+    <dialog
+      class="cancellation-dialog"
+      id="confirm-dialog"
+      aria-labelledby="confirm-title"
+      aria-describedby="confirm-description"
+    >
+      <div class="dialog-heading">
+        <span>账户不可恢复</span>
+        <button
+          class="dialog-close"
+          type="button"
+          data-action="close-confirm"
+          aria-label="关闭"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18" />
+          </svg>
+        </button>
+      </div>
+      <h2 id="confirm-title">确认注销本人账户？</h2>
+      <p id="confirm-description">
+        注销后，全部登录和本人服务会结束，账户不能恢复。
+      </p>
+      <p class="confirm-identity" id="confirm-identity"></p>
+      <p class="dialog-note">
+        必要业务记录和已保存的发放仍会保留；原工号不会自动释放。
+      </p>
+      <div class="dialog-actions">
+        <button
+          class="button secondary"
+          id="confirm-cancel"
+          type="button"
+          data-action="close-confirm"
+        >
+          暂不注销
+        </button>
+        <button
+          class="button primary"
+          id="confirm-submit"
+          type="button"
+          data-action="confirm-cancellation"
+        >
+          确认注销
+        </button>
+      </div>
+    </dialog>
+
+    <dialog
+      class="cancellation-dialog"
+      id="leave-dialog"
+      aria-labelledby="leave-title"
+      aria-describedby="leave-description"
+    >
+      <div class="dialog-heading">
+        <span>尚未离开</span>
+        <button
+          class="dialog-close"
+          type="button"
+          data-action="stay"
+          aria-label="关闭"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18" />
+          </svg>
+        </button>
+      </div>
+      <h2 id="leave-title">暂时离开？</h2>
+      <p id="leave-description"></p>
+      <div class="dialog-actions">
+        <button
+          class="button primary"
+          id="leave-stay"
+          type="button"
+          data-action="stay"
+        >
+          留在此页
+        </button>
+        <button
+          class="button secondary"
+          id="leave-confirm"
+          type="button"
+          data-action="leave"
+        >
+          离开页面
+        </button>
+      </div>
+    </dialog>
+  </body>
+</html>
