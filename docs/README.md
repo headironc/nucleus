@@ -42,6 +42,7 @@
 | 权限目录与系统角色                             | 已交付 | [权限目录](access/capabilities.md)                                                                                                                   |
 | 机构与 Workforce 角色、机构 Holder 及指派      | 已交付 | [角色与指派](access/roles.md)、[状态历史与完整性](architecture.md#状态历史与完整性)                                                                  |
 | Workforce 授权生命周期与 Grant 封印            | 已交付 | [授权生命周期](access/grants.md)                                                                                                                     |
+| Halo 网站机构入口开通员工服务                  | 已交付 | [授权生命周期](access/grants.md)、[页面](client/pages.md#网站机构入口开通员工服务)、[网站检查](../halo/README.md#机构入口开通员工服务)               |
 | Workforce 邀请码与封印状态                     | 已交付 | [邀请](access/invitations.md)                                                                                                                        |
 | 政治面貌与封印状态                             | 已交付 | [政治面貌](center/affiliation.md)、[状态历史与完整性](architecture.md#状态历史与完整性)                                                              |
 | 政治面貌显示名称读取接口                       | 已交付 | [政治面貌固定值](center/values.md)                                                                                                                   |
@@ -66,6 +67,7 @@
 | Halo 网站本人员工服务状态                      | 已交付 | [授权生命周期](access/grants.md)、[客户端协议](client/protocol.md)、[网站验收](../halo/README.md#浏览器隔离验收)                                     |
 | Halo 网站本人结束员工服务                      | 已交付 | [授权生命周期](access/grants.md)、[客户端协议](client/protocol.md)、[网站验收](../halo/README.md#浏览器隔离验收)                                     |
 | Halo 网站本人当前工号只读摘要                  | 已交付 | [工号](workforce/numbers.md)、[客户端协议](client/protocol.md)、[网站验收](../halo/README.md#浏览器隔离验收)                                         |
+| Halo 网站本人首次领取工号                      | 目标   | [页面](client/pages.md#网站本人首次领取工号)、[网站检查](../halo/README.md#本人首次领取工号)；客户端候选已实现，真实组合验收待完成                   |
 | 公开设置与网站交付配置                         | 已交付 | [网站交付边界](http/site.md)、[部署设置](settings.md)                                                                                                |
 | 网站其余页面与小程序客户端                     | 目标   | [页面](client/pages.md)、[网站工程](client/website.md)                                                                                               |
 | 真实部署、Nginx 与 systemd 验收                | 目标   | [业务交付顺序](engineering/delivery.md#里程碑与生产准备)                                                                                             |
