@@ -8,6 +8,7 @@ import {
 } from "@playwright/test";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type contracts from "../app/protocol/generated/contracts.js";
 import type { components, paths } from "../app/protocol/generated/types";
 import { decode, registry } from "../app/protocol/response";
@@ -33,7 +34,14 @@ type Phase =
   | "restricted";
 type Position = "before" | "after";
 type Actor = { account: Account; session: Session };
-type Wire = { status: number; media: string | null; text: string };
+type Wire = {
+  status: number;
+  media: string | null;
+  text: string;
+  cacheControl: string | null;
+  setCookie: boolean;
+  retryAfter: string | null;
+};
 type Created = components["schemas"]["application.Created"];
 type CurrentGrant =
   paths["/api/v1/workforce/current/grant"]["get"]["responses"][200]["content"]["application/json"];
@@ -52,12 +60,13 @@ export type BadgeObservation = {
 
 async function wire(response: APIResponse | PageResponse): Promise<Wire> {
   const headers = response.headers();
-  expect(headers["cache-control"]).toBe("no-store");
-  expect(Object.hasOwn(headers, "set-cookie")).toBe(false);
   return {
     status: response.status(),
     media: headers["content-type"] ?? null,
     text: await response.text(),
+    cacheControl: headers["cache-control"] ?? null,
+    setCookie: Object.hasOwn(headers, "set-cookie"),
+    retryAfter: headers["retry-after"] ?? null,
   };
 }
 
@@ -67,7 +76,6 @@ async function trusted<T>(
   endpoint: keyof typeof contracts,
   status: number,
 ): Promise<T> {
-  expect(value.status).toBe(status);
   const body = await decode(
     new Response(value.text, {
       status: value.status,
@@ -75,7 +83,21 @@ async function trusted<T>(
     }),
     endpoint,
   );
-  expect(body !== undefined).toBe(true);
+  const code =
+    body && typeof body === "object" && "code" in body
+      ? String(body.code)
+      : "untrusted";
+  const retryAfter =
+    value.retryAfter === null
+      ? "absent"
+      : /^\d{1,20}$/.test(value.retryAfter)
+        ? value.retryAfter
+        : "present_non_numeric";
+  const diagnostic = `${endpoint}: HTTP ${value.status}, code=${code}, Retry-After=${retryAfter}`;
+  expect(value.status, diagnostic).toBe(status);
+  expect(body !== undefined, diagnostic).toBe(true);
+  expect(value.cacheControl, diagnostic).toBe("no-store");
+  expect(value.setCookie, diagnostic).toBe(false);
   return body as T;
 }
 
@@ -114,6 +136,23 @@ export async function ownBadgeApplications(
       "Real badge checks require the supervised material directory",
     );
   const viewport = page.viewportSize();
+  // The shared source bucket refills at 2/s with capacity 4: fill for 2s first.
+  let nextSend = performance.now() + 2_000;
+  let previousSend = Promise.resolve();
+  const forward = async (route: Route) => {
+    const ready = previousSend.then(async () => {
+      while (performance.now() < nextSend)
+        await delay(Math.ceil(nextSend - performance.now()));
+      nextSend = performance.now() + 500;
+    });
+    previousSend = ready;
+    await ready;
+    return route.fetch({
+      maxRetries: 0,
+      maxRedirects: 0,
+      timeout: 35_000,
+    });
+  };
   const records: Application[] = [];
   let preparedPhoto: ApplicationPhoto | undefined;
   const calls: { operation: string; input: ApplicationInput }[] = [];
@@ -183,12 +222,13 @@ export async function ownBadgeApplications(
           redirect: "error",
           cache: "no-store",
         });
-        if (response.headers.has("set-cookie"))
-          throw new Error("Unexpected cookie mutation");
         return {
           status: response.status,
           media: response.headers.get("content-type"),
           text: await response.text(),
+          cacheControl: response.headers.get("cache-control"),
+          setCookie: response.headers.has("set-cookie"),
+          retryAfter: response.headers.get("retry-after"),
         };
       },
       { session, path, method },
@@ -213,11 +253,7 @@ export async function ownBadgeApplications(
     expect(typeof operation).toBe("string");
     calls.push({ operation, input });
     await observe(current.phase, "before", { operation, input });
-    const response = await route.fetch({
-      maxRetries: 0,
-      maxRedirects: 0,
-      timeout: 35_000,
-    });
+    const response = await forward(route);
     const receipt = await trusted<Created>(
       await wire(response),
       "POST /api/v1/workforce/applications",
@@ -240,11 +276,7 @@ export async function ownBadgeApplications(
   const photo = async (route: Route) => {
     photos++;
     if (!capacity) {
-      const response = await route.fetch({
-        maxRetries: 0,
-        maxRedirects: 0,
-        timeout: 35_000,
-      });
+      const response = await forward(route);
       preparedPhoto = await trusted<ApplicationPhoto>(
         await wire(response),
         "POST /api/v1/workforce/application-photos",
@@ -260,11 +292,7 @@ export async function ownBadgeApplications(
     capacityHandled = true;
     const operation = route.request().headers()["operation-id"];
     await observe("capacity", "before", { operation });
-    const response = await route.fetch({
-      maxRetries: 0,
-      maxRedirects: 0,
-      timeout: 35_000,
-    });
+    const response = await forward(route);
     const failure = await trusted<{ code: string }>(
       await wire(response),
       "POST /api/v1/workforce/application-photos",
@@ -273,6 +301,11 @@ export async function ownBadgeApplications(
     expect(failure.code).toBe("dependency_unavailable");
     await observe("capacity", "after", { operation });
     await route.fulfill({ response });
+  };
+
+  const previewRequest = async (route: Route) => {
+    expect(route.request().method()).toBe("POST");
+    await route.fulfill({ response: await forward(route) });
   };
 
   const count = (request: import("@playwright/test").Request) => {
@@ -360,6 +393,7 @@ export async function ownBadgeApplications(
   const cookies = await cookieDigests(page);
   await page.route("**/api/v1/workforce/applications", submit);
   await page.route("**/api/v1/workforce/application-photos", photo);
+  await page.route("**/api/v1/workforce/applications/preview", previewRequest);
   page.on("request", count);
   try {
     const current = await trusted<{ account: Account }>(
@@ -690,6 +724,10 @@ export async function ownBadgeApplications(
   } finally {
     await page.unroute("**/api/v1/workforce/applications", submit);
     await page.unroute("**/api/v1/workforce/application-photos", photo);
+    await page.unroute(
+      "**/api/v1/workforce/applications/preview",
+      previewRequest,
+    );
     page.off("request", count);
     await select(manager);
     await page.setExtraHTTPHeaders({ "X-Halo-Fixture-Source": "00" });
