@@ -288,13 +288,21 @@ bun tools/halo-image-artifact.ts build /absolute/path/to/new-artifact
 
 本次固定发布的每次派发前，操作者用已验证账户只读保存同一包的准确 ID、private、关联仓库 ID `1432619931` 和名称 `headironc/nucleus`；发布和冷消费后再读回同一对象。读取失败、结果未知或身份变化均不能给最终接纳。复用已验 Actions Write 配置，不把账户凭据交给工作流，也不重复修改包权限。
 
+平台和账户收据逐层白名单构造，只保存身份、来源、状态、摘要、有效期及关联视图。原始 API 对象可能含临时凭据，不能整份持久化或打印。账户前后态使用下列只读入口；它要求已验证的 headironc 账户和完整准确关联，只输出白名单字段：
+
+```sh
+bun -e 'import { accountAssociation } from "./.github/halo-publish/publication"; console.log(JSON.stringify(accountAssociation(), null, 2))'
+```
+
 job token 的包元数据可能不显示关联。工作流记录 repository 视图为 `null`、`missing` 或 `object`；前两者只说明该视图不可用，关联仍依上面的独立回查核验。返回对象时，两个仓库身份字段必须完整匹配；冲突、残缺、数组或其他类型均拒绝。准确包 ID、名称、private、仓库与原产物检查继续执行；可读元数据不证明 registry 写入或冷拉取能力，最终以真实短期令牌操作及消费者清理验收。
 
-只有独立发布作业有 `packages: write`。它仅检出本次可信工作流修订中的 publisher 工具，不检出或执行 producer 候选，也不运行候选镜像。再次核平台身份及冻结归档后，固定 Skopeo 用 `--preserve-digests` 发布不可变标签 `source-55506adfd5c4ba8e34632d2cc2eadcfd189c75e8-run-40964056245-attempt-1`。同标签同 manifest 读回复用，冲突拒绝；不转换、重建或移动 `latest/dev`。认证文件私有且不进入证据，正常、失败和 `always` 收尾均删除并核 absent。
+只有独立发布作业有 `packages: write`。它仅检出本次可信工作流修订中的 publisher 工具，不检出或执行 producer 候选，也不运行候选镜像。原首次发布以固定 Skopeo 和 `--preserve-digests` 写入不可变标签 `source-55506adfd5c4ba8e34632d2cc2eadcfd189c75e8-run-40964056245-attempt-1`，原记录继续作为写入证明。该固定版本现在已发布，当前工作流再次核平台身份及冻结归档后，以 `reuse` 入口只读确认同标签同 manifest；缺失、冲突或未知均失败，禁止第二次 copy，不转换、重建或移动 `latest/dev`。认证文件私有且不进入证据，正常、失败和 `always` 收尾均删除并核 absent。
 
 上传进程及其工具容器终态明确后，按固定标签读回原 manifest 字节，并按 digest 读回 config 原字节和有序层描述。上传报错但内容相同则接续验收，不再上传。401/403、限流、网络失败和清理未知均保留未决状态；只有明确的 `MANIFEST_UNKNOWN` 表示不存在。工作流不自动重试。负责人先核原 run/job、上传 journal 与外部状态；原操作终态且确认不存在后，原授权内最多另派一次相同内容的恢复，不能反复 dispatch 或用新构建掩盖未知结果。
 
-冷拉取使用另一台全新 hosted runner，先记录 Docker 镜像缓存为空，再用仅 `packages: read` 的 Nucleus 短期 job token 按准确 digest 拉取。权限失败不改用匿名或 PAT。认证文件删除后，核 registry 与本地平台、config、RootFS 及实际运行引用，复用现有隔离运行入口验证非 root、私有 PG、双 Chromium 和薄消费者。源码和依赖只读、容器禁外网且不挂 Docker socket，finally 核容器、PG、目录及本次拉取引用的清理。Docker 运行引用与 config 摘要分别记录。
+冷拉取使用另一台全新 hosted runner。新宿主不保证 Docker 没有预载镜像；本次准备只限准确发布工作流的 `cold` job、GitHub-hosted Linux 和本地 default Unix socket。先记录初始镜像及其引用和空容器清单，只删除该初始枚举中的镜像，不强制删除或执行全系统 prune。删除前核引用仍指向原 ID，删除后回读镜像和容器均为空；有容器、出现新镜像、上下文不符、拒绝或未知即失败并保留前后态，不继续拉取。此准备不用于自托管或共享 daemon。
+
+空缓存成立后，再用仅 `packages: read` 的 Nucleus 短期 job token 按准确 digest 拉取，记录白名单层进度、摘要及原进程结果；发现缓存层复用或摘要冲突则拒绝。权限失败不改用匿名或 PAT。认证文件删除后，核 registry 与本地平台、config、RootFS 及实际运行引用，复用现有隔离运行入口验证非 root、私有 PG、双 Chromium 和薄消费者。源码和依赖只读、容器禁外网且不挂 Docker socket，finally 核容器、PG、目录及本次拉取引用的清理。Docker 运行引用与 config 摘要分别记录。
 
 publisher 的类型、拒绝/恢复及权限回归由[专用检查](../.github/workflows/halo-publish-checks.yml)执行：`./node_modules/.bin/tsc -p .github/halo-publish/tsconfig.json --noEmit` 和 `bun test ./.github/halo-publish/publication.test.ts`。固定 SHA 的 actionlint 1.7.12 另核两份发布工作流的语法与表达式上下文。新增工具独立于 producer 的验收输入集合。单元检查和源码合并不证明包设置、真实发布或冷拉取已完成；这些结果由交付负责人结合实际运行、摘要、权限和清理原件接纳。此入口不自动持续发布、不迁移生产消费者，也不提供 VM 接入证明。
 
