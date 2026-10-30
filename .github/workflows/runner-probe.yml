@@ -22,6 +22,11 @@ on:
         required: false
         type: boolean
         default: false
+      restart_window:
+        description: Wait 120 seconds before platform checks for a controlled controller restart
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -57,6 +62,7 @@ jobs:
       FAIL_AFTER_CHECKS: ${{ inputs.fail_after_checks }}
       CANCEL_AFTER_CHECKS: ${{ inputs.cancel_after_checks }}
       TIMEOUT_AFTER_CHECKS: ${{ inputs.timeout_after_checks }}
+      RESTART_WINDOW: ${{ inputs.restart_window }}
     steps:
       - name: Bind reviewed dev revision
         run: |
@@ -70,6 +76,9 @@ jobs:
           test "$FAIL_AFTER_CHECKS:$CANCEL_AFTER_CHECKS" != true:true
           test "$FAIL_AFTER_CHECKS:$TIMEOUT_AFTER_CHECKS" != true:true
           test "$CANCEL_AFTER_CHECKS:$TIMEOUT_AFTER_CHECKS" != true:true
+          test "$FAIL_AFTER_CHECKS:$RESTART_WINDOW" != true:true
+          test "$CANCEL_AFTER_CHECKS:$RESTART_WINDOW" != true:true
+          test "$TIMEOUT_AFTER_CHECKS:$RESTART_WINDOW" != true:true
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ inputs.expected_revision }}
@@ -86,6 +95,11 @@ jobs:
         run: bun tools/halo-ci-image.ts verify 2>&1 | tee "$RUNNER_TEMP/runner-probe-image.log"
       - name: Create private fixture scope
         run: bun tools/package-postgresql.ts temp 2>&1 | tee "$RUNNER_TEMP/runner-probe-temp.log"
+      - name: Hold controlled controller restart window
+        if: success() && inputs.restart_window == true
+        run: |
+          printf 'RUNNER_PROBE_RESTART_WINDOW run=%s attempt=%s source=%s duration_seconds=120\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" | tee "$RUNNER_TEMP/runner-probe-restart.log"
+          sleep 120
       - name: Check complete platform package
         run: bun tools/check-packages.ts --package platform --test-threads 2 2>&1 | tee "$RUNNER_TEMP/runner-probe-platform.log"
       - name: Fail after successful platform checks

@@ -72,7 +72,7 @@ plan 直接调用现分类器。无法核实比较时保守选择 full/all；畸
 
 `fail_after_checks` 是默认 false 的 Boolean 输入。省略或关闭时沿用成功路径。仅显式开启且前序步骤全部成功时，在完整 platform 检查后输出固定 `RUNNER_PROBE_EXPECTED_FAILURE` marker，再以 42 退出。marker 包含准确 run、attempt、source 和固定原因，写入既有 artifact 范围内的 `runner-probe-failure.log`。输入不接受命令、路径或自定义故障文本。前序自然失败不会伪造该 marker；后续清理和上传仍以 `always()` 执行，也不会把原失败变为成功。
 
-`cancel_after_checks` 和 `timeout_after_checks` 同样默认为 false。失败、取消与超时三个输入至多开启一个，来源检查在 checkout 和私有资源准备前拒绝所有冲突组合。完整 platform 成功后，取消或超时调用同一 [helper](../../.github/runner-probe/cancel.ts)。它在既有私有 TMPDIR 内启动 PostgreSQL 18.4，只监听独占 Unix socket。helper 持续拥有 cluster 和固定 `pg_sleep(3600)` 查询；独立 SQL 确认同一 backend 活动后才发布 READY。白名单投影绑定 run、attempt、source、预期模式、PID、启动时间和 data/socket 路径，不输出环境或凭据。
+`cancel_after_checks`、`timeout_after_checks` 和 `restart_window` 同样默认为 false。四种模式至多开启一个；来源检查在 checkout 和私有资源准备前拒绝所有冲突组合。完整 platform 成功后，取消或超时调用同一 [helper](../../.github/runner-probe/cancel.ts)。它在既有私有 TMPDIR 内启动 PostgreSQL 18.4，只监听独占 Unix socket。helper 持续拥有 cluster 和固定 `pg_sleep(3600)` 查询；独立 SQL 确认同一 backend 活动后才发布 READY。白名单投影绑定 run、attempt、source、预期模式、PID、启动时间和 data/socket 路径，不输出环境或凭据。
 
 workflow 向 helper 显式传入两个 Boolean 值。helper 只接受其中一个为 true，将受控的 `cancel` 或 `timeout` 模式绑定到 owner、存储状态、活动查询和清理。错误值或存储模式失配保持失败，不停止另一模式拥有的进程。模式表示预期触发方式，不证明实际中断原因。缺少私有 scope 的早期清理安全返回，不为失败路径创建新资源。
 
@@ -87,6 +87,12 @@ workflow 向 helper 显式传入两个 Boolean 值。helper 只接受其中一�
 现场超时验收先核 platform 成功、真实 PG READY、预上传和活动等待，再由原观察链取得接近 deadline 的有界活动证据。绑定实际 runner 版本、job 开始、平台期限、结束时间及原 annotations。`timed_out` 可直接证明原因；若 run/job 只显示 failure 或 cancelled，必须补齐准确 job 的平台超时诊断、该 runner 版本的解释和本次无手动取消的记录。约 45 分钟的耗时、红色状态或预期模式均不单独证明原因。
 
 原生 deadline 可能截断 `always()`、最终上传或容器收尾。有序 PG/容器清理、日志上传与 VM 级回收分别按原件报告。若有序收尾被截断，只有 deadline 原因、活 PG 前态、必要预保全诊断，以及 GARM 完成/删除、原 LXD operation 成功、准确 VM/根盘缺席、runner 注销、槽位释放和 disabled 均有证据时，才接受为“硬超时后由 VM 回收封闭”。这不追认有序停止或上传成功。源码测试只验证模式绑定和信号处理；真实 deadline、重启和双容量仍各自验收。
+
+`restart_window` 只提供受控重启窗口。镜像验证和私有 scope 成功后、完整 platform 前，步骤写入 `RUNNER_PROBE_RESTART_WINDOW` 并固定等待 120 秒。marker 包含 run、attempt、source 和固定秒数，保存在 `runner-probe-restart.log`。输入不接受命令、路径、时长或宿主控制参数。日志或等待失败保持失败；等待结束后仍执行完整 platform 和原清理链。
+
+现场负责人只在窗口步骤仍 running 时注入一次 graceful Stop/Start。此前核对唯一已分配的 job、attempt、runner 和 VM，以及 enabled/min 0/max 1 的专用池。保持原 DB、controller、repository、pool 和镜像，按原操作句柄确认 Stop 终态后再 Start。gateway 的依赖与恢复单独核验。错过窗口就报告未覆盖；最终 marker 不证明注入时刻。
+
+重启验收要求同一 job/attempt/runner/VM 继续完成业务和清理。另核控制面身份与 DB 连续、gateway 恢复、原资源自动回收及最终 disabled。空池启动、替代任务或同名新 VM 不满足这些条件。窗口源码及 Bash 回归不证明现场重启成功；crash、creating 或多任务恢复仍各自验收。
 
 默认成功验收同时要求完整 package 检查、PG scan empty、TMPDIR removed、原 run/job 成功终态，以及 GARM 自动回收对应 VM 的证据。失败验收另须证明前序完整检查成功、固定 marker、步骤退出码 42 和原 run/job 的 failure 终态。清理、artifact 上传与自动销毁证据仍须完整。取消、超时、bootstrap 或其他前序失败不能充当预期失败。硬终止可能阻止清理，单有 `always()` 不证明资源已回收。现场负责人持有唯一 dispatch、运行观察和 VM 生命周期责任；源码检查与合并不代替实际验收，也不证明全部 CI 已迁移。
 

@@ -108,6 +108,13 @@ test("only manual dev work can enter the dedicated runner job", () => {
           type: "boolean",
           default: false,
         },
+        restart_window: {
+          description:
+            "Wait 120 seconds before platform checks for a controlled controller restart",
+          required: false,
+          type: "boolean",
+          default: false,
+        },
       },
     },
   });
@@ -219,6 +226,7 @@ test("native initialization alone receives the read-only package credential", ()
     FAIL_AFTER_CHECKS: "${{ inputs.fail_after_checks }}",
     CANCEL_AFTER_CHECKS: "${{ inputs.cancel_after_checks }}",
     TIMEOUT_AFTER_CHECKS: "${{ inputs.timeout_after_checks }}",
+    RESTART_WINDOW: "${{ inputs.restart_window }}",
   });
   expect(source).not.toMatch(
     /secrets\.|docker login|sudo|chmod|actions\/cache|rust-cache|CARGO_HOME|RUSTUP_HOME/,
@@ -426,20 +434,103 @@ test("conflicting modes are rejected before checkout or private resource prepara
   for (const failure of ["", "false", "true"])
     for (const cancel of ["", "false", "true"])
       for (const timeout of ["", "false", "true"])
-        expect(
-          execute(guard, {
-            ...context,
-            FAIL_AFTER_CHECKS: failure,
-            CANCEL_AFTER_CHECKS: cancel,
-            TIMEOUT_AFTER_CHECKS: timeout,
-          }).status,
-        ).toBe(
-          [failure, cancel, timeout].filter((value) => value === "true")
-            .length > 1
-            ? 1
-            : 0,
-        );
+        for (const restart of ["", "false", "true"])
+          expect(
+            execute(guard, {
+              ...context,
+              FAIL_AFTER_CHECKS: failure,
+              CANCEL_AFTER_CHECKS: cancel,
+              TIMEOUT_AFTER_CHECKS: timeout,
+              RESTART_WINDOW: restart,
+            }).status,
+          ).toBe(
+            [failure, cancel, timeout, restart].filter(
+              (value) => value === "true",
+            ).length > 1
+              ? 1
+              : 0,
+          );
   expect(job.steps[0]).toBe(guard);
+});
+
+test("restart window requires an explicit request after successful scope preparation", () => {
+  const window = step("Hold controlled controller restart window");
+  expect(job.steps.indexOf(window)).toBe(
+    job.steps.indexOf(step("Create private fixture scope")) + 1,
+  );
+  expect(job.steps.indexOf(step("Check complete platform package"))).toBe(
+    job.steps.indexOf(window) + 1,
+  );
+  expect(window.run).not.toContain("${{");
+  for (const successful of [false, true])
+    for (const requested of [undefined, false, true]) {
+      const functions = [
+        {
+          name: "success",
+          minArgs: 0,
+          maxArgs: 0,
+          call: () => new data.BooleanData(successful),
+        },
+      ];
+      const inputs = new data.Dictionary();
+      if (requested !== undefined)
+        inputs.add("restart_window", new data.BooleanData(requested));
+      const enabled = truthy(
+        new Evaluator(
+          new Parser(
+            new Lexer(window.if!).lex().tokens,
+            ["inputs"],
+            functions,
+          ).parse(),
+          new data.Dictionary({ key: "inputs", value: inputs }),
+          new Map(functions.map((fn) => [fn.name, fn])),
+        ).evaluate(),
+      );
+      expect(enabled).toBe(successful && requested === true);
+    }
+});
+
+test("actual restart Bash binds diagnostics and a fixed wait without hiding failures", () => {
+  const path = temporary();
+  const calls = join(path, "calls");
+  // Execute the workflow shell while recording the external wait boundary.
+  writeFileSync(
+    join(path, "sleep"),
+    '#!/bin/bash\nprintf "%s\\n" "$*" >> "$CALLS"\nexit "$STATUS"\n',
+    { mode: 0o700 },
+  );
+  const expected =
+    `RUNNER_PROBE_RESTART_WINDOW run=123456 attempt=1 source=${"a".repeat(40)} ` +
+    "duration_seconds=120\n";
+  const env = {
+    PATH: `${path}:${process.env.PATH}`,
+    RUNNER_TEMP: path,
+    CALLS: calls,
+    GITHUB_RUN_ID: "123456",
+    GITHUB_RUN_ATTEMPT: "1",
+    GITHUB_SHA: "a".repeat(40),
+  };
+  for (const status of [0, 27]) {
+    writeFileSync(calls, "");
+    const result = execute(step("Hold controlled controller restart window"), {
+      ...env,
+      STATUS: String(status),
+    });
+    expect(result.status).toBe(status);
+    expect(result.stdout).toBe(expected);
+    expect(readFileSync(join(path, "runner-probe-restart.log"), "utf8")).toBe(
+      expected,
+    );
+    expect(readFileSync(calls, "utf8")).toBe("120\n");
+  }
+  writeFileSync(calls, "");
+  const failedLog = execute(step("Hold controlled controller restart window"), {
+    ...env,
+    RUNNER_TEMP: join(path, "absent"),
+    STATUS: "0",
+  });
+  expect(failedLog.status).not.toBe(0);
+  expect(readFileSync(calls, "utf8")).toBe("");
 });
 
 test("active PG is uploaded before interruptible waiting and cleaned before the independent scan", () => {
