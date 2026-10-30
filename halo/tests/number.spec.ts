@@ -257,11 +257,54 @@ test("unsaved pending material is never described as a confirmed allocation", as
   expect(state.posts).toHaveLength(0);
 });
 
+test("untrusted response requires reload even if its storage readback fails", async ({
+  page,
+  context,
+}) => {
+  await page.addInitScript(() => {
+    const original = Storage.prototype.getItem;
+    let failed = false;
+    Storage.prototype.getItem = function (key) {
+      const value = original.call(this, key);
+      if (
+        key === "halo.number-allocation" &&
+        value &&
+        JSON.parse(value).code === "untrusted" &&
+        !failed
+      ) {
+        failed = true;
+        throw new DOMException(
+          "Storage temporarily unavailable",
+          "SecurityError",
+        );
+      }
+      return value;
+    };
+  });
+  const state = control();
+  state.post = async () => ({
+    status: 201,
+    body: { code: "ok", number: null },
+  });
+  await start(page, context, state);
+  await confirm(page);
+  await expect(
+    page.getByRole("heading", { name: "请重新加载页面", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "重新检查", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "查看本次领取结果", exact: true }),
+  ).toHaveCount(0);
+  expect(state.posts).toHaveLength(1);
+});
+
 test("lost response reload replays only the same explicit original", async ({
   page,
   context,
 }) => {
-  await page.clock.install();
+  await page.clock.setFixedTime(Date.now());
   const state = control();
   let lost = true;
   state.post = async () => {
@@ -281,7 +324,9 @@ test("lost response reload replays only the same explicit original", async ({
     page.getByRole("heading", { name: "领取结果待确认" }),
   ).toBeVisible();
   expect(state.posts).toHaveLength(1);
-  await page.clock.fastForward(6_000);
+  await page.clock.setFixedTime(
+    (await page.evaluate(() => Date.now())) + 6_000,
+  );
   await page.getByRole("button", { name: "查看本次领取结果" }).click();
   await expect(
     page.getByRole("heading", { name: "工号已领取", exact: true }),

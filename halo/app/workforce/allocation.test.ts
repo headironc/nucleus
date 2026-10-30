@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { AllocationController } from "./allocation";
 import { KEY, read } from "./allocation-material";
 import type { AllocationResult, AllocationInput } from "../protocol/number";
-import type { Account } from "../protocol/session";
+import type { Account, CurrentResult } from "../protocol/session";
 import type { BrowserSession, Selection } from "../authentication/session";
 import { sameSelection } from "../authentication/session";
 
@@ -368,6 +368,117 @@ describe("first self allocation", () => {
     });
     c.close();
   });
+  it("keeps a late success arriving during an explicit result recheck", async () => {
+    const f = fixture();
+    let finishPost!: (value: AllocationResult) => void;
+    f.allocate.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishPost = resolve;
+        }),
+    );
+    f.allocate.mockResolvedValue({ kind: "disconnected" });
+    const account = {
+      id,
+      personId: id,
+      revisionId: id,
+      name: "Person",
+    } as Account;
+    const current = vi.fn(async (): Promise<CurrentResult> => ({
+      kind: "account",
+      account,
+    }));
+    const c = f.create({ current });
+    await ready(c);
+    const sent = c.submit(902);
+    await vi.waitFor(() => expect(f.allocate).toHaveBeenCalledTimes(1));
+    await c.verify();
+    f.tick();
+    let finishCheck!: (value: CurrentResult) => void;
+    current.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finishCheck = resolve;
+        }),
+    );
+    const checked = c.query();
+    await vi.waitFor(() => expect(current).toHaveBeenCalledTimes(3));
+    finishPost({ kind: "allocated", number: fixed });
+    await sent;
+    finishCheck({ kind: "account", account });
+    await checked;
+    expect(c.snapshot()).toMatchObject({
+      kind: "result",
+      allocation: { outcome: "complete", number: fixed },
+    });
+    expect(read(f.storage)).toMatchObject({
+      outcome: "complete",
+      number: fixed,
+    });
+    expect(f.allocate).toHaveBeenCalledTimes(1);
+    c.close();
+  });
+  it.each(["before replay", "during replay"] as const)(
+    "preserves a late success %s without replacing it with a replay result",
+    async (stage) => {
+      const f = fixture();
+      let finishPost!: (value: AllocationResult) => void;
+      let finishReplay!: (value: AllocationResult) => void;
+      f.allocate.mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishPost = resolve;
+          }),
+      );
+      f.allocate.mockImplementationOnce(() =>
+        stage === "before replay"
+          ? Promise.resolve({ kind: "disconnected" })
+          : new Promise((resolve) => {
+              finishReplay = resolve;
+            }),
+      );
+      let held = false;
+      let building = false;
+      let releaseBuild!: () => void;
+      const released = new Promise<void>((resolve) => {
+        releaseBuild = resolve;
+      });
+      const c = f.create({
+        build: async () => {
+          if (held && c.snapshot().kind === "busy") {
+            building = true;
+            await released;
+          }
+          return true;
+        },
+      });
+      await ready(c);
+      const sent = c.submit(902);
+      await vi.waitFor(() => expect(f.allocate).toHaveBeenCalledTimes(1));
+      await c.verify();
+      f.tick();
+      held = stage === "before replay";
+      const checked = c.query();
+      if (held) await vi.waitFor(() => expect(building).toBe(true));
+      else await vi.waitFor(() => expect(f.allocate).toHaveBeenCalledTimes(2));
+      finishPost({ kind: "allocated", number: fixed });
+      await sent;
+      if (held) releaseBuild();
+      else finishReplay({ kind: "disconnected" });
+      await checked;
+      expect(c.snapshot()).toMatchObject({
+        kind: "result",
+        allocation: { outcome: "complete", number: fixed },
+      });
+      expect(read(f.storage)).toMatchObject({
+        outcome: "complete",
+        number: fixed,
+      });
+      expect(f.allocate).toHaveBeenCalledTimes(held ? 1 : 2);
+      c.close();
+    },
+    5_000,
+  );
   it("clears only the exact invalid selection after a 401", async () => {
     const f = fixture();
     f.allocate.mockResolvedValue({
@@ -396,6 +507,30 @@ describe("first self allocation", () => {
     expect(read(f.storage)).toMatchObject({
       outcome: "pending",
       input: { subtype: 902 },
+    });
+    c.close();
+  });
+  it("requires reload when verifying the untrusted-response record fails", async () => {
+    const f = fixture();
+    const getItem = vi.spyOn(f.storage, "getItem");
+    f.allocate.mockImplementationOnce(async () => {
+      getItem.mockImplementationOnce(() => {
+        throw Error("transient read failure");
+      });
+      return { kind: "untrusted" };
+    });
+    const c = f.create();
+    await ready(c);
+    await c.submit(902);
+    expect(c.snapshot().kind).toBe("reload");
+    f.tick();
+    await c.verify();
+    await c.query();
+    expect(c.snapshot().kind).toBe("reload");
+    expect(f.allocate).toHaveBeenCalledTimes(1);
+    expect(read(f.storage)).toMatchObject({
+      outcome: "pending",
+      code: "untrusted",
     });
     c.close();
   });

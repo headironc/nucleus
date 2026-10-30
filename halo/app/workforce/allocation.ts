@@ -244,9 +244,12 @@ export class AllocationController {
     await this.verify();
     if (
       this.state.kind !== "result" ||
-      this.state.allocation.operation !== allocation.operation
+      this.state.allocation.operation !== allocation.operation ||
+      this.state.allocation.outcome !== "pending" ||
+      this.state.allocation.retryAt > this.dependencies.now()
     )
       return;
+    const pending = this.state.allocation;
     try {
       const stored = read(this.dependencies.storage);
       if (
@@ -266,7 +269,7 @@ export class AllocationController {
       this.render();
       return;
     }
-    await this.send(allocation);
+    await this.send(pending);
   }
   private async send(original: Allocation) {
     const binding = this.current.binding();
@@ -279,6 +282,11 @@ export class AllocationController {
     const timer = setTimeout(() => request.abort(), 35_000);
     const active = () =>
       generation === this.generation && this.current.matches(binding);
+    const pending = () =>
+      this.material &&
+      this.material !== "missing" &&
+      this.material.operation === original.operation &&
+      this.material.outcome === "pending";
     try {
       const next = { ...original, retryAt: this.retryAt() };
       this.store(next);
@@ -286,7 +294,12 @@ export class AllocationController {
         if (active()) this.reload();
         return;
       }
-      if (!active() || !(await this.current.confirm(binding)) || !active())
+      if (
+        !active() ||
+        !(await this.current.confirm(binding)) ||
+        !active() ||
+        !pending()
+      )
         return;
       const result = await this.dependencies.allocate(
         original.operation,
@@ -319,10 +332,14 @@ export class AllocationController {
       } else if (active()) {
         if (!(await this.current.confirm(binding)) || !active()) return;
         if (result.kind === "untrusted") {
-          this.store({ ...next, code: "untrusted" });
-          this.reload();
+          try {
+            if (pending()) this.store({ ...next, code: "untrusted" });
+          } finally {
+            this.reload();
+          }
           return;
         }
+        if (!pending()) return;
         if (result.kind === "failure") {
           const outcome =
             result.code === "request_mismatch"
