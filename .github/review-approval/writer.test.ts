@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { EvidenceApi } from "./evidence.test.ts";
-import { b } from "./fixtures.ts";
+import { b, providerFixture } from "./fixtures.ts";
 import { snapshot } from "./evidence.ts";
 import { approvalBody } from "./approve.ts";
 import {
@@ -24,6 +24,7 @@ import {
   prepareIntent,
 } from "./main.ts";
 import type { Intent } from "./intent.ts";
+import { prepareQuota, quotaRequest } from "./quota.ts";
 
 const bot = { id: 300000001, type: "Bot", login: "cladiron[bot]" };
 class WriterApi extends EvidenceApi {
@@ -46,7 +47,7 @@ class WriterApi extends EvidenceApi {
     if (this.failDismiss) throw new Error("Unknown dismissal");
     this.f.reviews.find((r) => r.id === id)!.state = "DISMISSED";
   }
-  override async post() {
+  override async post(_path?: string, _body?: any): Promise<any> {
     this.posts++;
     throw new Error("Unexpected approval POST");
   }
@@ -148,6 +149,103 @@ async function fixture() {
     counts: () => ({ invalidation, minted, revoked, persisted }),
   };
 }
+async function selectQuota(f: Awaited<ReturnType<typeof fixture>>) {
+  const source = {
+    id: 601,
+    app: { id: 1082092 },
+    name: "cubic · AI code reviewer",
+    status: "completed",
+    conclusion: "neutral",
+    head_sha: b.head,
+    started_at: "2026-10-30T09:00:00Z",
+    completed_at: "2026-10-30T09:01:00Z",
+    output: {
+      annotations_count: 0,
+      title: "AI review line limit reached",
+      summary:
+        "You've reached your plan's monthly review limit. cubic has reviewed 1,200 of the 1,000 allowed lines of code this month.",
+      text: null,
+    },
+  };
+  f.api.f.comments = f.api.f.comments.filter((c) => c.id !== 100);
+  f.api.f.reviews = f.api.f.reviews.filter((r) => r.user.id !== 191113872);
+  f.api.f.checks = [source];
+  const get = f.api.get.bind(f.api);
+  f.api.get = async (path) =>
+    path.endsWith("/check-runs/601") ? source : get(path);
+  const selection = await prepareQuota(f.api, b, 601);
+  f.api.f.comments.find((c) => c.id === 101).body = quotaRequest(b, selection);
+  const current = await snapshot(f.api, b.pr);
+  f.planned.digest = current.digest;
+  f.api.f.reviews.find((r) => r.id === 901)!.body = approvalBody(
+    current,
+    "run-699-attempt-1",
+  );
+}
+for (const operation of ["prepare", "approve"])
+  test(`verified quota current-head check finding blocks ${operation} before credentials`, async () => {
+    const f = await fixture();
+    await selectQuota(f);
+    const report = providerFixture().checks[0];
+    report.output.text = "P1: undisposed check report";
+    f.api.f.checks.push(report);
+    const result =
+      operation === "prepare"
+        ? prepareIntent(f.api, b.pr, b.base, {}, 700, 1, f.controls.invalidate)
+        : approveCandidate(f.api, f.planned, b.base, {}, f.controls);
+    await expect(result).rejects.toThrow("unparsed report");
+    expect(f.counts().invalidation).toBe(true);
+    expect(f.counts().minted).toBe(0);
+    expect(f.api.posts).toBe(0);
+    expect(f.api.puts).toEqual([]);
+  });
+for (const change of ["new", "body"])
+  test(`a ${change} current-head check report after approval changes the digest and withdraws exact self approval`, async () => {
+    const f = await fixture();
+    await selectQuota(f);
+    const report = providerFixture().checks[0];
+    f.api.f.checks.push(report);
+    f.planned.digest = (await snapshot(f.api, b.pr)).digest;
+    f.api.f.reviews = f.api.f.reviews.filter((r) => r.id !== 901);
+    const pages = f.api.pages.bind(f.api);
+    let snapshots = 0;
+    f.api.pages = async (path, key) => {
+      if (path.includes("/commits/") && ++snapshots === 4) {
+        if (change === "new")
+          f.api.f.checks.push({ ...structuredClone(report), id: 402 });
+        else report.output.title = "AI review completed";
+      }
+      return pages(path, key);
+    };
+    f.api.post = async (_path, body) => {
+      f.api.posts++;
+      const created = {
+        id: 1000,
+        user: bot,
+        performed_via_github_app: { id: 3104501 },
+        state: "APPROVED",
+        submitted_at: "2026-10-30T14:00:00Z",
+        commit_id: body.commit_id,
+        body: body.body,
+      };
+      f.api.f.reviews.push(created);
+      return created;
+    };
+    await expect(
+      approveCandidate(f.api, f.planned, b.base, {}, f.controls),
+    ).rejects.toThrow("Evidence differs");
+    expect(snapshots).toBe(4);
+    expect(f.api.posts).toBe(1);
+    expect(f.api.puts).toEqual([1000]);
+    expect(f.api.f.reviews.find((r) => r.id === 1000)!.state).toBe("DISMISSED");
+    expect(f.api.f.reviews.find((r) => r.id === 902)!.state).toBe("APPROVED");
+    expect(f.counts()).toEqual({
+      invalidation: false,
+      minted: 1,
+      revoked: 1,
+      persisted: 1,
+    });
+  });
 for (const changed of ["thread", "CI", "provider"] as const)
   test(`successful intent then changed ${changed} delegates only trusted withdrawal before mint`, async () => {
     const f = await fixture();

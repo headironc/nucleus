@@ -19,10 +19,56 @@ export function cubicOutput(value: unknown): boolean {
       ].includes(key),
     ) &&
     output.annotations_count === 0 &&
+    (output.annotations_url === undefined ||
+      output.annotations_url === null ||
+      typeof output.annotations_url === "string") &&
     [output.title, output.summary, output.text].every(
       (v) => v === undefined || v === null || typeof v === "string",
     )
   );
+}
+
+const quotaAdvice = RegExp.escape(
+  " issues after cubic flagged them so far. [Enable flex capacity](https://www.cubic.dev/settings?tab=billing) to cover overages automatically and resume reviews now. [Learn how flex capacity works](https://docs.cubic.dev/account/flex-capacity?utm_source=github&utm_medium=review_line_limit). To help optimise your usage, you can tune cubic to get the most out of your usage limits: - Stop reviewing [test files](https://www.cubic.dev/ai-review?tab=setup&card=ai-review-card-ignore-patterns) - Turn off [incremental reviews](https://www.cubic.dev/ai-review?tab=setup&card=ai-review-card-incremental-reviews) - Use the [cubic CLI](https://docs.cubic.dev/ide/cli-review) locally - Enable [flex pricing](https://www.cubic.dev/settings?tab=billing) [Learn more →](https://docs.cubic.dev/account/ai-review-usage#tips-to-reduce-usage)",
+);
+const quotaNotice = new RegExp(
+  String.raw`^You've reached your plan's monthly review limit\. cubic has reviewed ([0-9,]+) of the ([0-9,]+) allowed lines of code this month\.(?: Reviews resume on ([0-9]{1,2}) ([A-Za-z]+) ([0-9]{4}) \(in [0-9]+ days?\)\.)?(?: Your team has fixed [0-9]+${quotaAdvice})?$`,
+);
+export const cubicQuotaNotice = (text: unknown) =>
+  typeof text === "string"
+    ? text.replace(/\s+/g, " ").trim().match(quotaNotice)
+    : null;
+export function cubicCheckReport(
+  value: unknown,
+): "review" | "quota" | "merge-only" | null {
+  if (!cubicOutput(value)) return null;
+  const output = value as { [key: string]: unknown };
+  const noTitle = output.title == null || output.title === "";
+  const noText = output.text == null || output.text === "";
+  if (
+    noText &&
+    (noTitle || output.title === "AI review completed") &&
+    cubicCompletionSummary(output.summary)
+  )
+    return "review";
+  const surfaces = [output.summary, output.text].filter(
+    (v) => typeof v === "string" && v.trim().length > 0,
+  );
+  if (
+    (noTitle || output.title === "AI review line limit reached") &&
+    surfaces.length === 1 &&
+    cubicQuotaNotice(surfaces[0])
+  )
+    return "quota";
+  // The observed merge-only body has no accepted nonempty title contract yet.
+  if (
+    noTitle &&
+    noText &&
+    output.summary ===
+      "This commit only merges another branch into the PR branch, so cubic completed this check without running an AI review. cubic will review your next non-merge commit."
+  )
+    return "merge-only";
+  return null;
 }
 
 // Only generic provider explanation is literal. No original private report URL,

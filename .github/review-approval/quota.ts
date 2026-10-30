@@ -13,6 +13,8 @@ import {
   cubicReport,
   cubicOutput,
   cubicCompletionSummary,
+  cubicQuotaNotice,
+  cubicCheckReport,
 } from "./provider-text.ts";
 import { requestMarker } from "./identity.ts";
 
@@ -167,12 +169,6 @@ const months = [
   "November",
   "December",
 ];
-const quotaAdvice = RegExp.escape(
-  " issues after cubic flagged them so far. [Enable flex capacity](https://www.cubic.dev/settings?tab=billing) to cover overages automatically and resume reviews now. [Learn how flex capacity works](https://docs.cubic.dev/account/flex-capacity?utm_source=github&utm_medium=review_line_limit). To help optimise your usage, you can tune cubic to get the most out of your usage limits: - Stop reviewing [test files](https://www.cubic.dev/ai-review?tab=setup&card=ai-review-card-ignore-patterns) - Turn off [incremental reviews](https://www.cubic.dev/ai-review?tab=setup&card=ai-review-card-incremental-reviews) - Use the [cubic CLI](https://docs.cubic.dev/ide/cli-review) locally - Enable [flex pricing](https://www.cubic.dev/settings?tab=billing) [Learn more →](https://docs.cubic.dev/account/ai-review-usage#tips-to-reduce-usage)",
-);
-const quotaNotice = new RegExp(
-  String.raw`^You've reached your plan's monthly review limit\. cubic has reviewed ([0-9,]+) of the ([0-9,]+) allowed lines of code this month\.(?: Reviews resume on ([0-9]{1,2}) ([A-Za-z]+) ([0-9]{4}) \(in [0-9]+ days?\)\.)?(?: Your team has fixed [0-9]+${quotaAdvice})?$`,
-);
 function source(check: Record, now: number, b: Binding): QuotaSelection {
   requireThat(
     check.app?.id === cubic.app &&
@@ -195,10 +191,14 @@ function source(check: Record, now: number, b: Binding): QuotaSelection {
     "Quota source has unknown additional report surfaces",
   );
   const text = texts[0].replace(/\s+/g, " ").trim();
-  const match = text.match(quotaNotice);
+  const match = cubicQuotaNotice(text);
   requireThat(
     match,
     "Source does not explicitly confirm monthly quota exhaustion",
+  );
+  requireThat(
+    cubicCheckReport(check.output) === "quota",
+    "Quota source has an unparsed title or report",
   );
   requireThat(
     [match[1], match[2]].every((value) =>

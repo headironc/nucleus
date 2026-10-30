@@ -82,6 +82,81 @@ test("synthetic explicit full-head dispositions accept without standalone receip
   ]);
 });
 for (const quota of [false, true])
+  for (const earlier of [false, true])
+    for (const field of ["summary", "text", "title", "annotations", "unknown"])
+      test(`current-head Cubic ${field} report is never hidden, quota=${quota}, earlier=${earlier}`, () => {
+        const f = providerFixture();
+        const report = earlier
+          ? {
+              ...structuredClone(f.checks[0]),
+              id: 402,
+              started_at: "2026-10-30T10:00:00Z",
+              completed_at: "2026-10-30T10:01:00Z",
+            }
+          : f.checks[0];
+        if (earlier) f.checks.push(report);
+        if (field === "annotations") report.output.annotations_count = 1;
+        else report.output[field] = "P1: unresolved threadless finding";
+        const selection = quota
+          ? ({ request: 101, head: b.head, base: b.base } as QuotaEvidence)
+          : undefined;
+        expect(() =>
+          verifyProviders(b, f.comments, f.reviews, f.checks, selection),
+        ).toThrow("unparsed report");
+      });
+test("a later addressed review cannot dispose an unknown check with no immutable publication boundary", () => {
+  const f = providerFixture();
+  const old = {
+    ...structuredClone(f.checks[0]),
+    id: 402,
+    started_at: "2026-10-30T10:00:00Z",
+    completed_at: "2026-10-30T10:01:00Z",
+  };
+  old.output.text = "P1: late unknown check report";
+  f.checks.push(old);
+  f.reviews[0].body = f.reviews[0].body.replace(
+    "**No issues found** across 41 files",
+    "**All reported issues addressed**",
+  );
+  f.checks[0].output.summary =
+    "AI review completed with 1 review. All reported issues addressed.";
+  expect(() => verifyProviders(b, f.comments, f.reviews, f.checks)).toThrow(
+    "unparsed report",
+  );
+});
+test("current-head Cubic report identity, time and state must be explicit", () => {
+  for (const change of [
+    (c: any) => {
+      c.app.id = 1;
+    },
+    (c: any) => {
+      c.head_sha = "f".repeat(40);
+    },
+    (c: any) => {
+      c.id = 0;
+    },
+    (c: any) => {
+      c.status = "in_progress";
+    },
+    (c: any) => {
+      c.conclusion = "neutral";
+    },
+    (c: any) => {
+      c.started_at = "invalid";
+    },
+    (c: any) => {
+      c.completed_at = "2026-10-30T09:00:00Z";
+    },
+    (c: any) => {
+      c.output.annotations_url = "https://example.invalid/report";
+    },
+  ]) {
+    const f = providerFixture();
+    change(f.checks[0]);
+    expect(() => verifyProviders(b, f.comments, f.reviews, f.checks)).toThrow();
+  }
+});
+for (const quota of [false, true])
   test(`full-head disposition ignores known abbreviated receipts from another head, quota=${quota}`, () => {
     const f = providerFixture();
     const selection = quota

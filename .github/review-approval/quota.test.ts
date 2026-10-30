@@ -161,6 +161,47 @@ test("trusted cross-PR quota selection uses complete Codex code/security without
     false,
   );
 });
+test("a verified quota selection cannot hide any current-head Cubic check report surface", async () => {
+  for (const field of ["summary", "text", "title", "annotations", "unknown"]) {
+    const f = await fixture();
+    const check = providerFixture().checks[0];
+    if (field === "annotations") check.output.annotations_count = 1;
+    else check.output[field] = "P1: unresolved current-head check report";
+    f.api.f.checks.push(check);
+    await expect(snapshot(f.api, b.pr, f.now)).rejects.toThrow(
+      "unparsed report",
+    );
+  }
+});
+test("other-PR source-head reports remain recovery inputs without becoming current-PR findings or digest", async () => {
+  const f = await fixture();
+  const originalPages = f.api.pages.bind(f.api);
+  const report = providerFixture({ ...b, head: f.source.head_sha }).checks[0];
+  report.output.text = "P1: another PR report";
+  f.api.pages = async (path, key) =>
+    path.includes(`/commits/${f.source.head_sha}/check-runs`)
+      ? [report]
+      : originalPages(path, key);
+  const before = await snapshot(f.api, b.pr, f.now);
+  report.output.text = "P1: changed another PR report";
+  const after = await snapshot(f.api, b.pr, f.now);
+  expect(after.digest).toBe(before.digest);
+  expect(after.evidence.providers.checkReports).toEqual([]);
+});
+test("current-head complete Cubic report bodies and added reports enter the quota snapshot digest", async () => {
+  const f = await fixture();
+  const before = await snapshot(f.api, b.pr, f.now);
+  const report = providerFixture().checks[0];
+  f.api.f.checks.push(report);
+  const added = await snapshot(f.api, b.pr, f.now);
+  expect(added.digest).not.toBe(before.digest);
+  expect(added.evidence.providers.checkReports[0].output).toEqual(
+    report.output,
+  );
+  report.output.title = "AI review completed";
+  const changed = await snapshot(f.api, b.pr, f.now);
+  expect(changed.digest).not.toBe(added.digest);
+});
 test("unparseable period is limited to the actual current-head refusal", async () => {
   const f = await fixture(true, true);
   expect((await snapshot(f.api, b.pr, now)).evidence.providers.cubic).toBe(

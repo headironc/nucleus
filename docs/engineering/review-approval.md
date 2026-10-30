@@ -48,6 +48,10 @@ Codex 使用 App `1144995`、bot `199175422` 的完整状态 marker，分别核�
 
 保留旧轮报告。已有发现须明确处置：Cubic 的旧发现需要明确的 addressed 结论；Codex 按 Code、Security 分别核对旧摘要。旧报告先通过身份、完整布局和时间校验，lane 完成时间不得超过报告的 `updated_at` 边界。当前 lane 的明确未解决发现状态为 false，且完成时间严格晚于旧报告边界，才处置旧未解决或未知结果。另一 lane 导致的摘要更新时间不能代替本 lane 完成时间，安全 null 及独立无发现回执也不能代替明确处置。同刻、晚到及坏时间均拒绝。新一轮 no-findings 不能抹掉旧的未知发现。未知供应商评论、threadless blocker 或无法关联的报告保持阻塞，待适配器有真实样本和接纳后扩展；不凭合成测试推定新供应商格式真实存在。
 
+正常与 quota 路线共同核验当前完整 `H` 的全部 Cubic check attempts。最新 check 决定本轮执行结果，其余 check 的报告也须核验。完整 output 仅接受已接纳的完成、额度拒绝或 merge-only 说明。标题、正文、annotations 和未知字段分别核验。额度与 merge-only 说明不代表审查通过。当前尚无 merge-only 非空标题的已接纳合同，未知标题保持拒绝。未知 check 正文不能借后续 addressed review 消除。check 的完成时间不证明其可变正文何时发表。原有 reviews 的明确处置合同保持。
+
+`ProviderEvidence.checkReports` 按 check ID 排序。记录保存实际身份、名称、完整 head、状态、结论、开始与完成时间及完整 output，纳入 snapshot digest。新增当前 head 的 check 或报告变化须改变摘要或使核验失败。选定 quota 来源另有原件 digest。来源 head 不同于当前 `H` 时，仅用其额外 checks 核对选择时点的恢复反证。其他 PR 的未知报告不构成当前 PR 发现，其后续变化也不改变当前摘要。
+
 PR reviews、issue comments、inline comments、review threads 和嵌套 comments 都完整分页。GraphQL comment 使用 `fullDatabaseId`，拒绝无法精确表示的数字 ID。每个 inline comment 必须归属已完整读取的 thread，每个 thread 须为 `isResolved=true`。`isOutdated=true` 不能替代解决；已处理且 resolved 的线程可以接受。部分 GraphQL 数据、重复页面、读取失败与缺失游标均失败。完整 receipt 与 summary 只接受固定的说明、表格和链接区块，追加或嵌入的未知正文均拒绝。仓库夹具使用去标识数据，原始私有报告链接保留在仓库外。
 
 REST 的 jobs、artifacts、workflow_runs 和 check_runs 每页均要求对象、对应数组及非负安全整数 `total_count`。跨页总数变化、最终累计不足和重复身份均失败；总数为零且数组明确为空才是空集合。数组端点不套用该对象合同。这些条件不提供 API 原子快照，也不证明不存在同数量内容漂移，批准仍核对后续完整证据读取。

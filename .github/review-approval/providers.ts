@@ -13,6 +13,7 @@ import {
   codexSummary,
   cubicOutput,
   cubicCompletionSummary,
+  cubicCheckReport,
 } from "./provider-text.ts";
 import {
   latestCodeRequest,
@@ -28,6 +29,7 @@ export type ProviderEvidence = {
   requests: { id: number; createdAt: string }[];
   results: number[];
   findings: number[];
+  checkReports: Record[];
 };
 function time(value: unknown) {
   requireThat(
@@ -177,6 +179,36 @@ export function verifyProviders(
     "Missing unedited owner Codex request for current H/B",
   );
   const securityRequest = boundRequests!.security;
+  const cubicChecks = checks.filter(
+    (c) => c.app?.id === cubic.app || c.name === "cubic · AI code reviewer",
+  );
+  for (const check of cubicChecks) {
+    requireThat(
+      check.app?.id === cubic.app &&
+        check.name === "cubic · AI code reviewer" &&
+        check.head_sha === b.head &&
+        Number.isSafeInteger(check.id) &&
+        check.id > 0,
+      "Cubic check identity/head unknown",
+    );
+    const report = cubicCheckReport(check.output);
+    requireThat(
+      report !== null,
+      `Unknown Cubic check ${check.id}: unparsed report; disposition required`,
+    );
+    requireThat(
+      check.status === "completed" &&
+        check.conclusion === (report === "quota" ? "neutral" : "success") &&
+        time(check.started_at) <= time(check.completed_at),
+      `Cubic check ${check.id} report completion unknown`,
+    );
+    requireThat(
+      check.output.annotations_url == null ||
+        check.output.annotations_url ===
+          `https://api.github.com/repos/headironc/nucleus/check-runs/${check.id}/annotations`,
+      "Cubic annotation surface identity changed",
+    );
+  }
   let cubicIds: number[] = [],
     cubicDisposition: Record | undefined;
   const disposedByCubic = (report: Record) =>
@@ -186,12 +218,6 @@ export function verifyProviders(
         time(cubicDisposition.updated_at ?? cubicDisposition.submitted_at));
   if (!quota) {
     requireThat(cubicRequest, "Missing Cubic request");
-    const cubicChecks = checks.filter(
-      (c) =>
-        c.app?.id === cubic.app &&
-        c.name === "cubic · AI code reviewer" &&
-        c.head_sha === b.head,
-    );
     const check = latest(
       cubicChecks.map((c) => ({
         ...c,
@@ -472,5 +498,22 @@ export function verifyProviders(
     findings: [...reviews, ...comments]
       .filter((c) => c.user?.id === cubic.bot || c.user?.id === codex.bot)
       .map((c) => c.id),
+    checkReports: [...cubicChecks]
+      .sort((a, b) => a.id - b.id)
+      .map((c) => ({
+        id: c.id,
+        app: c.app.id,
+        name: c.name,
+        head: c.head_sha,
+        status: c.status,
+        conclusion: c.conclusion,
+        started: c.started_at,
+        completed: c.completed_at,
+        output: Object.fromEntries(
+          Object.keys(c.output)
+            .sort()
+            .map((key) => [key, c.output[key]]),
+        ),
+      })),
   };
 }
