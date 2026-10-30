@@ -59,6 +59,19 @@ export async function currentNumber(
   id: string,
   signal: AbortSignal,
 ): Promise<NumberResult> {
+  const result = await currentNumberValue(id, signal);
+  if (result.kind !== "value") return result;
+  return {
+    kind: "number",
+    number: result.number === null ? null : summarize(result.number)!,
+  };
+}
+
+/** The application selector needs the actual subtype, rather than its display label. */
+export async function currentNumberValue(
+  id: string,
+  signal: AbortSignal,
+): Promise<{ kind: "value"; number: FixedNumber | null } | Failure> {
   try {
     const response = await fetch("/api/v1/workforce/current/numbers", {
       headers: {
@@ -78,9 +91,9 @@ export async function currentNumber(
     if (!value) return { kind: "untrusted" };
     if (response.status === 200) {
       const fixed = (value as Receipt).number;
-      if (fixed === null) return { kind: "number", number: null };
-      const number = summarize(fixed);
-      return number ? { kind: "number", number } : { kind: "untrusted" };
+      return fixed === null || summarize(fixed)
+        ? { kind: "value", number: fixed }
+        : { kind: "untrusted" };
     }
     return {
       kind: "failure",
