@@ -143,6 +143,7 @@ fn delivered_binary_serves_from_external_configuration_and_stops_on_sigterm() {
                 .env("NUCLEUS_WORKFORCE__APPLICATION__FONT_PATH", std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("domain/tests/fixtures/fonts/SourceSans3-Regular.ttf"))
                 .env("NUCLEUS_WORKFORCE__APPLICATION__TEMPLATE", serde_json::to_string(&domain::workforce::application::fixture_template()).expect("fixture template"))
                 .env("NUCLEUS_WORKFORCE__APPLICATION__PICKUPS", r#"["Fixture reception"]"#)
+                .env("NUCLEUS_WORKFORCE__APPLICATION__PHOTO_LIMITS", r#"{"person_files":100,"person_bytes":1073741824,"total_files":1000,"total_bytes":10737418240}"#)
                 .env("CREDENTIALS_DIRECTORY", &secrets)
                 .env("NOTIFY_SOCKET", &socket)
                 .current_dir(directory.path())

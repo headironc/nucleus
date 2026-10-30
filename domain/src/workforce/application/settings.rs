@@ -13,6 +13,7 @@ pub struct Settings {
     pub(super) template: Template,
     pub(super) font: Arc<Vec<u8>>,
     pub(super) pickups: Vec<String>,
+    pub(super) photo_limits: photo::Limits,
     pub(super) resources: [(ResourceId, &'static str, &'static str, i64); 2],
     text: Arc<Mutex<Text>>,
 }
@@ -55,6 +56,7 @@ impl Settings {
         background: Vec<u8>,
         font: Vec<u8>,
         pickups: Vec<String>,
+        photo_limits: photo::Limits,
     ) -> Result<Self, Error> {
         Self::validate(&template, &pickups, background_media)?;
         let background =
@@ -105,6 +107,7 @@ impl Settings {
             template,
             font: Arc::new(font.as_bytes().to_vec()),
             pickups,
+            photo_limits,
             resources,
             text,
         })
@@ -252,12 +255,18 @@ pub(super) fn publish(
 mod tests {
     #![allow(clippy::expect_used)]
 
-    use std::{io::Cursor, os::unix::fs::MetadataExt};
+    use std::{
+        io::Cursor,
+        os::unix::fs::{MetadataExt, PermissionsExt},
+    };
 
     use crate::workforce::application::{Direction, Error, Settings, TextArea, fixture_template};
 
     fn settings(font: &[u8]) -> (tempfile::TempDir, Settings) {
-        let directory = tempfile::tempdir().expect("private fixture files");
+        let directory = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .expect("private fixture files");
         let device = directory.path().metadata().expect("device").dev();
         let mut mount = directory.path().to_path_buf();
         while let Some(parent) = mount.parent() {
@@ -278,6 +287,7 @@ mod tests {
             background.into_inner(),
             font.to_vec(),
             vec!["Fixture pickup".to_owned()],
+            super::photo::Limits::new(100, 1 << 30, 1000, 10 << 30).expect("fixture capacity"),
         )
         .expect("valid isolated template");
         (directory, settings)

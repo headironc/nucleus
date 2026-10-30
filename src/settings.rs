@@ -545,6 +545,10 @@ mod tests {
                 r#"["Fixture reception"]"#.into(),
             ),
             (
+                "NUCLEUS_WORKFORCE__APPLICATION__PHOTO_LIMITS".into(),
+                r#"{"person_files":100,"person_bytes":1073741824,"total_files":1000,"total_bytes":10737418240}"#.into(),
+            ),
+            (
                 "NUCLEUS_WORKFORCE__APPLICATION__TEMPLATE".into(),
                 serde_json::to_string(&domain::workforce::application::fixture_template())
                     .expect("fixture template"),
