@@ -19,7 +19,7 @@
   </view>
   <!-- snapshot:sessions:end -->
 
-  <button class="secondary" wx:if="{{canCheck}}" bindtap="refresh" disabled="{{busy}}">{{phase === 'pending' || phase === 'complete' ? '检查登录状态' : '刷新列表'}}</button>
+  <button class="secondary" wx:if="{{canCheck}}" bindtap="refresh" disabled="{{busy}}">{{phase === 'sessions' ? '刷新列表' : '检查登录状态'}}</button>
   <button class="secondary" wx:if="{{canRecover}}" bindtap="recover" disabled="{{busy}}">查看退出结果</button>
   <navigator class="home-link" wx:if="{{canLogin &amp;&amp; !homeAction}}" url="/pages/account/index" open-type="redirect">使用手机号登录</navigator>
   <navigator class="home-link primary" wx:if="{{homeAction}}" url="/pages/home/index" open-type="reLaunch">返回公开首页</navigator>

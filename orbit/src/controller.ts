@@ -172,15 +172,16 @@ export class Controller {
       this.read();
       if (this.records.session) {
         if (this.selectedLogout()?.sessionId === this.records.session.id) {
-          this.pending("暂时无法确认退出结果。可查看本次退出结果，或重新检查当前登录。", true);
+          this.pending("退出结果待确认。请查看退出结果。");
         } else await this.checkSelected(generation);
       } else this.presentAnonymous();
     } catch { this.failedStorage(); }
   }
   private pending(message: string, canCheck = !!this.records.session) {
     const material = this.records.authentication ?? this.records.registration?.pending;
-    this.publish({ ...blank(), phase: "pending", canLogin: false, canCheck,
-      canRecover: material ? !material.stopped && material.retryAt <= this.now() : !!this.selectedLogout(),
+    const logoutPending = !material && !!this.selectedLogout();
+    this.publish({ ...blank(), phase: "pending", canLogin: false, canCheck: logoutPending ? false : canCheck, logoutPending,
+      canRecover: material ? !material.stopped && material.retryAt <= this.now() : logoutPending,
       message });
   }
   private presentAnonymous() {
@@ -228,7 +229,7 @@ export class Controller {
       if (validAccount(account) && (!selected.accountId || selected.accountId === account.id)) {
         this.retain({ ...this.records, session: { ...selected, accountId: account.id } });
         if (this.page === "sessions") return this.readSessions(generation);
-        this.publish({ ...blank(), phase: "account", canLogin: false, canCheck: true,
+        this.publish({ ...blank(), phase: "account", canLogin: false, canCheck: !this.selectedLogout(),
           message: this.records.expiredLogouts?.includes(account.id) ? "此前退出结果已无法继续查看，不表示此前退出失败。" : "",
           name: account.name, suffix: account.idNumber.suffix, avatar: account.avatar.href,
           bound: account.binding !== null, logoutPending: !!this.selectedLogout(),
@@ -257,7 +258,7 @@ export class Controller {
     if (Date.parse(selected.expiresAt) <= this.now()) return this.show(this.page);
     if (result?.status === 200 && validSessions(result.value.sessions, selected.id)) {
       this.otherUnknown = undefined;
-      this.publish({ ...blank(), phase: "sessions", canLogin: false, canCheck: true,
+      this.publish({ ...blank(), phase: "sessions", canLogin: false, canCheck: !this.selectedLogout(),
         sessions: result.value.sessions, sessionsReady: true, message: "列表已刷新。",
         logoutPending: !!this.selectedLogout(), canRecover: !!this.selectedLogout() });
     } else this.sessionFailure(result);
@@ -485,7 +486,7 @@ export class Controller {
           this.retain({ ...this.records, session: undefined });
           this.presentAnonymous();
           this.publish({ message: "暂时无法确认退出结果。请重新登录同一账户后查看本次退出结果。" });
-        } else this.pending("暂时无法确认退出结果。请查看本次退出结果，或重新检查当前登录。", true);
+        } else this.pending("退出结果待确认。请查看退出结果。");
       }
     } catch { if (this.current(generation)) this.writeFailed(); }
   }
