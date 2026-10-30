@@ -128,9 +128,8 @@ describe("the actual OpenAPI / Ajv generator combination", () => {
       media.schema = {
         type: "string",
         format: "binary",
-        maxLength: 8,
       };
-    else Object.assign(media.schema!, { maxLength: 8 });
+    Object.assign(media.schema!, { maxLength: 8 });
     expect(() => compile(selected)).toThrow("Unsupported binary schema");
   });
   it("accepts description annotations beside supported binary references", () => {
