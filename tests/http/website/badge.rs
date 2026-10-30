@@ -2,6 +2,7 @@
 
 use std::{collections::BTreeMap, io::Cursor, path::Path, time::Duration};
 
+use domain::workforce::application::Snapshot;
 use platform::files::Directory;
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -251,9 +252,16 @@ impl Observer {
                     .application
                     .as_ref()
                     .expect("actual creation response");
-                for field in ["id", "kind", "status", "snapshot", "photo"] {
+                for field in ["id", "kind", "status", "photo"] {
                     assert_eq!(application[field], value[field]);
                 }
+                // JSON.stringify may encode an integral layout coordinate without `.0`.
+                // Compare the exact protocol values rather than their numeric spelling.
+                let actual: Snapshot = serde_json::from_value(application["snapshot"].clone())
+                    .expect("response snapshot values");
+                let stored: Snapshot = serde_json::from_value(value["snapshot"].clone())
+                    .expect("stored snapshot values");
+                assert_eq!(actual, stored);
                 let submitted = chrono::DateTime::parse_from_rfc3339(
                     application["submittedAt"]
                         .as_str()
