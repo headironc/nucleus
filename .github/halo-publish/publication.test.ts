@@ -178,7 +178,7 @@ test("only the trusted dev dispatch can enter publication", () => {
   ])
     expect(() => assertContext({ ...context, ...change })).toThrow();
 });
-test("accepted platform tuple requires actual success, attempt, artifact ownership and private package association", () => {
+test("accepted platform tuple requires actual success, attempt, artifact ownership and the selected private package", () => {
   expect(() => check(accepted())).not.toThrow();
   const mutations: ((a: ReturnType<typeof accepted>) => void)[] = [
     (a) => {
@@ -276,9 +276,37 @@ test("an API omission is unknown, not permission or producer acceptance", () => 
     expect(() => check(a)).toThrow();
   }
 });
+test("unavailable job-token association metadata remains an explicit view rather than verified association", () => {
+  const a: any = accepted();
+  expect(check(a)).toBe("object");
+  a.pkg.repository = null;
+  expect(check(a)).toBe("null");
+  delete a.pkg.repository;
+  expect(check(a)).toBe("missing");
+});
+test("supplied package associations reject conflicts, incomplete identities and malformed structures", () => {
+  for (const association of [
+    {},
+    { id: 1432619931 },
+    { full_name: "headironc/nucleus" },
+    { id: 1, full_name: "headironc/nucleus" },
+    { id: 1432619931, full_name: "other/nucleus" },
+    [],
+    "headironc/nucleus",
+    false,
+    0,
+  ]) {
+    const a: any = accepted();
+    a.pkg.repository = association;
+    expect(() => check(a)).toThrow(
+      "Existing private package association is not ready: ",
+    );
+  }
+});
 test("a rejected job-token package response reports only the identity fields needed for recovery", () => {
   const a: any = accepted();
   a.pkg.repository = null;
+  a.pkg.visibility = "public";
   a.pkg.credentials = "inactive-secret-fixture";
   let message = "";
   try {
@@ -292,7 +320,8 @@ test("a rejected job-token package response reports only the identity fields nee
   expect(JSON.parse(message.slice(message.indexOf("{")))).toEqual({
     id: 16266672,
     name: "nucleus-ci",
-    visibility: "private",
+    visibility: "public",
+    repositoryView: "null",
     repositoryId: null,
     repositoryName: null,
   });
