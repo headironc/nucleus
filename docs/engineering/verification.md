@@ -125,7 +125,7 @@ Rust checks 已消费现有档位，执行边界见[原生 Rust 检查](#原生-
 
 [首次私有包发布](../../.github/workflows/halo-publish.yml)独立消费固定已验产物，权限、未知写入读回和冷拉取边界见 [Halo 合同](../../halo/README.md#首次私有包发布与冷拉取)。[专用 PR 检查](../../.github/workflows/halo-publish-checks.yml)负责 `.github/halo-publish/` 的类型、发布回归及两份工作流的 Actions 语法，不改变 producer 的源码及扫描输入。实际发布和全新 hosted runner 的 job-token 冷消费另取真实原件；单元绿灯不替代这些验收，也不证明 VM 已接入。
 
-旧 GitHub Actions CI、审查关卡和镜像发布入口已停用。dev/main 旧自动准入入口也已停用。两条长期分支采用[普通分支保护](delivery.md#普通分支保护)，其他分支保留原签名规则。适用本地检查、原生 CI、业务验收及当前候选审查继续执行。这些结果由交付负责人验收，不由普通保护的 required checks 强制。历史绿灯不提供新候选的验收结论。Dependabot 与独立托管审查不随旧工作流删除。
+旧 GitHub Actions CI、审查关卡和镜像发布入口已停用。dev/main 旧自动准入入口也已停用。两条长期分支采用[普通分支保护](delivery.md#普通分支保护)，强制四项当前原生 CI 通过；其他分支保留原签名规则。适用本地检查、业务验收及当前候选审查仍由交付负责人验收。历史绿灯不提供新候选的验收结论。Dependabot 与独立托管审查不随旧工作流删除。
 
 旧工作流原件移至[历史测试夹具](../../tools/fixtures/retired-workflows/README.md)，保留分类、缓存、镜像和恢复回归。下文明确标注的旧 Rust 汇总、Halo workflow、队列与缓存预热只解释离线协议。当前原生执行见[触发与选检](#ci-触发与选检)；本地分类、package、Halo 与维护工具命令仍按实际输入选择执行。新的选检与平台强制机制分别验收。
 
@@ -167,7 +167,7 @@ Rust 分类豁免上表列出的 Markdown、三份根配置、`halo/` 和 Halo �
 | `checks` | 通过             | 通过                              | 跳过              |
 | `full`   | 通过             | 通过                              | 通过              |
 
-当前 Docs 始终运行。普通保护没有 required status checks；未来如增加强制检查，先保证必要状态始终上报。路径过滤导致 required 检查缺失时可能阻止合并，见 [GitHub 的说明](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#handling-skipped-but-required-checks)。
+当前四个基础 CI 的稳定检查均为 required status checks，且每个 PR 都上报。修改触发条件或选检逻辑时，必须保留稳定检查的上报和失败语义。路径过滤导致 required 检查缺失时可能阻止合并，见 [GitHub 的说明](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#handling-skipped-but-required-checks)。
 
 CI 分类与最终状态的实现和验收见 [Rust 工作区验证](rust.md#workspace-validation)。自动代码与安全审查保持现有触发方式。通过轻量检查不表示设计稿已经完成页面、真机或生产验收。
 
@@ -303,9 +303,11 @@ Rust 缓存沿用已固定版本的 [rust-cache 契约](https://github.com/Swati
 
 相关输入改变、无法证明等价或新证据推翻结果时，补做受影响验证。改名或删除包含旧、新消费者；基线更新先核实际组合差异。检查自身实现变化后，原结果不证明新实现有效。输入分类失败、未知路径与不完整历史按[当前选检边界](#ci-触发与选检)处理，不转成成功跳过。
 
-独立审查也保留原候选、基线、提供方、完成结论及发现处置。仅对实际未变的覆盖复用，变更部分补齐审查；没有新线程不能证明新审查完成。正式审查和平台保护继续按[交付规则](delivery.md#审查关卡与证据复用)验收。取消只改变准确运行的终态，不生成替代成功；处置冗余运行前确认相关性、有效覆盖及操作授权。
+独立审查也保留原候选、基线、提供方、完成结论及发现处置。仅对实际未变的覆盖复用，变更部分补齐审查；没有新线程不能证明新审查完成。正式审查和平台保护继续按[交付规则](delivery.md#审查关卡与证据复用)验收。本地和审查证据复用不豁免当前候选的 required CI。取消只改变准确运行的终态，不生成替代成功；处置冗余运行前确认相关性、有效覆盖及操作授权，不取消当前候选尚需通过的必要运行。
 
 ### 文档冲突验收例
+
+下例保留规则恢复前的历史证据与运行终态，不授权在当前 required CI 未通过时合并。
 
 [PR #36](https://github.com/headironc/nucleus/pull/36) 的镜像 head `340b6f33` 合入 [PR #37](https://github.com/headironc/nucleus/pull/37) 后的 dev `ecb3be02`，形成文档整合 head `73ad8b5c`。差异是两份已审 ruleset JSON 和三份文档，唯一冲突位于本页一个段落。其余 748 个跟踪条目的对象与模式未变，环境摘要和验收输入也未变。该实例补做文档格式、Markdown、离线链接、prose 与编号检查，并核对段落整合及两份原审查的有效覆盖。
 
