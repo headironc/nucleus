@@ -7,7 +7,12 @@ import {
 } from "./identity.ts";
 import { Github } from "./github.ts";
 import type { Api } from "./github.ts";
-import { binding, snapshot, requestComments } from "./evidence.ts";
+import {
+  binding,
+  snapshot,
+  requestComments,
+  verifyExecutor,
+} from "./evidence.ts";
 import { approve, withdraw, type OperationOutcome } from "./approve.ts";
 import { installationToken } from "./credentials.ts";
 import { uncertainIntents, type Intent } from "./intent.ts";
@@ -32,6 +37,19 @@ export function context(env = process.env) {
     "Only the owner-dispatched trusted dev workflow is accepted",
   );
 }
+export async function trustedCandidate(
+  api: Api,
+  pr: number,
+  revision: string | undefined,
+) {
+  const candidate = await binding(api, pr);
+  requireThat(
+    candidate.base === revision,
+    "Trusted workflow is not this candidate's baseline",
+  );
+  await verifyExecutor(api, candidate);
+  return candidate;
+}
 if (import.meta.main) {
   let invalidate = false;
   try {
@@ -43,11 +61,17 @@ if (import.meta.main) {
       "PR must be a positive integer",
     );
     const api = new Github(process.env.GITHUB_TOKEN!);
+    const current = await api.get(`/repos/${repository}/git/ref/heads/dev`);
+    requireThat(
+      process.env.GITHUB_WORKFLOW_SHA === current.object?.sha,
+      "Trusted workflow revision is no longer current dev",
+    );
     if (process.argv[2] === "invalidate") {
       requireThat(
         event.inputs?.mode === "approve" && Number.isSafeInteger(pr) && pr > 0,
         "Invalid withdrawal context",
       );
+      await trustedCandidate(api, pr, process.env.GITHUB_WORKFLOW_SHA);
       const credential = await installationToken();
       try {
         console.log(
@@ -63,18 +87,13 @@ if (import.meta.main) {
       }
       process.exit(0);
     }
-    invalidate =
-      process.argv[2] === "intent" && event.inputs?.mode === "approve";
-    const current = await api.get(`/repos/${repository}/git/ref/heads/dev`);
-    requireThat(
-      process.env.GITHUB_WORKFLOW_SHA === current.object?.sha,
-      "Trusted workflow revision is no longer current dev",
-    );
     if (process.argv[2] === "intent") {
       requireThat(
         event.inputs?.mode === "approve",
         "Intent requires approve mode",
       );
+      await trustedCandidate(api, pr, process.env.GITHUB_WORKFLOW_SHA);
+      invalidate = true;
       const s = await snapshot(api, pr);
       requireThat(
         s.b.base === process.env.GITHUB_WORKFLOW_SHA,
@@ -169,6 +188,15 @@ if (import.meta.main) {
           pr,
           planned.run,
           planned.attempt,
+        );
+        const candidate = await trustedCandidate(
+          api,
+          pr,
+          process.env.GITHUB_WORKFLOW_SHA,
+        );
+        requireThat(
+          JSON.stringify(candidate) === JSON.stringify(planned.b),
+          "Candidate changed before credential creation",
         );
         credential = await installationToken();
         const load = async (client: Api, number: number) => {

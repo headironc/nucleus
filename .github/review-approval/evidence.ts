@@ -189,7 +189,104 @@ export function prTrigger(on: unknown): {
   };
 }
 
+export async function verifyExecutor(api: Api, b: Binding) {
+  const tree = async (id: string) => {
+    const result = await api.get(`${prefix}/git/trees/${id}`);
+    requireThat(
+      result.sha === id &&
+        result.truncated === false &&
+        Array.isArray(result.tree) &&
+        result.tree.every(
+          (entry: Record) =>
+            typeof entry.path === "string" &&
+            !entry.path.includes("/") &&
+            sha(entry.sha) &&
+            typeof entry.mode === "string" &&
+            typeof entry.type === "string",
+        ) &&
+        new Set(result.tree.map((e: Record) => e.path)).size ===
+          result.tree.length,
+      "Incomplete executor Git tree",
+    );
+    return result.tree as Record[];
+  };
+  const roots = await Promise.all(
+    [b.base, b.merge].map(async (commit) => {
+      const value = await api.get(`${prefix}/git/commits/${commit}`);
+      requireThat(
+        value.sha === commit && sha(value.tree?.sha),
+        "Executor commit/tree identity unavailable",
+      );
+      return tree(value.tree.sha);
+    }),
+  );
+  const config = (name: string) =>
+    [
+      "package.json",
+      "tsconfig.json",
+      "jsconfig.json",
+      "bunfig.toml",
+      ".bunfig.toml",
+    ].includes(name) ||
+    name === ".env" ||
+    name.startsWith(".env.");
+  const identity = (entry: Record) => ({
+    path: entry.path,
+    sha: entry.sha,
+    type: entry.type,
+    mode: entry.mode,
+  });
+  const freeze = (
+    before: Record[],
+    after: Record[],
+    select: (n: string) => boolean,
+  ) => {
+    const selected = (entries: Record[]) =>
+      entries
+        .filter((entry) => select(entry.path))
+        .map(identity)
+        .sort((a, b) => a.path.localeCompare(b.path));
+    requireThat(
+      JSON.stringify(selected(before)) === JSON.stringify(selected(after)),
+      "Approval executor/configuration changed; trusted bootstrap required",
+    );
+  };
+  const child = async (entries: Record[], name: string) => {
+    const entry = entries.find((e) => e.path === name);
+    requireThat(
+      entry?.type === "tree" && entry.mode === "040000",
+      `Missing executor directory ${name}`,
+    );
+    return tree(entry.sha);
+  };
+  freeze(
+    roots[0],
+    roots[1],
+    (name) =>
+      config(name) ||
+      ["bun.lock", "bun.lockb", ".tool-versions"].includes(name),
+  );
+  const github = await Promise.all(roots.map((root) => child(root, ".github")));
+  freeze(
+    github[0],
+    github[1],
+    (name) => config(name) || name === "review-approval",
+  );
+  for (const entries of github) {
+    const capability = entries.find((e) => e.path === "review-approval");
+    requireThat(
+      capability?.type === "tree" && capability.mode === "040000",
+      "Missing approval capability tree",
+    );
+  }
+  const workflows = await Promise.all(github.map((g) => child(g, "workflows")));
+  freeze(workflows[0], workflows[1], (name) => name === "review-approval.yml");
+  const tools = await Promise.all(roots.map((root) => child(root, "tools")));
+  freeze(tools[0], tools[1], (name) => config(name) || name === "check-bun.ts");
+}
+
 async function verifyCI(api: Api, b: Binding, checks: Record[]) {
+  await verifyExecutor(api, b);
   const files = await api.pages(`${prefix}/pulls/${b.pr}/files`);
   const p = await api.get(`${prefix}/pulls/${b.pr}`);
   requireThat(
@@ -278,16 +375,6 @@ async function verifyCI(api: Api, b: Binding, checks: Record[]) {
       required.some((w) => w.path === `.github/workflows/${filename}`),
       `Missing stable workflow ${filename}`,
     );
-  for (const path of [
-    ".github/review-approval/ci.ts",
-    ".github/review-approval/identity.ts",
-  ]) {
-    requireThat(
-      (await source(api, path, b.base)).sha ===
-        (await source(api, path, b.merge)).sha,
-      `CI receipt producer changed: ${path}`,
-    );
-  }
   const merge = await api.get(`${prefix}/git/commits/${b.merge}`);
   requireThat(
     merge.sha === b.merge &&
@@ -303,75 +390,98 @@ async function verifyCI(api: Api, b: Binding, checks: Record[]) {
   );
   const evidence = [];
   for (const workflow of required) {
-    const run = selectRun(runs, workflow.path, b.head);
-    const detail = await api.get(`${prefix}/actions/runs/${run.id}`);
-    requireThat(
-      detail.run_attempt === run.run_attempt &&
-        detail.head_sha === b.head &&
-        detail.path === workflow.path &&
-        detail.conclusion === "success" &&
-        detail.status === "completed",
-      "CI run changed during read",
+    const loaded = new Map<string, Awaited<ReturnType<typeof readRun>>>();
+    const read = async (run: Record) => {
+      const key = `${run.id}/${run.run_attempt}`;
+      const cached = loaded.get(key);
+      if (cached) return cached;
+      const value = await readRun(api, run, workflow, b.head);
+      loaded.set(key, value);
+      return value;
+    };
+    const run = await selectRun(
+      runs,
+      workflow.path,
+      b,
+      async (r) => (await read(r)).receipt,
     );
-    const jobs = await api.pages(
-      `${prefix}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs`,
-      "jobs",
-    );
-    const allowedConclusions =
-      workflow.path === ".github/workflows/packages.yml"
-        ? ["success", "skipped"]
-        : ["success"];
-    requireThat(
-      jobs.length > 0 &&
-        jobs.every(
-          (j) =>
-            j.status === "completed" &&
-            allowedConclusions.includes(j.conclusion),
-        ) &&
-        jobs.some((j) => j.conclusion === "success"),
-      `CI jobs incomplete: ${workflow.path}`,
-    );
-    const suiteChecks = await api.pages(
-      `${prefix}/check-suites/${run.check_suite_id}/check-runs`,
-      "check_runs",
-    );
-    verifyJobs(jobs, suiteChecks, run, [
-      ...new Set([
-        ...workflow.jobs,
-        ...jobs.filter((j) => j.conclusion === "success").map((j) => j.name),
-      ]),
-    ]);
-    requireThat(
-      suiteChecks.length > 0 && suiteChecks.every((c) => c.app?.id === 15368),
-      "CI check suite has unexpected App identity",
-    );
-    const artifacts = await api.pages(
-      `${prefix}/actions/runs/${run.id}/artifacts`,
-      "artifacts",
-    );
-    const matches = artifacts.filter(
-      (a) => a.name === `cladiron-ci-${run.id}-${run.run_attempt}`,
-    );
-    requireThat(
-      matches.length === 1 &&
-        matches[0].expired === false &&
-        matches[0].workflow_run?.id === run.id &&
-        matches[0].workflow_run?.repository_id === repositoryId &&
-        matches[0].workflow_run?.head_repository_id === repositoryId &&
-        matches[0].workflow_run?.head_sha === b.head,
-      `Missing or unbound CI receipt: ${workflow.path}`,
-    );
-    const receipt = await api.receipt(matches[0]);
-    verifyReceipt(receipt, run, b, merge.tree.sha, workflow.path);
-    evidence.push({
-      run: run.id,
-      attempt: run.run_attempt,
-      artifact: matches[0].id,
-      receipt,
-      jobs: jobs.map((j) => [j.id, j.name, j.conclusion]),
-    });
+    const result = await read(run);
+    verifyReceipt(result.receipt, run, b, merge.tree.sha, workflow.path);
+    evidence.push(result);
   }
   return evidence;
+}
+
+async function readRun(
+  api: Api,
+  run: Record,
+  workflow: { path: string; jobs: string[] },
+  head: string,
+) {
+  const detail = await api.get(`${prefix}/actions/runs/${run.id}`);
+  requireThat(
+    detail.run_attempt === run.run_attempt &&
+      detail.head_sha === head &&
+      detail.path === workflow.path &&
+      detail.conclusion === "success" &&
+      detail.status === "completed",
+    "CI run changed during read",
+  );
+  const jobs = await api.pages(
+    `${prefix}/actions/runs/${run.id}/attempts/${run.run_attempt}/jobs`,
+    "jobs",
+  );
+  const allowedConclusions =
+    workflow.path === ".github/workflows/packages.yml"
+      ? ["success", "skipped"]
+      : ["success"];
+  requireThat(
+    jobs.length > 0 &&
+      jobs.every(
+        (j) =>
+          j.status === "completed" && allowedConclusions.includes(j.conclusion),
+      ) &&
+      jobs.some((j) => j.conclusion === "success"),
+    `CI jobs incomplete: ${workflow.path}`,
+  );
+  const suiteChecks = await api.pages(
+    `${prefix}/check-suites/${run.check_suite_id}/check-runs`,
+    "check_runs",
+  );
+  verifyJobs(jobs, suiteChecks, run, [
+    ...new Set([
+      ...workflow.jobs,
+      ...jobs.filter((j) => j.conclusion === "success").map((j) => j.name),
+    ]),
+  ]);
+  requireThat(
+    suiteChecks.length > 0 && suiteChecks.every((c) => c.app?.id === 15368),
+    "CI check suite has unexpected App identity",
+  );
+  const artifacts = await api.pages(
+    `${prefix}/actions/runs/${run.id}/artifacts`,
+    "artifacts",
+  );
+  const matches = artifacts.filter(
+    (a) => a.name === `cladiron-ci-${run.id}-${run.run_attempt}`,
+  );
+  requireThat(
+    matches.length === 1 &&
+      matches[0].expired === false &&
+      matches[0].workflow_run?.id === run.id &&
+      matches[0].workflow_run?.repository_id === repositoryId &&
+      matches[0].workflow_run?.head_repository_id === repositoryId &&
+      matches[0].workflow_run?.head_sha === head,
+    `Missing or unbound CI receipt: ${workflow.path}`,
+  );
+  const receipt = await api.receipt(matches[0]);
+  return {
+    run: run.id,
+    attempt: run.run_attempt,
+    artifact: matches[0].id,
+    receipt,
+    jobs: jobs.map((j) => [j.id, j.name, j.conclusion]),
+  };
 }
 
 export async function requestComments(api: Api, b: Binding) {

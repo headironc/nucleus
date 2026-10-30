@@ -118,7 +118,21 @@ test("receipt independently binds real Git merge parents and tree, not event's h
   ).toBe("");
   expect(produceReceipt(runtime, event, shallow).parents).toEqual([base, head]);
 });
-test("latest run/attempt replaces old failure; newer failure never borrows old green", () => {
+const receiptFor = async (run: any) => ({
+  version: 1 as const,
+  repository: "headironc/nucleus",
+  repositoryId: 1432619931,
+  pr: b.pr,
+  target: "dev",
+  head: b.head,
+  merge: b.merge,
+  tree: "e".repeat(40),
+  parents: [b.base, b.head],
+  workflow: run.path,
+  run: run.id,
+  attempt: run.run_attempt,
+});
+test("latest run/attempt replaces old failure; newer failure never borrows old green", async () => {
   const run = {
     id: 10,
     path: ".github/workflows/docs.yml",
@@ -132,29 +146,100 @@ test("latest run/attempt replaces old failure; newer failure never borrows old g
     conclusion: "success",
   };
   expect(
-    selectRun(
-      [{ ...run, id: 9, run_number: 9, conclusion: "failure" }, run],
-      run.path,
-      b.head,
+    (
+      await selectRun(
+        [{ ...run, id: 9, run_number: 9, conclusion: "failure" }, run],
+        run.path,
+        b,
+        receiptFor,
+      )
     ).id,
   ).toBe(10);
-  expect(() =>
+  await expect(
     selectRun(
       [run, { ...run, id: 11, run_number: 11, conclusion: "cancelled" }],
       run.path,
-      b.head,
+      b,
+      receiptFor,
     ),
-  ).toThrow();
-  expect(() =>
+  ).rejects.toThrow();
+  await expect(
     selectRun(
       [
         { ...run, run_attempt: 1 },
         { ...run, run_attempt: 2, conclusion: "failure" },
       ],
       run.path,
-      b.head,
+      b,
+      receiptFor,
     ),
-  ).toThrow();
+  ).rejects.toThrow();
+});
+test("same-head other-PR runs are excluded by explicit association or trustworthy receipt", async () => {
+  const run = {
+    id: 10,
+    path: ".github/workflows/docs.yml",
+    head_sha: b.head,
+    event: "pull_request",
+    run_number: 10,
+    run_attempt: 1,
+    repository: { id: 1432619931 },
+    head_repository: { id: 1432619931 },
+    status: "completed",
+    conclusion: "success",
+    pull_requests: [],
+  };
+  const other = {
+    ...run,
+    id: 11,
+    run_number: 11,
+    conclusion: "failure",
+    pull_requests: [
+      {
+        number: 2,
+        base: { ref: "dev", sha: b.base, repo: { id: 1432619931 } },
+        head: { sha: b.head, repo: { id: 1432619931 } },
+      },
+    ],
+  };
+  expect((await selectRun([run, other], run.path, b, receiptFor)).id).toBe(10);
+  const unknown = { ...run, id: 12, run_number: 12 };
+  expect(
+    (
+      await selectRun([run, unknown], run.path, b, async (r) => ({
+        ...(await receiptFor(r)),
+        pr: r.id === 12 ? 2 : b.pr,
+      }))
+    ).id,
+  ).toBe(10);
+  await expect(
+    selectRun([run, unknown], run.path, b, async () => {
+      throw new Error("Missing receipt, unknown PR");
+    }),
+  ).rejects.toThrow("unknown PR");
+  await expect(
+    selectRun(
+      [run, { ...unknown, conclusion: "failure" }],
+      run.path,
+      b,
+      receiptFor,
+    ),
+  ).rejects.toThrow("PR association unknown");
+  await expect(
+    selectRun(
+      [
+        run,
+        {
+          ...other,
+          conclusion: "success",
+          pull_requests: [{ ...other.pull_requests[0], number: b.pr }],
+        },
+      ],
+      run.path,
+      b,
+      async (r) => ({ ...(await receiptFor(r)), pr: 2 }),
+    ),
+  ).rejects.toThrow("contradicts");
 });
 test("stable check job requires Actions App, suite and successful exact job", () => {
   const run = { id: 10, check_suite_id: 50 };

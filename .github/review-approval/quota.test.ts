@@ -12,7 +12,18 @@ import { snapshot } from "./evidence.ts";
 import { requestBodies } from "./identity.ts";
 
 const now = Date.parse("2026-10-30T14:00:00Z");
-async function fixture(currentHead = false, noPeriod = false) {
+// Deidentified full observed layout; only public provider guidance is literal.
+const advice = ` Your team has fixed 7 issues after cubic flagged them so far. [Enable flex capacity](https://www.cubic.dev/settings?tab=billing) to cover overages automatically and resume reviews now. [Learn how flex capacity works](https://docs.cubic.dev/account/flex-capacity?utm_source=github&utm_medium=review_line_limit).
+
+To help optimise your usage, you can tune cubic to get the most out of your usage limits:
+
+- Stop reviewing [test files](https://www.cubic.dev/ai-review?tab=setup&card=ai-review-card-ignore-patterns)
+- Turn off [incremental reviews](https://www.cubic.dev/ai-review?tab=setup&card=ai-review-card-incremental-reviews)
+- Use the [cubic CLI](https://docs.cubic.dev/ide/cli-review) locally
+- Enable [flex pricing](https://www.cubic.dev/settings?tab=billing)
+
+[Learn more →](https://docs.cubic.dev/account/ai-review-usage#tips-to-reduce-usage)`;
+async function fixture(currentHead = false, noPeriod = false, full = false) {
   const api = new EvidenceApi();
   api.f.comments = api.f.comments.filter((c) => c.id !== 100); // Known depletion requires no new Cubic request.
   api.f.checks = [];
@@ -37,10 +48,109 @@ async function fixture(currentHead = false, noPeriod = false) {
   const get = api.get.bind(api);
   api.get = async (path) =>
     path.endsWith("/check-runs/601") ? source : get(path);
-  const selection = await prepareQuota(api, b, 601, now);
+  const fixtureNow = full ? Date.parse("2026-04-29T14:00:00Z") : now;
+  if (full) {
+    source.output.summary =
+      source.output.summary.replace("November", "May") + advice;
+    source.started_at = "2026-04-27T10:29:00Z";
+    source.completed_at = "2026-04-27T10:30:00Z";
+    for (const c of api.f.comments) {
+      c.created_at = c.created_at.replace("2026-10-30", "2026-04-29");
+      c.updated_at = c.updated_at.replace("2026-10-30", "2026-04-29");
+      c.body = c.body.replaceAll("2026-10-30", "2026-04-29");
+    }
+  }
+  const selection = await prepareQuota(api, b, 601, fixtureNow);
   api.f.comments.find((c) => c.id === 101).body = quotaRequest(b, selection);
-  return { api, source, selection };
+  return { api, source, selection, now: fixtureNow };
 }
+for (const current of [false, true])
+  test(`full observed quota guidance accepts preparation and snapshot, current head=${current}`, async () => {
+    const f = await fixture(current, false, true);
+    const result = await snapshot(f.api, b.pr, f.now);
+    expect(result.evidence.providers.cubic).toBe("quota-unavailable");
+    expect(result.evidence.providers.quota?.selection).toEqual(f.selection);
+    await expect(
+      prepareQuota(f.api, b, 601, Date.parse("2026-04-30T00:00:00Z")),
+    ).rejects.toThrow("may have ended");
+  });
+test("guidance does not supply a missing cross-head quota period", async () => {
+  const f = await fixture(true, true, true);
+  expect((await snapshot(f.api, b.pr, f.now)).evidence.providers.cubic).toBe(
+    "quota-unavailable",
+  );
+  await expect(fixture(false, true, true)).rejects.toThrow(
+    "lacks an explicit period",
+  );
+});
+for (const [label, mutate] of Object.entries({
+  "finding before guidance": (f: any) => {
+    f.source.output.summary = f.source.output.summary.replace(
+      " Your team",
+      " P1: unresolved finding. Your team",
+    );
+  },
+  "finding inside guidance": (f: any) => {
+    f.source.output.summary = f.source.output.summary.replace(
+      "- Turn off",
+      "P1: unresolved finding\n- Turn off",
+    );
+  },
+  "finding after guidance": (f: any) => {
+    f.source.output.summary += "\nP1: unresolved finding";
+  },
+  "changed URL": (f: any) => {
+    f.source.output.summary = f.source.output.summary.replace(
+      "https://www.cubic.dev/settings?tab=billing",
+      "https://example.invalid/billing",
+    );
+  },
+  "missing guidance section": (f: any) => {
+    f.source.output.summary = f.source.output.summary.replace(
+      "- Use the [cubic CLI](https://docs.cubic.dev/ide/cli-review) locally\n",
+      "",
+    );
+  },
+  "guidance without exhaustion": (f: any) => {
+    f.source.output.summary = advice;
+  },
+  "ordinary neutral": (f: any) => {
+    f.source.output.summary = "Review unavailable." + advice;
+  },
+  failure: (f: any) => {
+    f.source.conclusion = "failure";
+  },
+  "additional text surface": (f: any) => {
+    f.source.output.text = "P1: unresolved finding";
+  },
+  annotations: (f: any) => {
+    f.source.output.annotations_count = 1;
+  },
+  "negative displayed count": (f: any) => {
+    f.source.output.summary = f.source.output.summary.replace(
+      "fixed 7 issues",
+      "fixed -7 issues",
+    );
+  },
+}))
+  test(`quota guidance rejects ${label}`, async () => {
+    const f = await fixture(false, false, true);
+    mutate(f);
+    await expect(prepareQuota(f.api, b, 601, f.now)).rejects.toThrow();
+    await expect(snapshot(f.api, b.pr, f.now)).rejects.toThrow();
+  });
+test("full guidance is part of the persisted source digest", async () => {
+  const f = await fixture(false, false, true);
+  f.source.output.summary = f.source.output.summary.replace(
+    "fixed 7 issues",
+    "fixed 8 issues",
+  );
+  const changed = await prepareQuota(f.api, b, 601, f.now);
+  expect(changed.digest).not.toBe(f.selection.digest);
+  await expect(snapshot(f.api, b.pr, f.now)).rejects.toThrow(
+    "changed after selection",
+  );
+});
 test("trusted cross-PR quota selection uses complete Codex code/security without claiming Cubic passed", async () => {
   const { api } = await fixture();
   const result = await snapshot(api, b.pr, now);
@@ -236,6 +346,34 @@ test("quota does not hide earlier unresolved threadless Cubic findings or incomp
   await expect(snapshot(f.api, b.pr, now)).rejects.toThrow(
     "security no-findings receipt",
   );
+});
+test("quota disposition follows each finding and never hides same-time or later reports", async () => {
+  const f = await fixture();
+  const disposition = providerFixture().reviews[0];
+  disposition.submitted_at = "2026-10-30T13:10:00Z";
+  disposition.body = disposition.body.replace(
+    "**No issues found** across 41 files",
+    "**All reported issues addressed**",
+  );
+  const finding = {
+    ...disposition,
+    id: 702,
+    commit_id: "f".repeat(40),
+    submitted_at: "2026-10-30T13:09:00Z",
+    body: "P1: old finding",
+  };
+  f.api.f.reviews = [finding, disposition];
+  expect((await snapshot(f.api, b.pr, now)).evidence.providers.cubic).toBe(
+    "quota-unavailable",
+  );
+  for (const at of [
+    disposition.submitted_at,
+    "2026-10-30T13:11:00Z",
+    "invalid",
+  ]) {
+    finding.submitted_at = at;
+    await expect(snapshot(f.api, b.pr, now)).rejects.toThrow();
+  }
 });
 test("later explicit Cubic routing reuses valid Codex coverage without depending on old quota source", async () => {
   const f = await fixture();

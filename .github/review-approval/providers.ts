@@ -145,7 +145,12 @@ export function verifyProviders(
     ? latest(securityRequests, "Codex security request")
     : codeRequest;
   let cubicIds: number[] = [],
-    cubicDisposed = false;
+    cubicDisposition: Record | undefined;
+  const disposedByCubic = (report: Record) =>
+    cubicDisposition !== undefined &&
+    (report === cubicDisposition ||
+      time(report.updated_at ?? report.submitted_at) <
+        time(cubicDisposition.updated_at ?? cubicDisposition.submitted_at));
   if (!quota) {
     requireThat(cubicRequest, "Missing Cubic request");
     const cubicChecks = checks.filter(
@@ -228,14 +233,15 @@ export function verifyProviders(
           /\*\*No issues found\*\* across \d+ files/.test(r.body)
         ),
     );
+    if (review.body.includes("**All reported issues addressed**"))
+      cubicDisposition = review;
     requireThat(
       priorCubicFindings.length === 0 ||
-        review.body.includes("**All reported issues addressed**"),
-      "Earlier Cubic findings lack explicit disposition",
+        priorCubicFindings.every(disposedByCubic),
+      "Cubic findings lack a later explicit disposition",
     );
 
     cubicIds = [check.id, review.id];
-    cubicDisposed = review.body.includes("**All reported issues addressed**");
   } else {
     requireThat(
       quota.request === codeRequest.id &&
@@ -256,8 +262,20 @@ export function verifyProviders(
           last.body.includes("**All reported issues addressed**"),
         "Quota fallback cannot erase unresolved/unknown Cubic findings",
       );
-      cubicDisposed = true;
+      cubicDisposition = last;
     }
+  }
+  for (const report of reviews.filter((r) => r.user?.id === cubic.bot)) {
+    requireThat(bot(report, cubic, true), "Cubic report identity changed");
+    time(report.updated_at ?? report.submitted_at);
+    const clean =
+      report.state === "COMMENTED" &&
+      cubicReport(report.body, { ...b, head: report.commit_id }) &&
+      /\*\*No issues found\*\* across \d+ files/.test(report.body);
+    requireThat(
+      clean || disposedByCubic(report),
+      "Cubic report lacks a later explicit disposition",
+    );
   }
   const summaries = comments.filter(
     (c) =>
@@ -370,7 +388,6 @@ export function verifyProviders(
   );
   const decisions = new Map<number, Record>();
   const disposed = new Set<number>();
-  if (cubicDisposed) disposed.add(cubic.bot);
   if (
     state.code_review.has_unresolved_findings === false &&
     securityState.has_unresolved_findings === false
@@ -380,7 +397,8 @@ export function verifyProviders(
     .filter(
       (r) =>
         (r.state === "CHANGES_REQUESTED" || r.state === "APPROVED") &&
-        !disposed.has(r.user?.id),
+        !disposed.has(r.user?.id) &&
+        !(r.user?.id === cubic.bot && disposedByCubic(r)),
     )
     .sort((a, b) => time(a.submitted_at) - time(b.submitted_at));
   for (const review of formal) {

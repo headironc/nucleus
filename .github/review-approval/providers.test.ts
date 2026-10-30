@@ -157,6 +157,63 @@ test("explicit finding dispositions preserve historical findings", () => {
     verifyProviders(b, f.comments, f.reviews, f.checks).findings,
   ).toContain(999);
 });
+for (const state of ["COMMENTED", "CHANGES_REQUESTED"])
+  test(`Cubic addressed cannot dispose a later old-head ${state} report`, () => {
+    const f = providerFixture();
+    f.reviews[0].body = f.reviews[0].body.replace(
+      "**No issues found** across 41 files",
+      "**All reported issues addressed**",
+    );
+    f.checks[0].output.summary =
+      "AI review completed with 1 review. All reported issues addressed.";
+    f.reviews.push({
+      ...f.reviews[0],
+      id: 902,
+      state,
+      commit_id: "f".repeat(40),
+      submitted_at: "2026-10-30T13:10:00Z",
+      body: "P1: late unresolved finding",
+    });
+    expect(() => verifyProviders(b, f.comments, f.reviews, f.checks)).toThrow(
+      "later explicit disposition",
+    );
+  });
+test("a later formal Cubic change request cannot borrow an earlier disposition", () => {
+  const f = providerFixture();
+  f.reviews[0].body = f.reviews[0].body.replace(
+    "**No issues found** across 41 files",
+    "**All reported issues addressed**",
+  );
+  f.checks[0].output.summary =
+    "AI review completed with 1 review. All reported issues addressed.";
+  f.reviews.push({
+    ...providerFixture({ ...b, head: "f".repeat(40) }).reviews[0],
+    id: 903,
+    state: "CHANGES_REQUESTED",
+    submitted_at: "2026-10-30T13:10:00Z",
+  });
+  expect(() => verifyProviders(b, f.comments, f.reviews, f.checks)).toThrow(
+    "later explicit disposition",
+  );
+});
+for (const timestamp of ["2026-10-30T10:35:04Z", "invalid"])
+  test(`Cubic disposition refuses ambiguous report time ${timestamp}`, () => {
+    const f = providerFixture();
+    f.reviews[0].body = f.reviews[0].body.replace(
+      "**No issues found** across 41 files",
+      "**All reported issues addressed**",
+    );
+    f.checks[0].output.summary =
+      "AI review completed with 1 review. All reported issues addressed.";
+    f.reviews.push({
+      ...f.reviews[0],
+      id: 904,
+      commit_id: "f".repeat(40),
+      submitted_at: timestamp,
+      body: "P1: unresolved finding",
+    });
+    expect(() => verifyProviders(b, f.comments, f.reviews, f.checks)).toThrow();
+  });
 for (const submitted of ["10:30:00", "13:10:00"])
   test(`unknown Codex formal-review body at ${submitted} is not disposed by a clean summary`, () => {
     const f = providerFixture();

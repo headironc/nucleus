@@ -5,6 +5,7 @@ import { b, providerFixture } from "./fixtures.ts";
 import { stableWorkflows } from "./ci.ts";
 import type { Api } from "./github.ts";
 import type { Record } from "./providers.ts";
+import { trustedCandidate } from "./main.ts";
 
 export class EvidenceApi implements Api {
   f = providerFixture();
@@ -29,6 +30,40 @@ export class EvidenceApi implements Api {
   afterPage = false;
   nestedPage = false;
   calls: string[] = [];
+  trees: { [sha: string]: any[] } = {
+    ["b".repeat(40)]: [
+      { path: ".github", type: "tree", mode: "040000", sha: "d".repeat(40) },
+      { path: "tools", type: "tree", mode: "040000", sha: "f".repeat(40) },
+      ...["package.json", "bun.lock", "tsconfig.json", ".tool-versions"].map(
+        (path) => ({ path, type: "blob", mode: "100644", sha: "0".repeat(40) }),
+      ),
+    ],
+    ["d".repeat(40)]: [
+      {
+        path: "review-approval",
+        type: "tree",
+        mode: "040000",
+        sha: "c".repeat(40),
+      },
+      { path: "workflows", type: "tree", mode: "040000", sha: "a".repeat(40) },
+    ],
+    ["a".repeat(40)]: [
+      {
+        path: "review-approval.yml",
+        type: "blob",
+        mode: "100644",
+        sha: "0".repeat(40),
+      },
+    ],
+    ["f".repeat(40)]: [
+      {
+        path: "check-bun.ts",
+        type: "blob",
+        mode: "100644",
+        sha: "0".repeat(40),
+      },
+    ],
+  };
   runs = stableWorkflows.map((f, i) => ({
     id: 10 + i,
     path: `.github/workflows/${f}`,
@@ -48,12 +83,28 @@ export class EvidenceApi implements Api {
     if (path.includes("/git/ref/heads/dev")) return { object: { sha: b.base } };
     if (path.includes("/compare/"))
       return { status: "ahead", merge_base_commit: { sha: b.base } };
+    if (path.endsWith(`/git/commits/${b.base}`))
+      return { sha: b.base, tree: { sha: "b".repeat(40) } };
     if (path.includes("/git/commits/"))
       return {
         sha: b.merge,
         parents: [{ sha: b.base }, { sha: b.head }],
         tree: { sha: this.tree },
       };
+    if (path.includes("/git/trees/")) {
+      const sha = path.split("/").at(-1)!;
+      let entries = this.trees[sha];
+      if (sha === this.tree)
+        entries = this.trees[this.tree] ?? this.trees["b".repeat(40)];
+      if (this.changedProducer && sha === this.tree) {
+        entries = structuredClone(entries);
+        entries.find((e: any) => e.path === ".github").sha = "8".repeat(40);
+        this.trees["8".repeat(40)] = this.trees["d".repeat(40)].map((e) =>
+          e.path === "review-approval" ? { ...e, sha: "9".repeat(40) } : e,
+        );
+      }
+      return { sha, truncated: false, tree: entries };
+    }
     if (path.includes("/contents/.github/workflows?"))
       return stableWorkflows
         .map((name) => ({
@@ -250,6 +301,121 @@ test("complete snapshot consumes all four actual workflow definitions and exact 
   const result = await snapshot(api, b.pr);
   expect(result.b).toEqual(b);
   expect(result.evidence.ci).toHaveLength(4);
+});
+function candidateExecutor(api: EvidenceApi) {
+  const root = structuredClone(api.trees["b".repeat(40)]);
+  api.trees[api.tree] = root;
+  const github = structuredClone(api.trees["d".repeat(40)]);
+  root.find((e) => e.path === ".github").sha = "8".repeat(40);
+  api.trees["8".repeat(40)] = github;
+  const workflows = structuredClone(api.trees["a".repeat(40)]);
+  github.find((e) => e.path === "workflows").sha = "7".repeat(40);
+  api.trees["7".repeat(40)] = workflows;
+  const tools = structuredClone(api.trees["f".repeat(40)]);
+  root.find((e) => e.path === "tools").sha = "6".repeat(40);
+  api.trees["6".repeat(40)] = tools;
+  return { root, github, workflows, tools };
+}
+const executable = (path: string) => ({
+  path,
+  type: "blob",
+  mode: "100644",
+  sha: "9".repeat(40),
+});
+for (const [label, change] of Object.entries({
+  "capability code or membership change": (
+    c: ReturnType<typeof candidateExecutor>,
+  ) => {
+    c.github.find((e) => e.path === "review-approval").sha = "9".repeat(40);
+  },
+  "capability deletion": (c: ReturnType<typeof candidateExecutor>) => {
+    c.github.splice(
+      c.github.findIndex((e) => e.path === "review-approval"),
+      1,
+    );
+  },
+  "capability symlink": (c: ReturnType<typeof candidateExecutor>) => {
+    Object.assign(
+      c.github.find((e) => e.path === "review-approval"),
+      { type: "blob", mode: "120000" },
+    );
+  },
+  "dispatch workflow": (c: ReturnType<typeof candidateExecutor>) => {
+    c.workflows[0].sha = "9".repeat(40);
+  },
+  "check-bun executable": (c: ReturnType<typeof candidateExecutor>) => {
+    c.tools[0].sha = "9".repeat(40);
+  },
+  "check-bun file mode": (c: ReturnType<typeof candidateExecutor>) => {
+    c.tools[0].mode = "100755";
+  },
+  "root preload configuration": (c: ReturnType<typeof candidateExecutor>) => {
+    c.root.push(executable("bunfig.toml"));
+  },
+  "root automatic environment": (c: ReturnType<typeof candidateExecutor>) => {
+    c.root.push(executable(".env.local"));
+  },
+  "ancestor package configuration": (
+    c: ReturnType<typeof candidateExecutor>,
+  ) => {
+    c.github.push(executable("package.json"));
+  },
+  "tools runtime configuration": (c: ReturnType<typeof candidateExecutor>) => {
+    c.tools.push(executable(".bunfig.toml"));
+  },
+  "path mapping configuration": (c: ReturnType<typeof candidateExecutor>) => {
+    c.root.find((e) => e.path === "tsconfig.json").sha = "9".repeat(40);
+  },
+  "alternative lockfile": (c: ReturnType<typeof candidateExecutor>) => {
+    c.root.push(executable("bun.lockb"));
+  },
+}))
+  test(`executor refuses ${label} before any credential or approval write`, async () => {
+    const api = new EvidenceApi();
+    change(candidateExecutor(api));
+    let external = 0,
+      writes = 0;
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = Object.assign(
+      async () => {
+        external++;
+        throw new Error("No credential network allowed");
+      },
+      { preconnect: originalFetch.preconnect },
+    );
+    api.post = async () => {
+      writes++;
+      throw new Error("No approval write allowed");
+    };
+    try {
+      await expect(trustedCandidate(api, b.pr, b.base)).rejects.toThrow(
+        "executor",
+      );
+      await expect(snapshot(api, b.pr)).rejects.toThrow("executor");
+      expect(external).toBe(0);
+      expect(writes).toBe(0);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+test("truncated executor trees fail closed; unrelated business changes remain eligible", async () => {
+  const api = new EvidenceApi();
+  candidateExecutor(api).root.push(executable("unrelated-business.rs"));
+  expect((await snapshot(api, b.pr)).b).toEqual(b);
+  expect(await trustedCandidate(api, b.pr, b.base)).toEqual(b);
+  await expect(trustedCandidate(api, b.pr, "0".repeat(40))).rejects.toThrow(
+    "candidate's baseline",
+  );
+  const get = api.get.bind(api);
+  api.get = async (path) => {
+    const value = await get(path);
+    return path.endsWith(`/git/trees/${api.tree}`)
+      ? { ...value, truncated: true }
+      : value;
+  };
+  await expect(snapshot(api, b.pr)).rejects.toThrow(
+    "Incomplete executor Git tree",
+  );
 });
 for (const [label, mutate] of Object.entries({
   fork: (a: EvidenceApi) => {

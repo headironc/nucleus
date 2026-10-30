@@ -30,10 +30,14 @@ class ApprovalApi implements Api {
   reviews: Record[] = [];
   posts: Record[] = [];
   dismissals: number[] = [];
+  dismissalAttempts: number[] = [];
   outcome = "success";
   failDismiss = false;
+  failDismissRead = false;
   async get(path: string) {
     if (path.startsWith("/users/")) return user;
+    if (this.failDismissRead && this.dismissalAttempts.length)
+      throw new Error("Synthetic withdrawal readback failure");
     return this.reviews.find((r) => path.endsWith(`/${r.id}`));
   }
   async pages() {
@@ -64,8 +68,9 @@ class ApprovalApi implements Api {
     return r;
   }
   async put(path: string) {
-    if (this.failDismiss) throw new Error("Synthetic dismissal failure");
     const id = Number(path.split("/").at(-2));
+    this.dismissalAttempts.push(id);
+    if (this.failDismiss) throw new Error("Synthetic dismissal failure");
     this.dismissals.push(id);
     this.reviews.find((r) => r.id === id)!.state = "DISMISSED";
     return {};
@@ -196,7 +201,56 @@ test("failed withdrawal stays a failure and preserves the review ID", async () =
   ).rejects.toThrow("1000 withdrawal not confirmed");
   expect(api.posts).toHaveLength(1);
   expect(api.reviews[0].state).toBe("APPROVED");
+  expect(api.dismissalAttempts).toEqual([1000]);
 });
+test("unknown stale dismissal is only read back during generic cleanup", async () => {
+  const api = new ApprovalApi();
+  await approve(api, b.pr, async () => s);
+  api.failDismiss = true;
+  await expect(
+    approve(api, b.pr, async () => ({ ...s, digest: "f".repeat(64) })),
+  ).rejects.toThrow("1000 withdrawal not confirmed");
+  expect(api.dismissalAttempts).toEqual([1000]);
+  expect(api.posts).toHaveLength(1);
+  expect(api.reviews[0].state).toBe("APPROVED");
+});
+test("unknown ambiguous-approval rollback does not repeat the dismissal PUT", async () => {
+  const api = new ApprovalApi();
+  api.outcome = "unknown-multiple";
+  api.failDismiss = true;
+  await expect(approve(api, b.pr, async () => s)).rejects.toThrow(
+    "1000 withdrawal not confirmed",
+  );
+  expect(api.dismissalAttempts).toEqual([1000]);
+  expect(api.posts).toHaveLength(1);
+  expect(api.reviews.every((r) => r.state === "APPROVED")).toBe(true);
+});
+for (const stale of [false, true])
+  test(`withdrawal readback failure preserves unknown and review ID, stale=${stale}`, async () => {
+    const api = new ApprovalApi();
+    const outcome: OperationOutcome = {
+      attempted: false,
+      resolved: false,
+      reviews: [],
+    };
+    if (stale) await approve(api, b.pr, async () => s);
+    api.failDismissRead = true;
+    let count = 0;
+    await expect(
+      approve(
+        api,
+        b.pr,
+        async () =>
+          stale || ++count === 3 ? { ...s, digest: "f".repeat(64) } : s,
+        [],
+        outcome,
+      ),
+    ).rejects.toThrow("1000 withdrawal readback failed");
+    expect(api.dismissalAttempts).toEqual([1000]);
+    expect(outcome.resolved).toBe(false);
+    expect(outcome.reviews).toEqual([1000]);
+    expect(api.posts).toHaveLength(1);
+  });
 test("identity mismatch cannot be reused or dismissed as this App", async () => {
   const api = new ApprovalApi();
   api.reviews.push({

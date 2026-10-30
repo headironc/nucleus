@@ -144,23 +144,80 @@ export function verifyReceipt(
   );
 }
 
-export function selectRun(runs: Record[], path: string, head: string) {
+export async function selectRun(
+  runs: Record[],
+  path: string,
+  b: Binding,
+  readReceipt: (run: Record) => Promise<Receipt>,
+) {
   const candidates = runs.filter(
-    (r) => r.path === path && r.head_sha === head && r.event === "pull_request",
+    (r) =>
+      r.path === path && r.head_sha === b.head && r.event === "pull_request",
   );
   requireThat(candidates.length > 0, `Missing CI ${path}`);
   candidates.sort(
     (a, b) => b.run_number - a.run_number || b.run_attempt - a.run_attempt,
   );
-  const run = candidates[0];
-  requireThat(
-    run.repository?.id === repositoryId &&
-      run.head_repository?.id === repositoryId &&
-      run.status === "completed" &&
-      run.conclusion === "success",
-    `Latest CI not successful: ${path}`,
-  );
-  return run;
+  for (const run of candidates) {
+    const associations: Record[] | undefined = Array.isArray(run.pull_requests)
+      ? run.pull_requests
+      : undefined;
+    const complete = (pr: Record) =>
+      Number.isSafeInteger(pr.number) &&
+      pr.number > 0 &&
+      Number.isSafeInteger(pr.base?.repo?.id) &&
+      pr.base.repo.id > 0 &&
+      Number.isSafeInteger(pr.head?.repo?.id) &&
+      pr.head.repo.id > 0 &&
+      typeof pr.base?.ref === "string" &&
+      pr.base.ref.length > 0 &&
+      sha(pr.base?.sha) &&
+      sha(pr.head?.sha);
+    const current = associations?.some(
+      (pr) =>
+        complete(pr) &&
+        pr.number === b.pr &&
+        pr.base.repo.id === repositoryId &&
+        pr.base.ref === "dev" &&
+        pr.head.repo.id === repositoryId &&
+        pr.head.sha === b.head,
+    );
+    if (!current && associations?.length && associations.every(complete))
+      continue;
+    requireThat(
+      run.repository?.id === repositoryId &&
+        run.head_repository?.id === repositoryId &&
+        run.status === "completed" &&
+        run.conclusion === "success",
+      `Latest CI not successful or PR association unknown: ${path}`,
+    );
+    const receipt = await readReceipt(run);
+    requireThat(
+      receipt.version === 1 &&
+        receipt.repository === repository &&
+        receipt.repositoryId === repositoryId &&
+        Number.isSafeInteger(receipt.pr) &&
+        receipt.pr > 0 &&
+        ["dev", "main"].includes(receipt.target) &&
+        receipt.head === b.head &&
+        sha(receipt.merge) &&
+        sha(receipt.tree) &&
+        receipt.parents?.length === 2 &&
+        receipt.parents.every(sha) &&
+        receipt.parents[1] === b.head &&
+        receipt.workflow === path &&
+        receipt.run === run.id &&
+        receipt.attempt === run.run_attempt,
+      "Unknown PR association has no trustworthy run receipt",
+    );
+    const ours = receipt.pr === b.pr && receipt.target === "dev";
+    requireThat(
+      !current || ours,
+      "Explicit PR association contradicts receipt",
+    );
+    if (ours) return run;
+  }
+  throw new Error(`Missing CI for requested PR: ${path}`);
 }
 
 export function verifyJobs(

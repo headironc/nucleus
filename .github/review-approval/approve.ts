@@ -36,6 +36,7 @@ async function ownership(api: Api, pr: number) {
     (r.performed_via_github_app === undefined ||
       r.performed_via_github_app?.id === appId);
   const read = () => api.pages(`${prefix}/pulls/${pr}/reviews`);
+  const dismissalAttempts = new Set<number>();
   const dismiss = async (review: Record) => {
     requireThat(
       owned(review) &&
@@ -44,15 +45,29 @@ async function ownership(api: Api, pr: number) {
       "Refusing to dismiss a foreign review",
     );
     let error: unknown;
-    try {
-      await api.put(`${prefix}/pulls/${pr}/reviews/${review.id}/dismissals`, {
-        message: "Cladiron evidence changed or approval outcome was ambiguous.",
-        event: "DISMISS",
-      });
-    } catch (e) {
-      error = e;
+    if (!dismissalAttempts.has(review.id)) {
+      dismissalAttempts.add(review.id);
+      try {
+        await api.put(`${prefix}/pulls/${pr}/reviews/${review.id}/dismissals`, {
+          message:
+            "Cladiron evidence changed or approval outcome was ambiguous.",
+          event: "DISMISS",
+        });
+      } catch (e) {
+        error = e;
+      }
+    } else {
+      error = new Error("Previous dismissal attempt requires readback");
     }
-    const current = await api.get(`${prefix}/pulls/${pr}/reviews/${review.id}`);
+    let current: Record;
+    try {
+      current = await api.get(`${prefix}/pulls/${pr}/reviews/${review.id}`);
+    } catch (cause) {
+      throw new Error(
+        `Cladiron approval ${review.id} withdrawal readback failed; outcome unknown`,
+        { cause },
+      );
+    }
     requireThat(
       owned(current) &&
         current.id === review.id &&
@@ -131,8 +146,11 @@ export async function approve(
       reusable.length <= 1,
       "Multiple existing approvals for one binding",
     );
-    for (const stale of ownApprovals.filter((r) => !reusable.includes(r)))
+    for (const stale of ownApprovals.filter((r) => !reusable.includes(r))) {
+      outcome.resolved = false;
+      outcome.reviews = [...new Set([...outcome.reviews, stale.id])];
       await dismiss(stale);
+    }
     const second = await load(api, pr);
     requireThat(
       second.digest === first.digest &&
@@ -163,6 +181,7 @@ export async function approve(
           r.state === "APPROVED",
       );
       if (matching.length !== 1) {
+        outcome.reviews = matching.map((r) => r.id);
         for (const r of matching) await dismiss(r);
         if (matching.length > 0) {
           outcome.resolved = true;
@@ -209,19 +228,35 @@ export async function approve(
       quota: first.evidence.providers.quota,
     };
   } catch (error) {
-    if (selected) {
-      await dismiss(selected);
-      outcome.resolved = true;
-      outcome.reviews = [selected.id];
-    } else {
-      // A failed read still invalidates this executor's old approvals; recover exact IDs first.
-      const old = (await read()).filter(
-        (r) =>
-          owned(r) &&
-          r.state === "APPROVED" &&
-          r.body?.includes("<!-- cladiron-approval:v1 "),
+    try {
+      if (selected) {
+        outcome.resolved = false;
+        outcome.reviews = [selected.id];
+        await dismiss(selected);
+        outcome.resolved = true;
+      } else {
+        // A failed read still invalidates this executor's old approvals; recover exact IDs first.
+        const old = (await read()).filter(
+          (r) =>
+            owned(r) &&
+            r.state === "APPROVED" &&
+            r.body?.includes("<!-- cladiron-approval:v1 "),
+        );
+        if (old.length) {
+          outcome.resolved = false;
+          outcome.reviews = [
+            ...new Set([...outcome.reviews, ...old.map((r) => r.id)]),
+          ];
+        }
+        for (const r of old) await dismiss(r);
+      }
+    } catch (withdrawal) {
+      throw new AggregateError(
+        [error, withdrawal],
+        withdrawal instanceof Error
+          ? withdrawal.message
+          : "Approval withdrawal failed",
       );
-      for (const r of old) await dismiss(r);
     }
     throw error;
   }
