@@ -221,7 +221,7 @@ export async function registryIdentity(auth: string) {
   };
 }
 
-export async function publishArtifact(directory: string) {
+export async function publishArtifact(directory: string, reuseOnly = false) {
   const before = platform();
   await frozen(directory);
   return withAuth(async (auth) => {
@@ -277,6 +277,7 @@ export async function publishArtifact(directory: string) {
             "Original registry copy finished unsuccessfully; readback required",
           );
       },
+      !reuseOnly,
     );
     const identity = await registryIdentity(auth);
     const after = platform();
@@ -302,7 +303,7 @@ if (import.meta.main) {
   const [mode, directory, producer, ...extra] = process.argv.slice(2);
   if (!directory || extra.length)
     throw new Error(
-      "Usage: registry.ts preflight ARTIFACT PRODUCER | publish ARTIFACT",
+      "Usage: registry.ts preflight ARTIFACT PRODUCER | publish|reuse ARTIFACT",
     );
   const output = resolve(process.env.PUBLICATION_EVIDENCE!);
   mkdirSync(output, { recursive: true });
@@ -312,8 +313,8 @@ if (import.meta.main) {
       join(output, "preflight.json"),
       JSON.stringify(result, null, 2),
     );
-  } else if (mode === "publish" && !producer) {
-    const result = await publishArtifact(resolve(directory));
+  } else if ((mode === "publish" || mode === "reuse") && !producer) {
+    const result = await publishArtifact(resolve(directory), mode === "reuse");
     writeFileSync(
       join(output, "publication.json"),
       JSON.stringify(result, null, 2),

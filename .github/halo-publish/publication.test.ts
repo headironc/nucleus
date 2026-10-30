@@ -642,6 +642,19 @@ test("same version is reused; a new publication writes once and reads back after
   expect(copies).toBe(1);
   expect(reads).toBe(2);
 });
+test("reuse-only verification never copies when the published version disappears", async () => {
+  let copies = 0;
+  const copy = async () => {
+    copies++;
+  };
+  await expect(publish(async () => absent, copy, false)).rejects.toThrow(
+    "reuse-only verification forbids another copy",
+  );
+  expect(await publish(async () => same, copy, false)).toEqual({
+    publication: "reused",
+  });
+  expect(copies).toBe(0);
+});
 test("settled failed writes recover by exact readback without uploading again", async () => {
   let reads = 0,
     copies = 0;
@@ -749,6 +762,9 @@ test("workflow keeps producer code and writable package credentials in separate 
   expect(cold.permissions.packages).toBe("read");
   expect(publish.needs).toBe("preflight");
   expect(cold.needs).toBe("publish");
+  expect(
+    publish.steps.some((step: any) => step.run?.includes("registry.ts reuse ")),
+  ).toBe(true);
   expect(
     [preflight, publish, cold].every(
       (job) => job["runs-on"] === "ubuntu-24.04",

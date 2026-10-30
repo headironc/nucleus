@@ -296,7 +296,7 @@ bun -e 'import { accountAssociation } from "./.github/halo-publish/publication";
 
 job token 的包元数据可能不显示关联。工作流记录 repository 视图为 `null`、`missing` 或 `object`；前两者只说明该视图不可用，关联仍依上面的独立回查核验。返回对象时，两个仓库身份字段必须完整匹配；冲突、残缺、数组或其他类型均拒绝。准确包 ID、名称、private、仓库与原产物检查继续执行；可读元数据不证明 registry 写入或冷拉取能力，最终以真实短期令牌操作及消费者清理验收。
 
-只有独立发布作业有 `packages: write`。它仅检出本次可信工作流修订中的 publisher 工具，不检出或执行 producer 候选，也不运行候选镜像。再次核平台身份及冻结归档后，固定 Skopeo 用 `--preserve-digests` 发布不可变标签 `source-55506adfd5c4ba8e34632d2cc2eadcfd189c75e8-run-40964056245-attempt-1`。同标签同 manifest 读回复用，冲突拒绝；不转换、重建或移动 `latest/dev`。认证文件私有且不进入证据，正常、失败和 `always` 收尾均删除并核 absent。
+只有独立发布作业有 `packages: write`。它仅检出本次可信工作流修订中的 publisher 工具，不检出或执行 producer 候选，也不运行候选镜像。原首次发布以固定 Skopeo 和 `--preserve-digests` 写入不可变标签 `source-55506adfd5c4ba8e34632d2cc2eadcfd189c75e8-run-40964056245-attempt-1`，原记录继续作为写入证明。该固定版本现在已发布，当前工作流再次核平台身份及冻结归档后，以 `reuse` 入口只读确认同标签同 manifest；缺失、冲突或未知均失败，禁止第二次 copy，不转换、重建或移动 `latest/dev`。认证文件私有且不进入证据，正常、失败和 `always` 收尾均删除并核 absent。
 
 上传进程及其工具容器终态明确后，按固定标签读回原 manifest 字节，并按 digest 读回 config 原字节和有序层描述。上传报错但内容相同则接续验收，不再上传。401/403、限流、网络失败和清理未知均保留未决状态；只有明确的 `MANIFEST_UNKNOWN` 表示不存在。工作流不自动重试。负责人先核原 run/job、上传 journal 与外部状态；原操作终态且确认不存在后，原授权内最多另派一次相同内容的恢复，不能反复 dispatch 或用新构建掩盖未知结果。
 

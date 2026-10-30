@@ -434,8 +434,13 @@ export function remoteState(result: Inspection): "absent" | "same" {
 export async function publish(
   inspect: () => Promise<Inspection>,
   copy: () => Promise<void>,
+  allowCopy = true,
 ) {
   if (remoteState(await inspect()) === "same") return { publication: "reused" };
+  if (!allowCopy)
+    throw new Error(
+      "Published version is absent; reuse-only verification forbids another copy",
+    );
   let failed = false;
   try {
     await copy();
