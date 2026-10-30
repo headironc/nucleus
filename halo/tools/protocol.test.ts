@@ -31,6 +31,7 @@ describe("the actual OpenAPI / Ajv generator combination", () => {
       "/api/v1/workforce/current/grant",
       "/api/v1/workforce/current/numbers",
       "/api/v1/workforce/grants/{id}/terminations",
+      "/api/v1/workforce/numbers",
     ]);
     expect(Object.keys(selected.components.schemas).length).toBeLessThan(
       Object.keys(actual.components.schemas).length,
