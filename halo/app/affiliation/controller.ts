@@ -44,7 +44,6 @@ export type AffiliationPanel =
   | { kind: "submit-conflict" }
   | { kind: "submit-invalid"; choice: AffiliationCode }
   | { kind: "submit-failed"; retryAt: number }
-  | { kind: "submit-mismatch" }
   | { kind: "success" }
   | { kind: "unknown"; retryAt: number };
 
@@ -495,14 +494,7 @@ export class Affiliation {
 
   startForm() {
     if (this.state.kind !== "ready") return;
-    if (
-      this.state.panel.kind !== "unset" &&
-      !(
-        this.state.panel.kind === "unknown" &&
-        this.state.current.kind === "unset"
-      )
-    )
-      return;
+    if (this.state.panel.kind !== "unset") return;
     this.showPanel({ kind: "form", choice: null });
   }
 
@@ -592,7 +584,10 @@ export class Affiliation {
   private unknown(retryAfter = 0) {
     this.showPanel({
       kind: "unknown",
-      retryAt: this.wait({ kind: "failure", retryAfter }).retryAt,
+      retryAt: Math.min(
+        Number.MAX_SAFE_INTEGER,
+        this.dependencies.now() + Math.max(0, retryAfter),
+      ),
     });
   }
 
@@ -629,10 +624,6 @@ export class Affiliation {
       this.showPanel({ kind: "submit-conflict" });
       return;
     }
-    if (code === "request_mismatch") {
-      this.showPanel({ kind: "submit-mismatch" });
-      return;
-    }
     if (code === "dependency_unavailable") {
       const { retryAt } = this.wait(result);
       this.showPanel({
@@ -663,22 +654,19 @@ export class Affiliation {
         "submit-limited",
         "submit-failed",
         "submit-conflict",
-        "submit-mismatch",
       ].includes(panel.kind)
     )
       return;
     if ("retryAt" in panel && panel.retryAt > this.dependencies.now()) return;
-    const replace = [
-      "submit-conflict",
-      "submit-mismatch",
-      "submit-limited",
-      "submit-failed",
-    ].includes(panel.kind);
-    void this.readCurrent(replace ? "replace" : "current");
+    void this.readCurrent(panel.kind === "success" ? "current" : "replace");
   }
 
   retryRead() {
-    if (this.state.kind !== "ready" || this.readBlocked(this.state.current))
+    if (
+      this.state.kind !== "ready" ||
+      this.readRequest ||
+      this.readBlocked(this.state.current)
+    )
       return;
     const panel = this.state.panel;
     if (
@@ -699,9 +687,6 @@ export class Affiliation {
       void this.readCurrent("replace");
       return;
     }
-    this.readSerial++;
-    this.readRequest?.abort();
-    this.readRequest = undefined;
     this.options = [];
     this.readTarget = "initial";
     this.showPanel({ kind: "reading" });
