@@ -7,6 +7,11 @@ on:
         description: Reviewed dev commit (full SHA)
         required: true
         type: string
+      fail_after_checks:
+        description: Fail after successful platform checks to verify runner reclamation
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -26,7 +31,7 @@ jobs:
       github.repository_id == '1432619931' &&
       github.repository == 'headironc/nucleus' &&
       github.ref == 'refs/heads/dev'
-    runs-on: nucleus-standard-probe
+    runs-on: nucleus-runners
     timeout-minutes: 45
     permissions:
       contents: read
@@ -67,6 +72,11 @@ jobs:
         run: bun tools/package-postgresql.ts temp 2>&1 | tee "$RUNNER_TEMP/runner-probe-temp.log"
       - name: Check complete platform package
         run: bun tools/check-packages.ts --package platform --test-threads 2 2>&1 | tee "$RUNNER_TEMP/runner-probe-platform.log"
+      - name: Fail after successful platform checks
+        if: success() && inputs.fail_after_checks == true
+        run: |
+          printf 'RUNNER_PROBE_EXPECTED_FAILURE run=%s attempt=%s source=%s reason=runner-reclamation-check exit=42\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" | tee "$RUNNER_TEMP/runner-probe-failure.log"
+          exit 42
       - name: Check and clean private PostgreSQL scope
         if: always()
         run: bun tools/package-postgresql.ts cleanup 2>&1 | tee "$RUNNER_TEMP/runner-probe-cleanup.log"
