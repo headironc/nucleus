@@ -25,6 +25,7 @@ describe("the actual OpenAPI / Ajv generator combination", () => {
       "/api/v1/accounts/current/codes",
       "/api/v1/accounts/current/corrections",
       "/api/v1/accounts/current/mobile",
+      "/api/v1/accounts/current/role",
       "/api/v1/affiliations",
       "/api/v1/codes",
       "/api/v1/mobile-changes",
@@ -37,6 +38,8 @@ describe("the actual OpenAPI / Ajv generator combination", () => {
       "/api/v1/settings",
       "/api/v1/workforce/current/grant",
       "/api/v1/workforce/current/numbers",
+      "/api/v1/workforce/grants",
+      "/api/v1/workforce/grants/candidates",
       "/api/v1/workforce/grants/{id}/terminations",
     ]);
     expect(Object.keys(selected.components.schemas).length).toBeLessThan(
