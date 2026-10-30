@@ -286,7 +286,11 @@ test("account entry, exact first fill, success and independent current read", as
   await expect(
     page.getByRole("link", { name: "政治面貌", exact: true }),
   ).toBeVisible();
-  await expect(page.locator(".account-affiliation .field-hint")).toHaveText(
+  await expect(
+    page.locator(".account-affiliation").filter({
+      has: page.getByRole("link", { name: "政治面貌", exact: true }),
+    }).locator(".field-hint"),
+  ).toHaveText(
     "进入本人政治面貌页面。未填写时可自愿首次填写；已有值只读。",
   );
   await page.getByRole("link", { name: "政治面貌", exact: true }).click();

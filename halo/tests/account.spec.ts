@@ -436,7 +436,13 @@ test("a document first mounted in the background waits for visibility before rea
   expect(reads).toEqual([]);
   await page.evaluate(() => Reflect.get(window, "showAccountFixture")());
   await expect(page.locator(".correction-list li")).toHaveCount(5);
-  expect(reads).toHaveLength(2);
+  await expect
+    .poll(() => reads.map((url) => new URL(url).pathname).sort())
+    .toEqual([
+      "/api/v1/accounts/current",
+      "/api/v1/accounts/current/corrections",
+      "/api/v1/accounts/current/role",
+    ]);
 });
 
 test("storage failure and untrusted history close private access", async ({

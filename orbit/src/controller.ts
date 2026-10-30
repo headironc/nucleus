@@ -1,10 +1,13 @@
 import { operation, secret, type Platform } from "./platform";
-import { Protocol, matchesLogout, validAccount, type Account, type Session, type LoginInput, type RegistrationInput } from "./protocol";
+import { Protocol, matchesLogout, validAccount, validSessions, type OwnSession, type Account, type Session, type LoginInput, type RegistrationInput } from "./protocol";
 import { Storage, type Records, type Pending, type Selected } from "./storage";
 import { Transport, requestTimeout, type Exchange, type Request } from "./transport";
 
 export type View = {
-  phase: "login" | "checking" | "registration" | "pending" | "account" | "unavailable" | "complete";
+  phase: "login" | "checking" | "registration" | "pending" | "account" | "sessions" | "unavailable" | "complete";
+  sessions: OwnSession[];
+  sessionsReady: boolean;
+  homeAction: boolean;
   message: string;
   busy: boolean;
   canRecover: boolean;
@@ -18,16 +21,20 @@ export type View = {
   bound: boolean;
 };
 export type Selection = { generation: number; sessionId: string };
+export type SessionTarget = Selection & { targetId: string };
 const blank = (): View => ({ phase: "login", message: "使用微信绑定的手机号登录。首次使用可在验证后注册。", busy: false,
+  sessions: [], sessionsReady: false, homeAction: false,
   canRecover: false, canLogin: true, canCheck: false, canReset: false, logoutPending: false, name: "", suffix: "", avatar: "", bound: false });
 
-/** Identity lifecycle for the one visible native account page. No private projection is persisted. */
+/** One identity owner for the visible native private page. No private projection is persisted. */
 export class Controller {
   private storage: Storage;
   private transport: Transport;
   private records: Records = { version: 1 };
   private generation = 0;
   private visible = false;
+  private page: "account" | "sessions" = "account";
+  private otherUnknown?: string;
   private foreground = true;
   private active?: { exchange: Exchange; request: Request };
   private expiry?: ReturnType<typeof setTimeout>;
@@ -38,13 +45,13 @@ export class Controller {
     this.storage = new Storage(platform, protocol);
     this.transport = new Transport(platform, origin);
   }
-  subscribe(listener: (view: View) => void) { this.listener = listener; listener({ ...this.view }); }
-  snapshot(): View { return { ...this.view }; }
+  subscribe(listener: (view: View) => void) { this.listener = listener; listener(this.snapshot()); }
+  snapshot(): View { return { ...this.view, sessions: this.view.sessions.map(item => ({ ...item })) }; }
   private publish(patch: Partial<View>) {
     this.view = { ...this.view, ...patch };
-    this.listener({ ...this.view });
+    this.listener(this.snapshot());
   }
-  private conceal() { this.publish({ name: "", suffix: "", avatar: "", bound: false }); }
+  private conceal() { this.publish({ name: "", suffix: "", avatar: "", bound: false, sessions: [], sessionsReady: false }); }
   private advance(): number {
     this.generation++;
     if (this.expiry) clearTimeout(this.expiry);
@@ -53,6 +60,8 @@ export class Controller {
     const active = this.active;
     this.active = undefined;
     if (active?.exchange.pending) {
+      if (active.request.method === "DELETE" && /^\/api\/v1\/sessions\/[0-9a-f-]+$/.test(active.request.path))
+        this.otherUnknown = this.records.session?.id;
       this.preserveCancellation(active.request);
       active.exchange.cancel();
     }
@@ -75,11 +84,12 @@ export class Controller {
   suspend() { this.foreground = false; this.hide(); }
   resume() { this.foreground = true; this.refreshLocal(); }
   selection(): Selection | undefined {
-    return this.visible && this.view.phase === "account" && this.records.session ?
+    return this.visible && (this.view.phase === "account" || (this.view.phase === "sessions" && this.view.sessionsReady)) && this.records.session ?
       { generation: this.generation, sessionId: this.records.session.id } : undefined;
   }
   private matches(selection: Selection | undefined): boolean {
-    return !!selection && this.current(selection.generation) && this.view.phase === "account" && this.records.session?.id === selection.sessionId;
+    return !!selection && this.current(selection.generation) &&
+      (this.view.phase === "account" || (this.view.phase === "sessions" && this.view.sessionsReady)) && this.records.session?.id === selection.sessionId;
   }
   private current(generation: number): boolean { return this.visible && this.generation === generation; }
   private retain(next: Records) { this.storage.save(next); this.records = next; this.scheduleExpiry(); }
@@ -129,7 +139,7 @@ export class Controller {
           this.publish({ ...blank(), phase: "unavailable", canLogin: false, canCheck: true,
             message: "此前退出结果已无法继续查看。请检查当前登录状态。" });
         }
-      } else if (this.view.phase === "account" && this.view.logoutPending && !this.selectedLogout()) {
+      } else if ((this.view.phase === "account" || this.view.phase === "sessions") && this.view.logoutPending && !this.selectedLogout()) {
         this.publish({ logoutPending: false, canRecover: false,
           message: "此前退出结果已无法继续查看，不表示此前退出失败。" });
       }
@@ -154,7 +164,8 @@ export class Controller {
       this.presentAnonymous();
     } catch { this.failedStorage(); }
   }
-  async show() {
+  async show(page: "account" | "sessions" = "account") {
+    this.page = page;
     this.visible = true;
     const generation = this.advance();
     try {
@@ -200,7 +211,8 @@ export class Controller {
     const reply = await active.exchange.promise;
     if (this.active === active) this.active = undefined;
     if (!this.current(generation)) return undefined;
-    return this.protocol.decode(reply, `${request.method} ${request.path.split("?")[0]}` as Parameters<Protocol["decode"]>[1]);
+    const path = request.path.split("?")[0].replace(/^(\/api\/v1\/sessions)\/[0-9a-f-]{36}$/, "$1/{id}");
+    return this.protocol.decode(reply, `${request.method} ${path}` as Parameters<Protocol["decode"]>[1]);
   }
   private async checkSelected(generation: number) {
     const selected = this.records.session;
@@ -210,11 +222,12 @@ export class Controller {
     if (!this.current(generation)) return;
     const result = await this.call({ method: "GET", path: "/api/v1/accounts/current", operation: id, token: selected.token }, generation);
     if (!this.current(generation)) return;
-    if (Date.parse(selected.expiresAt) <= this.now()) return this.show();
+    if (Date.parse(selected.expiresAt) <= this.now()) return this.show(this.page);
     if (result?.status === 200) {
       const account = result.value.account as Account;
       if (validAccount(account) && (!selected.accountId || selected.accountId === account.id)) {
         this.retain({ ...this.records, session: { ...selected, accountId: account.id } });
+        if (this.page === "sessions") return this.readSessions(generation);
         this.publish({ ...blank(), phase: "account", canLogin: false, canCheck: true,
           message: this.records.expiredLogouts?.includes(account.id) ? "此前退出结果已无法继续查看，不表示此前退出失败。" : "",
           name: account.name, suffix: account.idNumber.suffix, avatar: account.avatar.href,
@@ -223,6 +236,7 @@ export class Controller {
         return;
       }
     }
+    if (this.page === "sessions") return this.sessionFailure(result);
     if (result?.status === 401 && result.value.code === "authentication_invalid") {
       this.retain({ ...this.records, session: undefined });
       this.presentAnonymous();
@@ -231,6 +245,65 @@ export class Controller {
       this.publish({ ...blank(), phase: "unavailable", canLogin: false, canCheck: true,
         message: result?.status === 403 ? "你无权查看这项内容。" : "暂时无法加载，请刷新后重试。" });
     }
+  }
+  private async readSessions(generation: number) {
+    const selected = this.records.session;
+    if (!selected?.accountId) return;
+    this.publish({ ...blank(), phase: "sessions", canLogin: false, busy: true, message: "正在加载登录列表…" });
+    const id = await operation(this.platform);
+    if (!this.current(generation)) return;
+    const result = await this.call({ method: "GET", path: "/api/v1/sessions", operation: id, token: selected.token }, generation);
+    if (!this.current(generation)) return;
+    if (Date.parse(selected.expiresAt) <= this.now()) return this.show(this.page);
+    if (result?.status === 200 && validSessions(result.value.sessions, selected.id)) {
+      this.otherUnknown = undefined;
+      this.publish({ ...blank(), phase: "sessions", canLogin: false, canCheck: true,
+        sessions: result.value.sessions, sessionsReady: true, message: "列表已刷新。",
+        logoutPending: !!this.selectedLogout(), canRecover: !!this.selectedLogout() });
+    } else this.sessionFailure(result);
+  }
+  private sessionFailure(result: Awaited<ReturnType<Controller["call"]>>) {
+    if (result?.status === 401 && result.value.code === "authentication_invalid") {
+      this.retain({ ...this.records, session: undefined });
+      this.publish({ ...blank(), message: "请重新登录。登录后可查看登录情况。" });
+    } else {
+      this.publish({ ...blank(), phase: "sessions", canLogin: false, canCheck: true,
+        message: result?.status === 403 ? "目前无法查看登录情况。" :
+          this.otherUnknown === this.records.session?.id ? "退出结果仍待确认，登录列表暂时无法加载。请刷新列表查看。" : "登录列表暂时无法加载，请重试。" });
+    }
+  }
+  targetSelection(targetId: string): SessionTarget | undefined {
+    const selected = this.selection();
+    return selected && this.page === "sessions" && this.view.sessionsReady &&
+      this.view.sessions.some(item => item.id === targetId && !item.current) ? { ...selected, targetId } : undefined;
+  }
+  async logoutOther(target: SessionTarget) {
+    if (this.view.busy || !this.matches(target) || !this.targetSelection(target.targetId)) return;
+    const sessions = this.view.sessions;
+    const selected = this.records.session!;
+    const generation = this.advance();
+    this.publish({ ...blank(), phase: "sessions", canLogin: false, busy: true, message: "正在退出所选登录…" });
+    try {
+      this.read();
+      if (this.records.session?.id !== selected.id) return this.show(this.page);
+      const id = await operation(this.platform);
+      if (!this.current(generation)) return;
+      // This consumer refreshes current state after an unknown write; it never replays this DELETE.
+      this.otherUnknown = selected.id;
+      const result = await this.call({ method: "DELETE", path: `/api/v1/sessions/${target.targetId}`, operation: id, token: selected.token }, generation);
+      if (!this.current(generation)) return;
+      if (Date.parse(selected.expiresAt) <= this.now()) return this.show(this.page);
+      const completion = result?.value.completion;
+      if (result?.status === 200 && completion?.id === id && completion.count === 1) {
+        this.otherUnknown = undefined;
+        this.publish({ ...blank(), phase: "sessions", canLogin: false, canCheck: true, sessionsReady: true,
+          sessions: sessions.filter(item => item.id !== target.targetId), message: "已退出所选登录。" });
+      } else if (result?.status === 401 || result?.status === 403) this.sessionFailure(result);
+      else this.publish({ ...blank(), phase: "sessions", canLogin: false, canCheck: true,
+        message: result?.status === 404 && result.value.code === "resource_not_found" ? "所选登录暂时无法操作，请刷新列表。" :
+          result?.status === 409 && result.value.code === "current_session" ? "所选登录是本次登录，不能在这里退出。请刷新列表。" :
+          "退出结果待确认。暂时无法确认是否已退出，请刷新列表查看。" });
+    } catch { if (this.current(generation)) this.failedStorage(); }
   }
   async authorize(code: unknown) {
     if (this.view.busy || !this.view.canLogin) return;
@@ -406,7 +479,7 @@ export class Controller {
       if (result?.status === 200 && completion?.id === id && Number.isSafeInteger(completion.count) &&
           completion.count > 0 && (scope === "all" || completion.count === 1)) {
         this.retain({ ...this.records, session: undefined, logouts: this.withoutSelectedLogout() });
-        this.publish({ ...blank(), phase: "complete", message: scope === "current" ? "已退出本次登录。" : "已退出全部设备。" });
+        this.publish({ ...blank(), phase: "complete", homeAction: true, message: scope === "current" ? "已退出本次登录。" : "已退出全部登录。" });
       } else {
         if (result?.status === 401 && result.value.code === "authentication_invalid") {
           this.retain({ ...this.records, session: undefined });
@@ -432,7 +505,7 @@ export class Controller {
       this.retain({ ...this.records, logouts: this.withoutSelectedLogout(),
         session: selected.id === logout.sessionId ? undefined : selected });
       this.publish({ ...blank(), phase: "complete", canLogin: !this.records.session, canCheck: !!this.records.session,
-        message: logout.scope === "current" ? "此前本次登录已退出。" : "此前全部设备退出已完成。后来建立的登录不受影响。" });
+        message: logout.scope === "current" ? "此前本次登录已退出。" : "此前全部登录退出已完成。后来建立的登录不受影响。" });
     } else if (result?.status === 401 && result.value.code === "authentication_invalid") {
       this.retain({ ...this.records, session: undefined });
       this.presentAnonymous();

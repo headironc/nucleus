@@ -1,6 +1,6 @@
 //! Logout advances the account and its fixed session set in the kernel transaction.
 
-use std::{collections::HashMap, convert::Infallible};
+use std::collections::HashMap;
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -12,7 +12,7 @@ use crate::{
         account::{self, record::Event},
         current::{self, Actor},
         operation,
-        revocation::{Completion, Error, Revocation, Scope, Service},
+        revocation::{Completion, Error, Rejection, Revocation, Scope, Service},
         session,
     },
     kernel::{App, Authorization, Command, Query, completion, operation::Family, tx::Tx},
@@ -38,6 +38,8 @@ fn request(
     struct Input<'a> {
         session_id: session::Id,
         scope: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        target_id: Option<session::Id>,
     }
     completion::Request::new(
         "logout",
@@ -45,6 +47,10 @@ fn request(
         &Input {
             session_id,
             scope: scope.as_ref(),
+            target_id: match scope {
+                Scope::Other(id) => Some(id),
+                _ => None,
+            },
         },
         authority,
     )
@@ -72,7 +78,7 @@ impl Command for Write {
     type Facts = Facts;
     type Change = Selected;
     type Output = Completion;
-    type Rejection = Infallible;
+    type Rejection = Rejection;
 
     fn session(&self) -> Option<(&current::Service, &Actor)> {
         Some((&self.service.current, &self.actor))
@@ -131,6 +137,18 @@ impl Command for Write {
     }
 
     fn decide(&self, facts: Facts, now: DateTime<Utc>) -> Result<Selected, Error> {
+        if let Scope::Other(id) = self.scope {
+            if id == self.actor.session_id() {
+                return Err(Error::Rejected(Rejection::CurrentSession));
+            }
+            if !facts
+                .sessions
+                .iter()
+                .any(|session| session.id() == id && session.available(now))
+            {
+                return Err(Error::Rejected(Rejection::NotFound));
+            }
+        }
         let change = account::transition::logout(
             &facts.account,
             self.actor.session_id(),
@@ -213,11 +231,58 @@ pub(super) struct Original<'a> {
     pub(super) operation_id: operation::Id,
 }
 
+pub(super) struct Sessions<'a> {
+    pub(super) service: &'a Service,
+    pub(super) actor: &'a Actor,
+}
+
+impl Query for Sessions<'_> {
+    type Authorized = current::database::State;
+    type Output = Vec<super::Session>;
+    type Rejection = Rejection;
+
+    async fn authorize(&self, client: &Client, view: View) -> Result<Self::Authorized, Error> {
+        Ok(self
+            .service
+            .current
+            .at(view)
+            .fetch_state(client, self.actor, Read::Snapshot(view))
+            .await?)
+    }
+
+    async fn read(
+        &self,
+        client: &Client,
+        subject: Self::Authorized,
+        view: View,
+    ) -> Result<Self::Output, Error> {
+        let sessions = session::state::for_account(
+            client,
+            self.service.app.keys(),
+            self.service.app.anchors(),
+            Read::Snapshot(view),
+            subject.account_id(),
+            subject.observed_at(),
+        )
+        .await?;
+        Ok(sessions
+            .into_iter()
+            .filter(|session| session.available(subject.observed_at()))
+            .map(|session| super::Session {
+                id: session.id(),
+                origin: session.origin().clone(),
+                created_at: session.created_at(),
+                current: session.id() == self.actor.session_id(),
+            })
+            .collect())
+    }
+}
+
 impl Query for Original<'_> {
     const RETAIN_ON_END_FAILURE: bool = true;
     type Authorized = current::database::State;
     type Output = Option<super::Original>;
-    type Rejection = Infallible;
+    type Rejection = Rejection;
 
     async fn authorize(&self, client: &Client, view: View) -> Result<Self::Authorized, Error> {
         Ok(self
@@ -276,9 +341,9 @@ impl Query for Original<'_> {
 pub(super) async fn verify(client: &Client, app: &App, now: DateTime<Utc>) -> Result<(), Error> {
     use history::Record as _;
 
-    completion::verify_identity_families::<Infallible>(client).await?;
+    completion::verify_identity_families::<Rejection>(client).await?;
     let mut completions: HashMap<_, _> =
-        completion::fetch_all::<Infallible>(client, app.keys(), COMPLETIONS)
+        completion::fetch_all::<Rejection>(client, app.keys(), COMPLETIONS)
             .await?
             .into_iter()
             .map(|record| (record.operation_id(), record))

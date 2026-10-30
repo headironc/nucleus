@@ -4,7 +4,7 @@
   <view class="notice" wx:if="{{message}}" role="status">{{message}}</view>
 
   <!-- snapshot:login:start -->
-  <view class="intro-card" wx:if="{{canLogin}}">
+  <view class="intro-card" wx:if="{{canLogin &amp;&amp; phase !== 'complete'}}">
     <view class="card-title">手机号登录</view>
     <view class="body-copy">请主动授权微信绑定的手机号。手机号验证不会关联微信身份。</view>
     <button class="primary" open-type="getPhoneNumber" bindgetphonenumber="authorize" disabled="{{busy}}">使用手机号登录</button>
@@ -37,9 +37,10 @@
     <view class="detail-row"><text>微信身份</text><text>{{bound ? '已关联' : '未关联'}}</text></view>
     <button class="secondary" bindtap="check" disabled="{{busy}}">刷新个人资料</button>
     <button class="text-button" bindtap="switchAccount" disabled="{{busy}}">切换账户</button>
+    <view class="section-label login-security">登录安全</view>
+    <button class="settings-row" bindtap="sessions" disabled="{{busy}}"><text>登录管理</text><text aria-hidden="true">›</text></button>
     <view class="separator"></view>
     <button class="secondary" bindtap="logoutCurrent" disabled="{{busy || logoutPending}}">退出本次登录</button>
-    <button class="text-button danger" bindtap="logoutAll" disabled="{{busy || logoutPending}}">退出全部设备</button>
   </view>
   <!-- snapshot:account:end -->
 
@@ -50,5 +51,7 @@
   <button class="secondary" wx:if="{{canRecover}}" bindtap="recover" disabled="{{busy}}">{{logoutPending ? '查看本次退出结果' : '检查本次办理结果'}}</button>
   <button class="text-button" wx:if="{{canReset}}" bindtap="restartLogin" disabled="{{busy}}">重新验证手机号</button>
   <view class="small-copy" wx:if="{{busy}}">请稍候…</view>
-  <navigator class="home-link" url="/pages/home/index" open-type="reLaunch">返回公开首页</navigator>
+  <navigator class="home-link primary" wx:if="{{homeAction}}" url="/pages/home/index" open-type="reLaunch">返回公开首页</navigator>
+  <navigator class="home-link" wx:else url="/pages/home/index" open-type="reLaunch">返回公开首页</navigator>
+  <button class="text-button" wx:if="{{phase === 'complete' &amp;&amp; canLogin}}" bindtap="check">重新登录</button>
 </view>
