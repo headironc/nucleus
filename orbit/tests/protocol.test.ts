@@ -31,3 +31,13 @@ test("native cancellation completes local wait and ignores late success without 
   expect(platform.requests[0].header).not.toHaveProperty("Origin");
   expect(platform.requests[0].header).not.toHaveProperty("Cookie");
 });
+
+test("cancelling a settled native exchange does not abort its completed request", async () => {
+  const platform = new FakePlatform();
+  const exchange = new Transport(platform, "https://api.example.test").send({ method: "POST", path: "/api/v1/sessions", operation: ids.registration });
+  platform.reply(0, { code: "authentication_invalid" }, 401);
+  expect(exchange.pending).toBe(false);
+  exchange.cancel();
+  expect(platform.aborted).toEqual([]);
+  expect(await exchange.promise).toMatchObject({ statusCode: 401 });
+});

@@ -7,7 +7,8 @@ export type Request = {
   token?: string;
   input?: unknown;
 };
-export type Exchange = { promise: Promise<Reply | undefined>; cancel(): void };
+export const requestTimeout = 35000;
+export type Exchange = { promise: Promise<Reply | undefined>; readonly pending: boolean; cancel(): void };
 
 export function apiOrigin(value: string): string {
   if (!/^https:\/\/[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[1-9][0-9]{0,4})?$/.test(value)) {
@@ -47,14 +48,16 @@ export class Transport {
         ...(request.input === undefined ? {} : { data: JSON.stringify(request.input) }),
         dataType: "text",
         responseType: "text",
-        timeout: 35000,
+        timeout: requestTimeout,
         success: finish,
         fail: () => finish(undefined),
       });
     } catch { finish(undefined); }
     return {
       promise,
+      get pending() { return !settled; },
       cancel() {
+        if (settled) return;
         finish(undefined);
         try { task?.abort(); } catch { /* The generation guard still rejects late replies. */ }
       },

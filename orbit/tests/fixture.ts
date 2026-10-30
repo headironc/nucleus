@@ -27,6 +27,8 @@ export class FakePlatform implements Platform {
   saved: Record<string, unknown> = {};
   writes = 0;
   storageFails = false;
+  storageReadFails = false;
+  storageWriteFails = false;
   randomFails = false;
   randomCounter = 0;
   requests: NativeRequest[] = [];
@@ -39,11 +41,11 @@ export class FakePlatform implements Platform {
     options.success({ randomValues: bytes.buffer });
   }
   getStorageSync(key: string) {
-    if (this.storageFails) throw new Error("Storage unavailable");
+    if (this.storageFails || this.storageReadFails) throw new Error("Storage unavailable");
     return this.saved[key] === undefined ? "" : JSON.parse(JSON.stringify(this.saved[key]));
   }
   setStorageSync(key: string, value: unknown) {
-    if (this.storageFails) throw new Error("Storage unavailable");
+    if (this.storageFails || this.storageWriteFails) throw new Error("Storage unavailable");
     this.writes++;
     this.saved[key] = JSON.parse(JSON.stringify(value));
   }
