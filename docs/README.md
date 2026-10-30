@@ -73,6 +73,7 @@
 | Halo 网站本人固定工牌申请                 | 目标     | [页面](client/pages.md#网站本人固定工牌申请)、[网站检查](../halo/README.md#固定工牌申请)；客户端候选已实现，真实组合验收待完成                                             |
 | 公开设置与网站交付配置                    | 已交付   | [网站交付边界](http/site.md)、[部署设置](settings.md)                                                                                                                      |
 | Orbit 小程序手机号入口与本人账户客户端    | 受控验证 | [Orbit](../orbit/README.md)、[小程序会话](client/session.md)、[客户端恢复](client/recovery.md)；已消费共同实际 OpenAPI，原生包及受控行为已验证，微信平台与真实业务链路待验 |
+| Orbit 小程序本人登录管理                  | 受控验证 | [小程序会话](client/session.md)、[客户端恢复](client/recovery.md)；正式协议列表与所选其他登录退出、当前及全部退出连接已受控验证，微信平台与真实组合待验                    |
 | 网站及小程序其余页面                      | 目标     | [页面](client/pages.md)、[网站工程](client/website.md)                                                                                                                     |
 | 真实部署、Nginx 与 systemd 验收           | 目标     | [业务交付顺序](engineering/delivery.md#里程碑与生产准备)                                                                                                                   |
 | 工牌照片准备与提交的统一审计接入          | 已交付   | [审计](architecture.md#审计)                                                                                                                                               |
