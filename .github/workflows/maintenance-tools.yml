@@ -73,6 +73,20 @@ jobs:
           '
       - name: Install dependencies
         run: bun install --frozen-lockfile --ignore-scripts
+      - name: Check review approval types and deterministic simulations
+        run: |
+          ./node_modules/.bin/tsc -p .github/review-approval/tsconfig.json --noEmit
+          bun test ./.github/review-approval/*.test.ts
+      - name: Record tested candidate receipt
+        env:
+          CI_RECEIPT_PATH: ${{ runner.temp }}/receipt.json
+        run: bun .github/review-approval/ci.ts
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: cladiron-ci-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/receipt.json
+          if-no-files-found: error
+          retention-days: 7
       - name: Check tool types
         run: bun run check:tools
       - name: Test maintenance tools

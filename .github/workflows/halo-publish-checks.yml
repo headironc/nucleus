@@ -30,6 +30,16 @@ jobs:
         with:
           node-version-file: .tool-versions
           package-manager-cache: false
+      - name: Record tested candidate receipt
+        env:
+          CI_RECEIPT_PATH: ${{ runner.temp }}/receipt.json
+        run: bun .github/review-approval/ci.ts
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        with:
+          name: cladiron-ci-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/receipt.json
+          if-no-files-found: error
+          retention-days: 7
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: ./node_modules/.bin/tsc -p .github/halo-publish/tsconfig.json --noEmit
       - run: bun test ./.github/halo-publish/publication.test.ts
