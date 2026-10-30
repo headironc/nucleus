@@ -24,7 +24,8 @@ import {
   quotaDeclaration,
   uneditedOwner,
 } from "./quota.ts";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, writeFileSync } from "node:fs";
+import { captureReviewStart, startSelection } from "./review-start.ts";
 
 export function context(env = process.env) {
   requireThat(
@@ -61,6 +62,7 @@ if (import.meta.main) {
       "PR must be a positive integer",
     );
     const api = new Github(process.env.GITHUB_TOKEN!);
+    const startArtifacts = startSelection(event.inputs ?? {});
     const current = await api.get(`/repos/${repository}/git/ref/heads/dev`);
     requireThat(
       process.env.GITHUB_WORKFLOW_SHA === current.object?.sha,
@@ -94,7 +96,7 @@ if (import.meta.main) {
       );
       await trustedCandidate(api, pr, process.env.GITHUB_WORKFLOW_SHA);
       invalidate = true;
-      const s = await snapshot(api, pr);
+      const s = await snapshot(api, pr, Date.now(), startArtifacts);
       requireThat(
         s.b.base === process.env.GITHUB_WORKFLOW_SHA,
         "Dev moved during intent read",
@@ -106,6 +108,10 @@ if (import.meta.main) {
         attempt: Number(process.env.GITHUB_RUN_ATTEMPT),
         b: s.b,
         digest: s.digest,
+        startArtifacts,
+        ...(s.evidence.reviewStarts
+          ? { reviewStarts: s.evidence.reviewStarts }
+          : {}),
         ...(s.evidence.providers.quota
           ? { quota: s.evidence.providers.quota }
           : {}),
@@ -121,7 +127,15 @@ if (import.meta.main) {
         JSON.stringify(intent) + "\n",
       );
     } else if (event.inputs?.mode === "prepare") {
-      const b = await binding(api, pr);
+      requireThat(
+        Object.keys(startArtifacts).length === 0,
+        "Review-start selection is approve-only",
+      );
+      const b = await trustedCandidate(
+        api,
+        pr,
+        process.env.GITHUB_WORKFLOW_SHA,
+      );
       const quotaCheck = event.inputs?.cubic_quota_check;
       const quota = quotaCheck
         ? await prepareQuota(api, b, Number(quotaCheck))
@@ -131,6 +145,34 @@ if (import.meta.main) {
       const existingCubic = comments.find(
         (c) => uneditedOwner(c) && c.body === requestBodies(b)[0],
       );
+      const reviewStart = await captureReviewStart(
+        b,
+        comments,
+        process.env,
+        async () => {
+          const current = await trustedCandidate(
+            api,
+            pr,
+            process.env.GITHUB_WORKFLOW_SHA,
+          );
+          return { b: current, comments: await requestComments(api, current) };
+        },
+      );
+      if (reviewStart) {
+        requireThat(
+          process.env.REVIEW_START_PATH && process.env.GITHUB_OUTPUT,
+          "Review-start output paths unavailable",
+        );
+        writeFileSync(
+          process.env.REVIEW_START_PATH,
+          JSON.stringify(reviewStart) + "\n",
+          { flag: "wx" },
+        );
+        appendFileSync(
+          process.env.GITHUB_OUTPUT,
+          "review_start_captured=true\n",
+        );
+      }
       console.log(
         JSON.stringify(
           {
@@ -146,6 +188,10 @@ if (import.meta.main) {
                 ? null
                 : requestBodies(b)[1],
             existingCodexRequest: existingCode?.id,
+            reviewStartRecordedLocally: Boolean(reviewStart),
+            reviewStartArtifact: reviewStart
+              ? `cladiron-review-start-${reviewStart.producer.run}-${reviewStart.producer.attempt}`
+              : null,
             securityOnlyIfMissing: requestBodies(b)[2],
             ...(quota
               ? {
@@ -173,7 +219,9 @@ if (import.meta.main) {
         planned.run === Number(process.env.GITHUB_RUN_ID) &&
           planned.attempt === Number(process.env.GITHUB_RUN_ATTEMPT) &&
           planned.repositoryId === repositoryId &&
-          planned.b.pr === pr,
+          planned.b.pr === pr &&
+          JSON.stringify(planned.startArtifacts ?? {}) ===
+            JSON.stringify(startArtifacts),
         "Approval lacks this run's persisted intent",
       );
       const outcome: OperationOutcome = {
@@ -198,9 +246,8 @@ if (import.meta.main) {
           JSON.stringify(candidate) === JSON.stringify(planned.b),
           "Candidate changed before credential creation",
         );
-        credential = await installationToken();
         const load = async (client: Api, number: number) => {
-          const s = await snapshot(client, number);
+          const s = await snapshot(client, number, Date.now(), startArtifacts);
           requireThat(
             s.b.base === process.env.GITHUB_WORKFLOW_SHA &&
               s.digest === planned.digest &&
@@ -209,6 +256,8 @@ if (import.meta.main) {
           );
           return s;
         };
+        await load(api, pr);
+        credential = await installationToken();
         console.log(
           JSON.stringify(
             await approve(

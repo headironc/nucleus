@@ -17,6 +17,7 @@ import {
   quotaWithdrawal,
   quotaStatement,
 } from "./quota.ts";
+import { readReviewStarts, type StartSelection } from "./review-start.ts";
 
 const prefix = `/repos/${repository}`;
 export async function binding(api: Api, pr: number): Promise<Binding> {
@@ -61,7 +62,10 @@ export async function binding(api: Api, pr: number): Promise<Binding> {
 }
 
 async function source(api: Api, path: string, ref: string) {
-  const value = await api.get(`${prefix}/contents/${path}?ref=${ref}`);
+  const encoded = path.split("/").map(encodeURIComponent).join("/");
+  const value = await api.get(
+    `${prefix}/contents/${encoded}?ref=${encodeURIComponent(ref)}`,
+  );
   requireThat(
     value.type === "file" &&
       value.encoding === "base64" &&
@@ -527,7 +531,12 @@ export async function requestComments(api: Api, b: Binding) {
   }
   return comments;
 }
-export async function snapshot(api: Api, pr: number, now = Date.now()) {
+export async function snapshot(
+  api: Api,
+  pr: number,
+  now = Date.now(),
+  startArtifacts: StartSelection = {},
+) {
   const b = await binding(api, pr);
   const comments = await requestComments(api, b);
   const reviews = await api.pages(`${prefix}/pulls/${pr}/reviews`);
@@ -547,7 +556,21 @@ export async function snapshot(api: Api, pr: number, now = Date.now()) {
     "check_runs",
   );
   const quota = await readQuota(api, b, comments, checks, now, reviews);
-  const providers = verifyProviders(b, comments, reviews, checks, quota);
+  const reviewStarts = await readReviewStarts(
+    api,
+    b,
+    comments,
+    startArtifacts,
+    now,
+  );
+  const providers = verifyProviders(
+    b,
+    comments,
+    reviews,
+    checks,
+    quota,
+    reviewStarts,
+  );
   const ci = await verifyCI(api, b, checks);
   requireThat(
     JSON.stringify(await binding(api, pr)) === JSON.stringify(b),
@@ -558,6 +581,7 @@ export async function snapshot(api: Api, pr: number, now = Date.now()) {
     providers,
     threads: allThreads,
     ci,
+    ...(Object.keys(reviewStarts).length ? { reviewStarts } : {}),
     // Preserve old findings and dispositions; new no-findings never deletes their evidence.
     reports: [...comments, ...reviews, ...inline]
       .filter((c) => providers.findings.includes(c.id) || inline.includes(c))

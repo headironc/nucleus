@@ -4,6 +4,7 @@ export const ownerId = 19648989;
 export const appId = 3104501;
 export const installationId = 175475891;
 export const actionsId = 15368;
+export const approvalWorkflow = ".github/workflows/review-approval.yml";
 export const cubic = { app: 1082092, bot: 191113872 };
 export const codex = { app: 1144995, bot: 199175422 };
 

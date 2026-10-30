@@ -7,6 +7,7 @@ import {
 } from "./identity.ts";
 import type { Api } from "./github.ts";
 import type { QuotaEvidence } from "./quota.ts";
+import type { ReviewStarts, StartSelection } from "./review-start.ts";
 export type Intent = {
   version: 1;
   repositoryId: number;
@@ -15,6 +16,8 @@ export type Intent = {
   b: Binding;
   digest: string;
   quota?: QuotaEvidence;
+  startArtifacts?: StartSelection;
+  reviewStarts?: ReviewStarts;
 };
 export async function uncertainIntents(
   api: Api,

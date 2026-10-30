@@ -17,6 +17,14 @@ on:
         description: Existing trusted same-repository Cubic quota check ID; prepare only
         required: false
         type: string
+      code_start_artifact:
+        description: Trusted prepare artifact ID for a persistent code review summary; approve only
+        required: false
+        type: string
+      security_start_artifact:
+        description: Trusted prepare artifact ID for a persistent security review summary; approve only
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -49,11 +57,21 @@ jobs:
       - name: Check fixed Bun
         run: bun tools/check-bun.ts
       - name: Prepare review request text
+        id: prepare
         if: ${{ inputs.mode == 'prepare' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CLADIRON_TRIGGERING_ACTOR_ID: ${{ github.triggering_actor == github.repository_owner && github.repository_owner_id || '0' }}
+          REVIEW_START_PATH: ${{ runner.temp }}/review-start.json
         run: bun .github/review-approval/main.ts
+      - name: Upload review start evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: ${{ inputs.mode == 'prepare' && steps.prepare.outputs.review_start_captured == 'true' }}
+        with:
+          name: cladiron-review-start-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/review-start.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Record approval operation intent
         id: intent
         if: ${{ inputs.mode == 'approve' }}

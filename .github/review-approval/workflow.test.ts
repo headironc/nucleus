@@ -75,6 +75,41 @@ test("all stable workflows and dedicated publication checks produce exactly one 
     expect(uploads[0].with["if-no-files-found"]).toBe("error");
   }
 });
+test("running capture uploads only a successful prepare observation and exposes no App credential", () => {
+  const workflow = load("review-approval.yml");
+  const steps = workflow.jobs.approval.steps;
+  const prepare = steps.find((s: any) => s.id === "prepare");
+  const upload = steps.filter(
+    (s: any) => s.name === "Upload review start evidence",
+  );
+  expect(prepare.if).toBe("${{ inputs.mode == 'prepare' }}");
+  expect(prepare.env.REVIEW_START_PATH).toBe(
+    "${{ runner.temp }}/review-start.json",
+  );
+  expect(Object.keys(prepare.env).sort()).toEqual([
+    "CLADIRON_TRIGGERING_ACTOR_ID",
+    "GITHUB_TOKEN",
+    "REVIEW_START_PATH",
+  ]);
+  expect(upload).toHaveLength(1);
+  expect(upload[0].if).toBe(
+    "${{ inputs.mode == 'prepare' && steps.prepare.outputs.review_start_captured == 'true' }}",
+  );
+  expect(upload[0].uses).toBe(
+    "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9",
+  );
+  expect(upload[0].with).toEqual({
+    name: "cladiron-review-start-${{ github.run_id }}-${{ github.run_attempt }}",
+    path: prepare.env.REVIEW_START_PATH,
+    "if-no-files-found": "error",
+    "retention-days": 30,
+  });
+  expect(steps.indexOf(prepare)).toBeLessThan(steps.indexOf(upload[0]));
+  for (const lane of ["code", "security"])
+    expect(
+      workflow.on.workflow_dispatch.inputs[`${lane}_start_artifact`],
+    ).toMatchObject({ required: false, type: "string" });
+});
 test("context rejects wrong actor, rerunner, ref or event", () => {
   const env = {
     GITHUB_EVENT_NAME: "workflow_dispatch",

@@ -121,21 +121,31 @@ export function codexSummary(
   body: unknown,
   state: any,
   security: any,
+  allowRunning = false,
 ): { codeAt: string; securityAt: string } | null {
   if (typeof body !== "string") return null;
   const codes = [
     ...body.matchAll(
-      /\| 📝 \*\*Code Review\*\* \| ✅ \*\*Completed\*\* <relative-time datetime="([0-9T:.Z-]+)">/g,
+      /\| 📝 \*\*Code Review\*\* \| (?:✅ \*\*Completed\*\*|🔄 \*\*Running\*\* since) <relative-time datetime="([0-9T:.Z-]+)">/g,
     ),
   ];
   const securities = [
     ...body.matchAll(
-      /\| 🔒 \*\*Security Review\*\* \| ✅ \*\*Completed\*\* <relative-time datetime="([0-9T:.Z-]+)">/g,
+      /\| 🔒 \*\*Security Review\*\* \| (?:✅ \*\*Completed\*\*|🔄 \*\*Running\*\* since) <relative-time datetime="([0-9T:.Z-]+)">/g,
     ),
   ];
   if (codes.length !== 1 || securities.length !== 1) return null;
   const codeAt = codes[0][1],
     securityAt = securities[0][1];
-  const expected = `<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 ${JSON.stringify(state)} -->\n<!-- codex-security-review:v1 ${JSON.stringify(security)} -->\n## Codex Review Summary\n\nThis comment shows the latest Codex review activity on this pull request.\n\n| Review | Status | Commit | Review trigger |\n| --- | --- | --- | --- |\n| 📝 **Code Review** | ✅ **Completed** <relative-time datetime="${codeAt}">${codeAt}</relative-time> | \`${state.code_review.commit_sha.slice(0, 7)}\` | Manual request |\n| 🔒 **Security Review** | ✅ **Completed** <relative-time datetime="${securityAt}">${securityAt}</relative-time> | \`${state.security_review.commit_sha.slice(0, 7)}\` | Manual request |\n\n\n\n${summaryAbout}`;
+  const label = (status: unknown) =>
+    status === "completed"
+      ? "✅ **Completed**"
+      : allowRunning && status === "running"
+        ? "🔄 **Running** since"
+        : null;
+  const codeLabel = label(state.code_review.status),
+    securityLabel = label(state.security_review.status);
+  if (!codeLabel || !securityLabel) return null;
+  const expected = `<!-- codex-pull-request-review-summary -->\n<!-- codex-review-state:v1 ${JSON.stringify(state)} -->\n<!-- codex-security-review:v1 ${JSON.stringify(security)} -->\n## Codex Review Summary\n\nThis comment shows the latest Codex review activity on this pull request.\n\n| Review | Status | Commit | Review trigger |\n| --- | --- | --- | --- |\n| 📝 **Code Review** | ${codeLabel} <relative-time datetime="${codeAt}">${codeAt}</relative-time> | \`${state.code_review.commit_sha.slice(0, 7)}\` | Manual request |\n| 🔒 **Security Review** | ${securityLabel} <relative-time datetime="${securityAt}">${securityAt}</relative-time> | \`${state.security_review.commit_sha.slice(0, 7)}\` | Manual request |\n\n\n\n${summaryAbout}`;
   return body === expected ? { codeAt, securityAt } : null;
 }

@@ -521,3 +521,49 @@ for (const trigger of [
       );
     });
 }
+for (const name of [
+  `lock-pr.yml?ref=${b.base}&x=.yml`,
+  "lock-pr#hidden.yml",
+  "space name%25.yml",
+])
+  test(`workflow file identity survives URL delimiters: ${name}`, async () => {
+    const api = new EvidenceApi();
+    const file = `.github/workflows/${name}`;
+    const get = api.get.bind(api);
+    let actualFileRead = false;
+    api.get = async (path) => {
+      if (path.includes("/contents/.github/workflows?")) {
+        const list = await get(path);
+        return path.includes(`ref=${b.merge}`)
+          ? [...list, { name, path: file, type: "file" }]
+          : list;
+      }
+      if (
+        path.includes("/contents/.github/workflows/lock-pr") ||
+        path.includes("/contents/.github/workflows/space")
+      ) {
+        const url = new URL(`https://api.github.com${path}`);
+        actualFileRead =
+          decodeURIComponent(url.pathname.split("/contents/")[1]) === file &&
+          url.searchParams.getAll("ref").length === 1 &&
+          url.searchParams.get("ref") === b.merge &&
+          !url.searchParams.has("x") &&
+          url.hash === "";
+        return {
+          type: "file",
+          encoding: "base64",
+          sha: "same",
+          content: Buffer.from(
+            actualFileRead
+              ? "name: Unaccepted\non:\n  pull_request:\n    branches: [dev]\njobs: {}\n"
+              : "name: Harmless\non: workflow_dispatch\njobs: {}\n",
+          ).toString("base64"),
+        };
+      }
+      return get(path);
+    };
+    await expect(snapshot(api, b.pr)).rejects.toThrow(
+      "New PR CI needs protocol acceptance",
+    );
+    expect(actualFileRead).toBe(true);
+  });

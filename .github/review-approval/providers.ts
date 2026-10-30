@@ -1,6 +1,7 @@
 import {
   codex,
   cubic,
+  ownerId,
   requestBodies,
   requireThat,
   sha,
@@ -18,6 +19,7 @@ import {
   uneditedOwner,
   type QuotaEvidence,
 } from "./quota.ts";
+import { verifyReviewCompletion, type ReviewStarts } from "./review-start.ts";
 
 export type Record = { [key: string]: any };
 export type ProviderEvidence = {
@@ -79,7 +81,7 @@ function jsonMarker(body: unknown, name: string) {
     throw new Error(`Invalid ${name} JSON`);
   }
 }
-function summaryParts(body: unknown) {
+export function summaryState(body: unknown) {
   const state = jsonMarker(body, "codex-review-state"),
     security = jsonMarker(body, "codex-security-review");
   const keys = (value: any, names: string[]) =>
@@ -101,6 +103,15 @@ function summaryParts(body: unknown) {
       ]) && sha(state[kind].commit_sha),
       "Unknown Codex review state fields",
     );
+  for (const kind of ["code_review", "security_review"])
+    requireThat(
+      typeof state[kind].status === "string" &&
+        [
+          state[kind].has_any_findings,
+          state[kind].has_unresolved_findings,
+        ].every((v) => v === null || typeof v === "boolean"),
+      "Unknown Codex review state values",
+    );
   requireThat(
     keys(security, [
       "blockingSeverityThreshold",
@@ -114,12 +125,35 @@ function summaryParts(body: unknown) {
       typeof security.mergeGateEnabled === "boolean",
     "Unknown security summary fields",
   );
+  return { state, security };
+}
+function summaryParts(body: unknown) {
+  const { state, security } = summaryState(body);
   const layout = codexSummary(body, state, security);
   requireThat(
     layout,
     "Unknown Codex complete summary layout or additional findings",
   );
   return { state, security, layout };
+}
+export function codexRequests(comments: Record[], b: Binding) {
+  const code = latestCodeRequest(comments, b);
+  if (!code) return undefined;
+  const candidates = comments.filter(
+    (c) =>
+      c.user?.id === ownerId &&
+      c.user?.type === "User" &&
+      c.body?.startsWith(requestBodies(b)[2]),
+  );
+  const security = candidates.length
+    ? latest(candidates, "Codex security request")
+    : code;
+  requireThat(
+    uneditedOwner(security) &&
+      (security === code || security.body === requestBodies(b)[2]),
+    "Latest security request is edited or unknown",
+  );
+  return { code, security };
 }
 
 export function verifyProviders(
@@ -128,6 +162,7 @@ export function verifyProviders(
   reviews: Record[],
   checks: Record[],
   quota?: QuotaEvidence,
+  starts: ReviewStarts = {},
 ): ProviderEvidence {
   const cubicRequest = quota
     ? undefined
@@ -135,15 +170,13 @@ export function verifyProviders(
         requests(comments, b, 0),
         "unedited owner Cubic request for current H/B",
       );
-  const codeRequest = latestCodeRequest(comments, b);
+  const boundRequests = codexRequests(comments, b);
+  const codeRequest = boundRequests?.code;
   requireThat(
     codeRequest,
     "Missing unedited owner Codex request for current H/B",
   );
-  const securityRequests = requests(comments, b, 2);
-  const securityRequest = securityRequests.length
-    ? latest(securityRequests, "Codex security request")
-    : codeRequest;
+  const securityRequest = boundRequests!.security;
   let cubicIds: number[] = [],
     cubicDisposition: Record | undefined;
   const disposedByCubic = (report: Record) =>
@@ -282,7 +315,10 @@ export function verifyProviders(
       bot(c, codex) &&
       typeof c.body === "string" &&
       c.body.includes("<!-- codex-review-state:v1 ") &&
-      time(c.created_at) > time(codeRequest.created_at),
+      (time(c.created_at) > time(codeRequest.created_at) ||
+        [starts.code, starts.security].some(
+          (s) => s?.proof.summary.id === c.id,
+        )),
   );
   requireThat(
     summaries.length === 1,
@@ -301,11 +337,18 @@ export function verifyProviders(
       typeof state.code_review.has_any_findings === "boolean",
     "Codex code finding disposition unknown",
   );
-  requireThat(
-    time(summary.created_at) > time(securityRequest.created_at) &&
-      time(summary.updated_at) > time(securityRequest.created_at),
-    "Codex security start/completion is not after its bound request",
-  );
+  for (const [lane, request, completed] of [
+    ["code", codeRequest, layout.codeAt],
+    ["security", securityRequest, layout.securityAt],
+  ] as const) {
+    const start = starts[lane];
+    if (start) verifyReviewCompletion(start, summary, completed);
+    else
+      requireThat(
+        time(summary.created_at) > time(request.created_at),
+        `Codex ${lane} start/completion is not after its bound request`,
+      );
+  }
   requireThat(
     time(layout.codeAt) > time(codeRequest.created_at) &&
       time(layout.securityAt) > time(securityRequest.created_at) &&
@@ -357,6 +400,12 @@ export function verifyProviders(
       summary.id !== securityReceipt.id,
       "Security receipt must be independent of null summary",
     );
+    if (starts.security)
+      requireThat(
+        time(securityReceipt.created_at) >=
+          time(starts.security.proof.capturedAt),
+        "Security receipt predates the observed running lane",
+      );
   } else {
     requireThat(
       typeof securityState.has_any_findings === "boolean" &&

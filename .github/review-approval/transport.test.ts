@@ -10,48 +10,50 @@ const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
 });
-test("artifact transport authenticates only GitHub and reads a single bounded JSON member without extraction", async () => {
-  const packed = spawnSync(
-    "python3",
-    [
-      "-c",
-      "import io,sys,zipfile\nb=io.BytesIO()\nwith zipfile.ZipFile(b,'w') as z:z.writestr('operation.json',sys.stdin.buffer.read())\nsys.stdout.buffer.write(b.getvalue())",
-    ],
-    { input: JSON.stringify({ version: 1, head: b.head }), timeout: 10000 },
-  );
-  expect(packed.status).toBe(0);
-  const bytes = packed.stdout;
-  const calls: any[] = [];
-  globalThis.fetch = (async (input: any, init: any) => {
-    calls.push({ url: String(input), init });
-    return calls.length === 1
-      ? new Response(null, {
-          status: 302,
-          headers: {
-            location: "https://fixture.blob.core.windows.net/synthetic",
-          },
-        })
-      : new Response(bytes);
-  }) as unknown as typeof fetch;
-  const artifact = {
-    id: 900,
-    size_in_bytes: bytes.length,
-    digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
-  };
-  const api = new Github("synthetic-read-token");
-  expect(await api.receipt(artifact, "operation.json")).toEqual({
-    version: 1,
-    head: b.head,
+for (const filename of ["operation.json", "review-start.json"] as const)
+  test(`artifact transport authenticates only GitHub and reads a single bounded ${filename} without extraction`, async () => {
+    const packed = spawnSync(
+      "python3",
+      [
+        "-c",
+        "import io,sys,zipfile\nb=io.BytesIO()\nwith zipfile.ZipFile(b,'w') as z:z.writestr(sys.argv[1],sys.stdin.buffer.read())\nsys.stdout.buffer.write(b.getvalue())",
+        filename,
+      ],
+      { input: JSON.stringify({ version: 1, head: b.head }), timeout: 10000 },
+    );
+    expect(packed.status).toBe(0);
+    const bytes = packed.stdout;
+    const calls: any[] = [];
+    globalThis.fetch = (async (input: any, init: any) => {
+      calls.push({ url: String(input), init });
+      return calls.length === 1
+        ? new Response(null, {
+            status: 302,
+            headers: {
+              location: "https://fixture.blob.core.windows.net/synthetic",
+            },
+          })
+        : new Response(bytes);
+    }) as unknown as typeof fetch;
+    const artifact = {
+      id: 900,
+      size_in_bytes: bytes.length,
+      digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+    };
+    const api = new Github("synthetic-read-token");
+    expect(await api.receipt(artifact, filename)).toEqual({
+      version: 1,
+      head: b.head,
+    });
+    expect(calls[0].init.headers.Authorization).toBe(
+      "Bearer synthetic-read-token",
+    );
+    expect(calls[1].init.headers).toBeUndefined();
+    calls.length = 0;
+    await expect(api.receipt(artifact)).rejects.toThrow(
+      "Cannot read CI receipt archive",
+    );
   });
-  expect(calls[0].init.headers.Authorization).toBe(
-    "Bearer synthetic-read-token",
-  );
-  expect(calls[1].init.headers).toBeUndefined();
-  calls.length = 0;
-  await expect(api.receipt(artifact)).rejects.toThrow(
-    "Cannot read CI receipt archive",
-  );
-});
 test("artifact transport refuses an unrelated redirect origin before sending any credential", async () => {
   let count = 0;
   globalThis.fetch = (async () => {

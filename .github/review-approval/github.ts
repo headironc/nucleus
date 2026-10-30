@@ -8,7 +8,7 @@ export interface Api {
   graphql(query: string, variables: Record): Promise<any>;
   receipt(
     artifact: Record,
-    filename?: "receipt.json" | "operation.json",
+    filename?: "receipt.json" | "operation.json" | "review-start.json",
   ): Promise<any>;
   post(path: string, body: Record): Promise<any>;
   put(path: string, body: Record): Promise<any>;
@@ -96,7 +96,8 @@ export class Github implements Api {
   }
   async receipt(
     artifact: Record,
-    filename: "receipt.json" | "operation.json" = "receipt.json",
+    filename:
+      "receipt.json" | "operation.json" | "review-start.json" = "receipt.json",
   ) {
     requireThat(
       Number.isSafeInteger(artifact.id) &&

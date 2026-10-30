@@ -14,7 +14,7 @@
 
 唯一消费者为开放、非草稿、同仓库、目标为 `dev` 的普通 PR。拒绝 fork、stack、queue、提升及合并状态未知的候选。完整头提交 `H` 必须包含当前基线 `B`；当前合成提交 `M` 必须有且仅有有序父提交 `[B, H]`。
 
-`prepare` 模式只输出请求正文，不发送评论。正文保留原供应商命令，并追加：
+`prepare` 模式输出请求正文，并按下节捕获已观察到的启动原件；它不发送评论。正文保留原供应商命令，并追加：
 
 ```text
 <!-- cladiron-request:v1 head=<full H> base=<full B> target=dev -->
@@ -23,6 +23,20 @@
 仓库和 PR 由 API 目标绑定。只接受数字身份 `19648989` 发布、`created_at == updated_at`、命令与 marker 完全匹配的请求。再通过同一数字 ID 的 GraphQL comment 核对 `lastEditedAt=null`，避免同秒编辑被时间精度隐藏。分别保留请求 ID 和创建时间；旧基线、编辑过的请求、伪用户名及旧轮结果都拒绝。安全请求已联动时使用代码请求，缺失时才由负责人补发安全命令，程序本身不触发审查。
 
 供应商未公开独立的 review-baseline SHA。这里依赖可信请求、供应商以当前 PR 输入执行的合同、请求后的唯一完整 `H` 结果，以及未变化且受保护的 `B`；不把历史 PR 的当前 base 当作当时输入。缺少这些条件即拒绝，不能宣称取得了供应商未暴露的证明。
+
+## 持久摘要的启动观察
+
+Codex 可能持续更新同一条 summary。容器创建时间早于本轮请求时，终态里的 completed 时间不能证明启动顺序。此时在审查仍为 running 时运行只读 `prepare`，保存完整原始响应。没有 running lane 时只输出准备信息，明确不产生捕获原件。已完成状态不能补造启动事实。
+
+捕获沿用所有者手动运行的受信 `dev` 入口。程序先核执行输入冻结与当前 `H/B`，再读取有效请求和可信 App/bot 的 summary。逐 lane 核对完整 `H`、Manual request、`Running since` 时间严格晚于有效请求。安全 lane 使用独立安全请求，缺失时使用联动代码请求。捕获前后重新核对候选及请求的 ID、未编辑正文和创建时间；变化即拒绝。原件保存第一次完整响应，不拼接后续更新。
+
+固定原件 `review-start.json` 绑定仓库、PR、`H/B` 和请求。它保留 summary 数字 ID、node ID、App/bot、完整正文及时间，也绑定 producer run/attempt/revision。只有实际捕获成功才上传 `cladiron-review-start-<run>-<attempt>`。缺失文件或上传失败均不构成成功证据。prepare 不接收 App 私钥，也不申请 installation token。程序不触发或轮询审查。
+
+批准时通过 `code_start_artifact`、`security_start_artifact` 显式选择最多两个 artifact ID；两者允许相同。不扫描历史 artifact 寻找可通过的结果。消费者核对仓库、固定名称、digest、未过期状态和唯一上传。producer 核验覆盖 owner/triggering actor、workflow 路径和 dispatch 事件，也覆盖 `dev`、当前 `B` 和准确 run/attempt。捕获和上传步骤、作业、Actions App/suite 均须成功。失败、取消、旧 attempt、缺少 lane 或原件均拒绝，不回退旧证据。
+
+消费者通过已有有界 ZIP 读取器读取唯一 JSON 文件，再重新解析原始 running 正文。终态须来自同一 summary ID/node ID 和可信 App/bot，绑定同一完整 `H`。完成时间晚于该 lane 的启动且不早于捕获。请求、`H/B`、身份、summary 或时间发生矛盾均拒绝。安全标志为 null 时，独立安全回执还须不早于捕获。最终发现处置、未知正文、线程和 CI 继续单独核验。snapshot digest 与 operation intent 保存 artifact 身份、digest 和完整原件。后续读取保持同一显式选择。
+
+该路径证明“请求后观察到同 PR、完整 head 的最新摘要正在运行，随后同一摘要报告完成”。供应商未暴露独立运行 ID 或 `B`；本合同不把摘要关联称为独立运行证明。首次新建且创建时间晚于请求的 summary 继续使用原路径。新的安全请求仍会使旧安全启动证据失效。聊天中的历史投影只用于设计，不能代替受信 producer 捕获的机器原件。
 
 ## 供应商解析
 
