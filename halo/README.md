@@ -8,6 +8,8 @@
 
 先在仓库根目录运行 `bun tools/check-inputs.ts --base origin/dev`，报告当前完整工作树是否影响 Halo。基线、输入归属及保守运行规则见[检查归属](../docs/engineering/verification.md#仓库与检查归属)。报告选择检查；本节及后续的实际快照和浏览器命令负责执行检查。
 
+双机开发按[项目分工](../docs/engineering/models.md#双机职责)执行。本机网站负责人完成本节适用检查与修复，按 [Git 集成路径](../docs/engineering/delivery.md#双机开发与集成)交付准确修订。完整业务验收的环境缺口按[验证责任](../docs/engineering/verification.md#双机验证与能力缺口)落实，不默认打包未提交源码交给 `dev` 代跑。
+
 ```bash
 cd halo
 bun install --frozen-lockfile --ignore-scripts
@@ -155,7 +157,7 @@ bun run test:browser -- tests/code.spec.ts
 
 全部退出从账户的独立入口进入 `/sessions/logout-all`，确认弹窗后才发送 DELETE。两种退出分别保存恢复材料与历史标记。全部退出将待取得证明、已匹配及已知不匹配分开保存。分类前中断或结果保存失败后，仍能以原操作查询服务端原范围与发起者；匹配首发材料才确认完成。已知 `request_mismatch` 不升级为本次成功，证明不匹配只展示此前记录。空结果、读取失败、刷新或登录返回本身都不证明完成。固定登录意图为 `all-logout-result`，本次退出仍使用 `logout-result`。已有账户登录后先核对本人，再恢复同账户的查询入口；注册仍进入账户页。原结果查询不重新退出，也不清理后来登录。
 
-本机完整验收在仓库根目录使用本地容器入口。它要求已安装并可用的 Docker、Linux x86_64，以及非 root 的当前用户；不在宿主安装浏览器、Nginx、Rust 或系统包。入口以当前镜像输入摘要命名本地镜像，缺失时调用现有 `tools/halo-ci-image.ts` 构建，之后复用同一摘要的缓存镜像；首次构建需要下载并安装镜像输入，耗时较长。也可用 `--image IMAGE` 复用已安装镜像；入口先解析其不可变镜像 ID，并在安装依赖或执行任何业务命令前要求镜像记录的输入摘要与当前仓库一致，不匹配即失败。入口不拉取私有 CI 镜像，也不登录镜像仓库。
+仓库现有的本地容器入口在根目录运行。它要求已安装并可用的 Docker、Linux x86_64，以及非 root 的当前用户；不在宿主安装浏览器、Nginx、Rust 或系统包。采用该路线前核对任务授权；Docker 已被明确停止时，不调用入口或自动重试。本机 macOS 的完整宿主兼容性不由该入口证明。入口以当前镜像输入摘要命名本地镜像，缺失时调用现有 `tools/halo-ci-image.ts` 构建，之后复用同一摘要的缓存镜像；首次构建需要下载并安装镜像输入，耗时较长。也可用 `--image IMAGE` 复用已安装镜像；入口先解析其不可变镜像 ID，并在安装依赖或执行任何业务命令前要求镜像记录的输入摘要与当前仓库一致，不匹配即失败。入口不拉取私有 CI 镜像，也不登录镜像仓库。
 
 ```bash
 bun tools/halo-local.ts
@@ -163,9 +165,11 @@ bun tools/halo-local.ts
 
 默认模式在固定环境中依次核对镜像工具、以 `bun install --frozen-lockfile --ignore-scripts` 安装 Halo 依赖并执行浏览器冒烟：分别启动默认 headless shell 与带 `channel: "chromium"`、沿用原生消费者 `ignoreDefaultArgs: ["--disable-back-forward-cache"]` 的完整 Chromium，各自打开页面、导航到无副作用的内联页面、核对内容并关闭。冒烟通过后才运行现有类型检查、正式构建和 `HALO_NGINX=/usr/sbin/nginx bun tools/check-halo-test.ts browser`。`--prepare` 只完成镜像核对、依赖安装和同样的双浏览器冒烟，用于快速验证环境，不宣称完整验收；`--native` 准备后只运行 `tests/identity.spec.ts` 的 `native history and reload` 用例。
 
-容器以当前宿主 UID/GID 运行，使用 `--init --ipc=host`、2 个 CPU，不启用特权或额外能力，不发布端口，也不挂载凭据或 Docker socket。仓库挂载为 `/workspace`；容器目标目录、根与 Halo 依赖、Cargo 与 Bun 缓存位于 `target/halo-local/`。每轮使用独立的 XDG 和截图目录，复用缓存并保留此前结果。入口保留镜像账号记录，并为缺失的宿主 UID/GID 添加本轮映射。映射文件只读挂载到该容器，保证 PostgreSQL 能解析实际运行用户。容器不继承宿主的浏览器路径、库路径、字体或 XDG 配置。信号只转发一次，等待原有清理并回读实际容器状态。客户端提前退出时，入口取消仍在运行的原容器并等待结束；无法核实终止时报告准确容器名并失败。旧 CI 曾直接调用镜像内的验证和浏览器命令；当前自动入口已停用，本地容器入口继续承担本机完整验收。
+容器以当前宿主 UID/GID 运行，使用 `--init --ipc=host`、2 个 CPU，不启用特权或额外能力，不发布端口，也不挂载凭据或 Docker socket。仓库挂载为 `/workspace`；容器目标目录、根与 Halo 依赖、Cargo 与 Bun 缓存位于 `target/halo-local/`。每轮使用独立的 XDG 和截图目录，复用缓存并保留此前结果。入口保留镜像账号记录，并为缺失的宿主 UID/GID 添加本轮映射。映射文件只读挂载到该容器，保证 PostgreSQL 能解析实际运行用户。容器不继承宿主的浏览器路径、库路径、字体或 XDG 配置。信号只转发一次，等待原有清理并回读实际容器状态。客户端提前退出时，入口取消仍在运行的原容器并等待结束；无法核实终止时报告准确容器名并失败。旧 CI 曾直接调用镜像内的验证和浏览器命令；旧自动入口已停用，不能据此推断当前 CI 已承担完整网站验收。
 
-底层本地验收命令保持可用：在已具备镜像工具、Halo 依赖和构建产物的环境中，可仍在仓库根目录运行 `HALO_NGINX=/usr/sbin/nginx bun tools/check-halo-test.ts browser`。旧 CI 的对应调用已退役。宿主不再提供 `playwright install` 或系统 Nginx 的准备步骤。
+底层验收入口 `tools/check-halo-test.ts` 直接调用 Cargo，不通过 Docker。具备准确工具链、固定浏览器、Nginx、PostgreSQL 夹具、Halo 依赖和构建产物后，可在仓库根目录运行 `HALO_NGINX=/usr/sbin/nginx bun tools/check-halo-test.ts browser`。实际 Nginx 路径按环境指定。现有 `halo/tools/browser-smoke.ts` 依赖 Linux `/proc` 取证；命令存在不证明 macOS 已支持同等完整验收。
+
+宿主依赖准备与入口适配由[项目验证责任](../docs/engineering/verification.md#双机验证与能力缺口)落实，复用有效授权，不因换执行位置重复请求。本文不提供已验收的宿主自动准备器，也不证明依赖安装或适配已经完成。实际运行保留原业务断言、失败证据和清理要求；宿主运行不替代镜像专属验收。
 
 直接使用底层命令并需要独立保存浏览器二进制时，安装和测试均设置同一个 `PLAYWRIGHT_BROWSERS_PATH`。测试创建临时数据库、证书、Node 监听、独立 HTTPS 头像入口和 Nginx 配置，结束时清理进程及临时目录。头像入口把浏览器的原生图片 GET 原样转发给真实后端的签名图片路由，只记录路径摘要、请求头存在布尔值、状态、响应头和字节摘要，不记录完整签名链接、Cookie 值或图片内容。截图位于 `halo/test-results/`。
 
