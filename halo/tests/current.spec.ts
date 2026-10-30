@@ -73,6 +73,21 @@ for (const change of ["session", "revision", "notification"] as const) {
     await page.route("**/api/v1/accounts/current/corrections?*", (route) =>
       route.fulfill({ json: { code: "ok", count: 0, corrections: [] } }),
     );
+    await page.route("**/api/v1/accounts/current/role", (route) =>
+      route.fulfill({
+        json: {
+          code: "ok",
+          role: {
+            id: first,
+            changeId: first,
+            kind: "default",
+            name: "普通成员",
+            level: 1,
+            permissions: [],
+          },
+        },
+      }),
+    );
     // Hold already received response bytes so a real selection notification can
     // supersede the read even after fetch has completed and cannot be aborted.
     await page.addInitScript(() => {
