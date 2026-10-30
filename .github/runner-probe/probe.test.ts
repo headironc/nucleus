@@ -101,6 +101,13 @@ test("only manual dev work can enter the dedicated runner job", () => {
           type: "boolean",
           default: false,
         },
+        timeout_after_checks: {
+          description:
+            "Wait with active PostgreSQL after checks for the native job deadline",
+          required: false,
+          type: "boolean",
+          default: false,
+        },
       },
     },
   });
@@ -211,12 +218,14 @@ test("native initialization alone receives the read-only package credential", ()
     EXPECTED_REVISION: "${{ inputs.expected_revision }}",
     FAIL_AFTER_CHECKS: "${{ inputs.fail_after_checks }}",
     CANCEL_AFTER_CHECKS: "${{ inputs.cancel_after_checks }}",
+    TIMEOUT_AFTER_CHECKS: "${{ inputs.timeout_after_checks }}",
   });
   expect(source).not.toMatch(
     /secrets\.|docker login|sudo|chmod|actions\/cache|rust-cache|CARGO_HOME|RUSTUP_HOME/,
   );
   for (const entry of job.steps) {
     expect(entry["continue-on-error"]).toBeUndefined();
+    expect(entry).not.toHaveProperty("timeout-minutes");
     if (entry.uses) expect(entry.uses).toMatch(/^[\w-]+\/[\w-]+@[0-9a-f]{40}$/);
   }
 });
@@ -416,23 +425,30 @@ test("conflicting modes are rejected before checkout or private resource prepara
   const guard = step("Bind reviewed dev revision");
   for (const failure of ["", "false", "true"])
     for (const cancel of ["", "false", "true"])
-      expect(
-        execute(guard, {
-          ...context,
-          FAIL_AFTER_CHECKS: failure,
-          CANCEL_AFTER_CHECKS: cancel,
-        }).status,
-      ).toBe(failure === "true" && cancel === "true" ? 1 : 0);
+      for (const timeout of ["", "false", "true"])
+        expect(
+          execute(guard, {
+            ...context,
+            FAIL_AFTER_CHECKS: failure,
+            CANCEL_AFTER_CHECKS: cancel,
+            TIMEOUT_AFTER_CHECKS: timeout,
+          }).status,
+        ).toBe(
+          [failure, cancel, timeout].filter((value) => value === "true")
+            .length > 1
+            ? 1
+            : 0,
+        );
   expect(job.steps[0]).toBe(guard);
 });
 
 test("active PG is uploaded before interruptible waiting and cleaned before the independent scan", () => {
   const selected = [
     "Check complete platform package",
-    "Start private cancellation workload",
+    "Start private PG workload",
     "Preserve pre-interrupt diagnostics",
-    "Wait for ordinary cancellation",
-    "Stop private cancellation workload",
+    "Wait for cancellation or job deadline",
+    "Stop private PG workload",
     "Check and clean private PostgreSQL scope",
   ].map(step);
   const indices = selected.map((entry) => job.steps.indexOf(entry));
@@ -449,9 +465,9 @@ test("active PG is uploaded before interruptible waiting and cleaned before the 
     { mode: 0o700 },
   );
   for (const [name, command] of [
-    ["Start private cancellation workload", "start"],
-    ["Wait for ordinary cancellation", "wait"],
-    ["Stop private cancellation workload", "cleanup"],
+    ["Start private PG workload", "start"],
+    ["Wait for cancellation or job deadline", "wait"],
+    ["Stop private PG workload", "cleanup"],
   ]) {
     const entry = step(name!);
     expect(entry.run).not.toContain("${{");
@@ -467,39 +483,43 @@ test("active PG is uploaded before interruptible waiting and cleaned before the 
   }
   for (const successful of [false, true])
     for (const requested of [undefined, false, true]) {
-      const functions = [
-        {
-          name: "success",
-          minArgs: 0,
-          maxArgs: 0,
-          call: () => new data.BooleanData(successful),
-        },
-        {
-          name: "always",
-          minArgs: 0,
-          maxArgs: 0,
-          call: () => new data.BooleanData(true),
-        },
-      ];
-      const inputs = new data.Dictionary();
-      if (requested !== undefined)
-        inputs.add("cancel_after_checks", new data.BooleanData(requested));
-      for (const entry of selected.slice(1, 5)) {
-        const enabled = truthy(
-          new Evaluator(
-            new Parser(
-              new Lexer(entry.if!).lex().tokens,
-              ["inputs"],
-              functions,
-            ).parse(),
-            new data.Dictionary({ key: "inputs", value: inputs }),
-            new Map(functions.map((fn) => [fn.name, fn])),
-          ).evaluate(),
-        );
-        expect(enabled).toBe(
-          requested === true &&
-            (entry.name === "Stop private cancellation workload" || successful),
-        );
+      for (const timeout of [undefined, false, true]) {
+        const functions = [
+          {
+            name: "success",
+            minArgs: 0,
+            maxArgs: 0,
+            call: () => new data.BooleanData(successful),
+          },
+          {
+            name: "always",
+            minArgs: 0,
+            maxArgs: 0,
+            call: () => new data.BooleanData(true),
+          },
+        ];
+        const inputs = new data.Dictionary();
+        if (requested !== undefined)
+          inputs.add("cancel_after_checks", new data.BooleanData(requested));
+        if (timeout !== undefined)
+          inputs.add("timeout_after_checks", new data.BooleanData(timeout));
+        for (const entry of selected.slice(1, 5)) {
+          const enabled = truthy(
+            new Evaluator(
+              new Parser(
+                new Lexer(entry.if!).lex().tokens,
+                ["inputs"],
+                functions,
+              ).parse(),
+              new data.Dictionary({ key: "inputs", value: inputs }),
+              new Map(functions.map((fn) => [fn.name, fn])),
+            ).evaluate(),
+          );
+          expect(enabled).toBe(
+            (requested === true || timeout === true) &&
+              (entry.name === "Stop private PG workload" || successful),
+          );
+        }
       }
     }
 });

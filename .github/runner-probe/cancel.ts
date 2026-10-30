@@ -27,7 +27,7 @@ type State = {
   run: string;
   attempt: string;
   source: string;
-  mode: "cancel";
+  mode: "cancel" | "timeout";
   directory: string;
   data: string;
   socket: string;
@@ -57,7 +57,16 @@ function identity() {
       /^[0-9a-f]{40}$/.test(source),
     "Missing cancellation identity",
   );
-  return { run, attempt, source, mode: "cancel" as const };
+  const { CANCEL_AFTER_CHECKS: cancel, TIMEOUT_AFTER_CHECKS: timeout } =
+    process.env;
+  check(
+    ["true", "false"].includes(cancel ?? "") &&
+      ["true", "false"].includes(timeout ?? "") &&
+      cancel !== timeout,
+    "Expected exactly one Boolean cancellation or timeout mode",
+  );
+  const mode: State["mode"] = cancel === "true" ? "cancel" : "timeout";
+  return { run, attempt, source, mode };
 }
 function scope() {
   check(
@@ -273,7 +282,7 @@ function active(state: State) {
     "psql",
     queryArgs(
       state,
-      `SELECT pid FROM pg_stat_activity WHERE application_name = 'runner_cancel_probe' AND state = 'active' AND query = '${sql}' AND wait_event = 'PgSleep'`,
+      `SELECT pid FROM pg_stat_activity WHERE application_name = 'runner_${state.mode}_probe' AND state = 'active' AND query = '${sql}' AND wait_event = 'PgSleep'`,
     ),
   );
   check(/^\d+$/.test(pid), "Cancellation SQL is not active");
@@ -309,6 +318,9 @@ function stopPostgres(state: State) {
   }
 }
 function requestStop(path: string) {
+  // Recheck cross-step ownership after waiting or handling a signal/error.
+  // Startup may be interrupted before its newly owned state is published.
+  if (existsSync(join(path, "state.json"))) load(path);
   const file = join(path, "stop");
   if (existsSync(file)) plain(file);
   else writeFileSync(file, "stop\n", { flag: "wx", mode: 0o600 });
@@ -454,7 +466,7 @@ async function own(path: string) {
     run("psql", queryArgs(state, "SELECT 1"));
     const query = launch("psql", queryArgs(state, sql), {
       ...pgEnvironment(),
-      PGAPPNAME: "runner_cancel_probe",
+      PGAPPNAME: `runner_${state.mode}_probe`,
     });
     while (Date.now() < deadline && !stopping()) {
       const handle = query.pid && processHandle(query.pid);
@@ -606,7 +618,11 @@ async function main() {
       "Cancellation wait requires live owner",
     );
     active(state);
-    console.log("RUNNER_PROBE_CANCEL_WAITING " + JSON.stringify(state));
+    const marker =
+      state.mode === "cancel"
+        ? "RUNNER_PROBE_CANCEL_WAITING"
+        : "RUNNER_PROBE_TIMEOUT_WAITING";
+    console.log(marker + " " + JSON.stringify(state));
     while (!signalCode) {
       const current = load(path);
       check(
