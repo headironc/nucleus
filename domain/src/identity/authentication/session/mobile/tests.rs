@@ -22,6 +22,99 @@ use crate::{
 const SECRET: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
 
 #[test]
+fn startup_exchange_row_timeout_releases_the_scan_and_allows_restart() {
+    let server = server();
+    Runtime::new().expect("runtime").block_on(async {
+        timeout(Duration::from_secs(40), async {
+            let database = Database::initialized(Arc::clone(&server)).await;
+            let mut supplier = Supplier::new().await;
+            let (context, services) = start(&supplier, database.connections(&database.user)).await;
+            let service = services.authentication().clone();
+            let mut worker = tokio::spawn(async move {
+                service
+                    .create_mobile_session(input(Uuid::new_v4(), "retained-row-code"))
+                    .await
+            });
+            reply(&mut supplier, &mut worker, "13800000000", true).await;
+            worker.await.expect("worker").expect("retained exchange");
+            services.drain().await.expect("drained");
+            context.stop().await.expect("stopped");
+            drop(services);
+
+            let proxy = Proxy::start(&server).await;
+            let context = Context::new(proxied(&database, &proxy))
+                .await
+                .expect("startup runtime");
+            let barrier = Barrier::begin(context.clone())
+                .await
+                .expect("startup barrier");
+            proxy.arm(Fault::StalledExchangeRead);
+            let settings = Settings::new(
+                8,
+                crate::identity::message::Limits::default(),
+                authentication::session_settings()
+                    .with_mini("mini-fixture".parse().expect("mini identity"), 2_592_000)
+                    .expect("separate identities"),
+                crate::registration::Limits::default(),
+                avatar_settings(),
+            )
+            .expect("work capacity");
+            let startup = Box::pin(Services::start_with_mini(
+                barrier,
+                inventory(keys()),
+                settings,
+                supplier.client(),
+                authentication::dispatch::tests::unused_client().await,
+                Some(supplier.mini_client()),
+            ));
+            let (result, _) = timeout(Duration::from_secs(15), async {
+                tokio::join!(startup, async {
+                    timeout(Duration::from_secs(3), proxy.intercepted())
+                        .await
+                        .expect("the retained row lookup was intercepted")
+                })
+            })
+            .await
+            .expect("the existing batch budget also bounds each row lookup");
+            assert!(matches!(result, Err(crate::startup::Error::Authentication(
+                authentication::Error::VerificationTimeout(cause)
+            )) if cause.stage() == crate::database::verification::Stage::ExchangesBatch
+                && cause.waiting() == crate::database::verification::Waiting::QueryAndValidation));
+            proxy.release();
+            context.stop().await.expect("failed startup runtime ended");
+            proxy.stop().await;
+
+            let observer = database
+                .connections(&database.user)
+                .recover()
+                .await
+                .expect("observer");
+            assert!(
+                observer
+                    .client()
+                    .query_one("SELECT pg_try_advisory_xact_lock(1314210636, 1)", &[])
+                    .await
+                    .expect("independent barrier observation")
+                    .get::<_, bool>(0)
+            );
+            observer.terminate().await.expect("observer ended");
+            let (context, services) = start(&supplier, database.connections(&database.user)).await;
+            services.drain().await.expect("restarted services drained");
+            context.stop().await.expect("restarted runtime ended");
+            assert!(
+                timeout(Duration::from_millis(20), supplier.observe())
+                    .await
+                    .is_err(),
+                "startup never repeats a phone exchange"
+            );
+            supplier.stop().await;
+        })
+        .await
+        .expect("retained exchange timeout and restart budget");
+    });
+}
+
+#[test]
 fn administration_requires_the_retained_mini_identity_without_loading_supplier_credentials() {
     let server = server();
     Runtime::new().expect("runtime").block_on(async {
