@@ -1,0 +1,41 @@
+name: Lock closed PR
+
+# Metadata-only API operation from the default branch; no candidate code is loaded.
+on: # zizmor: ignore[dangerous-triggers]
+  pull_request_target:
+    types: [closed]
+
+permissions:
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  lock:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Lock the closed conversation
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        shell: bash --noprofile --norc -euo pipefail {0}
+        run: |
+          snapshot=$(gh api --hostname github.com "repos/$REPOSITORY/pulls/$PR_NUMBER" --jq '[.state, .locked] | @tsv')
+          read -r pr_state locked <<< "$snapshot"
+          if [[ "$pr_state" != closed || "$locked" == true ]]; then
+            echo "PR is open or already locked; no write needed."
+            exit 0
+          fi
+          # Read back even when the write fails; never resend an uncertain request.
+          if ! gh api --hostname github.com --method PUT -H 'Content-Length: 0' "repos/$REPOSITORY/issues/$PR_NUMBER/lock"; then
+            echo '::warning::Lock request failed; checking the original PR without retrying.'
+          fi
+          locked=$(gh api --hostname github.com "repos/$REPOSITORY/pulls/$PR_NUMBER" --jq '.locked')
+          if [[ "$locked" != true ]]; then
+            echo '::error::The PR lock could not be confirmed.'
+            exit 1
+          fi
