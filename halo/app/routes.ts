@@ -11,6 +11,7 @@ export default [
   route("account/cancellation", "routes/cancellation.tsx"),
   route("workforce/termination", "routes/workforce-termination.tsx"),
   route("workforce/number", "routes/workforce-number.tsx"),
+  route("workforce/applications/*", "routes/workforce-applications.tsx"),
   route("workforce/grants/new", "routes/workforce-admission.tsx"),
   route("workforce", "routes/workforce.tsx"),
   route("sessions/logout", "routes/logout.tsx"),
