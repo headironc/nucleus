@@ -774,7 +774,7 @@ mod tests {
         };
         let session = services
             .registration()
-            .register(crate::registration::Input::new(
+            .register_input_for_test(crate::registration::Input::new(
                 Uuid::new_v4().to_string().parse().expect("operation"),
                 credential.id(),
                 credential.token().text().parse().expect("proof"),
@@ -785,7 +785,7 @@ mod tests {
             .expect("reader account");
         let actor = services
             .current()
-            .authenticate(current::Proof {
+            .authenticate(current::Proof::Cookie {
                 id: session.id(),
                 token: session.token().text().parse().expect("proof"),
             })
@@ -1202,7 +1202,7 @@ mod tests {
                     let new_operation=Uuid::new_v4();
                     let Receipt::Session(new)=Box::pin(services.authentication().create_session(session_input(new_operation,message_id,"13800000000",CODE))).await.expect("new R1 after real resumption") else {panic!("session");};
                     let row=observer.client().query_one("SELECT sequence,created_at FROM identity.sessions WHERE id=$1",&[&new.id()]).await.expect("independent new session snapshot");assert_eq!(row.get::<_,i64>("sequence"),1);
-                    let new_actor=services.current().authenticate(current::Proof{id:new.id(),token:new.token().text().parse().expect("proof")}).await.expect("new credentials work");
+                    let new_actor=services.current().authenticate(current::Proof::Cookie {id:new.id(),token:new.token().text().parse().expect("proof")}).await.expect("new credentials work");
                     let owner=database.connections("postgres").recover().await.expect("isolated owner");
                     if missing_old {owner.client().batch_execute("BEGIN; SET LOCAL session_replication_role=replica").await.expect("isolated missing record");owner.client().execute("DELETE FROM identity.revocations WHERE id=$1",&[&old.id()]).await.expect("deliberately remove required old member");owner.client().batch_execute("COMMIT").await.expect("isolated damage committed");}
                     let facts=observer.client().query_one("SELECT suspension.suspended_at<=resumption.resumed_at AND resumption.resumed_at<=(SELECT created_at FROM identity.sessions WHERE id=$3) AS ordered,(SELECT sequence=2 FROM identity.sessions WHERE id=$2) AND (SELECT sequence=1 FROM identity.sessions WHERE id=$3) AS captured,EXISTS(SELECT 1 FROM identity.revocations WHERE id=$2) AS old_revoked,NOT EXISTS(SELECT 1 FROM identity.revocations WHERE id=$3) AND EXISTS(SELECT 1 FROM identity.handoffs WHERE id=$3) AS new_usable,(SELECT count(*) FROM identity.revocations WHERE suspension_id=$1) AS members FROM identity.suspensions suspension JOIN identity.resumptions resumption USING(id) WHERE suspension.id=$1",&[&paused.id(),&old.id(),&new.id()]).await.expect("independent actual lifecycle before replay");
@@ -1319,7 +1319,7 @@ mod tests {
                 Box::pin(services.appointment().assign(administrator.clone(),Uuid::new_v4().to_string().parse().expect("operation"),appointment::tests::command(&candidate,&definition))).await.expect("real manager appointment");
                 let message_id=message(&database,services.authentication(),&mut supplier,"13700000000").await;
                 let Receipt::Registration(credential)=Box::pin(services.authentication().create_session(session_input(Uuid::new_v4(),message_id,"13700000000",CODE))).await.expect("third account R1") else {panic!("registration");};
-                Box::pin(services.registration().register(crate::registration::Input::new(Uuid::new_v4().to_string().parse().expect("operation"),credential.id(),credential.token().text().parse().expect("proof"),"Third Person".parse().expect("name"),"000000200002290029".parse().expect("number")))).await.expect("ordinary third account R2");
+                Box::pin(services.registration().register_input_for_test(crate::registration::Input::new(Uuid::new_v4().to_string().parse().expect("operation"),credential.id(),credential.token().text().parse().expect("proof"),"Third Person".parse().expect("name"),"000000200002290029".parse().expect("number")))).await.expect("ordinary third account R2");
                 let target=services.account().candidate(&manager,"13700000000".parse().expect("mobile")).await.expect("lower target");
                 let account_id=target.identity().id();
                 let confirmation=|| serde_json::from_value(json!({"personId":target.identity().person_id(),"revisionId":target.identity().revision_id(),"mobile":"13700000000"})).expect("confirmation");

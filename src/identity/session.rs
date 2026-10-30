@@ -18,8 +18,37 @@ pub(crate) struct Session {
     pub(crate) expires_at: DateTime<Utc>,
 }
 
+#[derive(Serialize, ToSchema)]
+#[serde(untagged)]
+#[schema(as = session::Delivery)]
+pub(crate) enum Delivery {
+    Website(Session),
+    Mini(Mini),
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[schema(as = session::Mini, max_properties = 3)]
+pub(crate) struct Mini {
+    pub(crate) id: session::Id,
+    #[schema(value_type = String, min_length = 43, max_length = 43, pattern = "^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$")]
+    pub(crate) token: Zeroizing<String>,
+    pub(crate) expires_at: DateTime<Utc>,
+}
+
 fn name(id: session::Id) -> String {
     format!("__Host-nucleus-session-{id}")
+}
+
+pub(super) fn present(headers: &HeaderMap) -> Result<bool, ParseError> {
+    for value in headers.get_all(header::COOKIE) {
+        for cookie in Cookie::split_parse(value.to_str()?) {
+            if cookie?.name().starts_with("__Host-nucleus-session-") {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
 }
 
 pub(super) fn read(headers: &HeaderMap, id: session::Id) -> Result<session::Token, ParseError> {

@@ -15,7 +15,6 @@ use crate::{
         mobile::{Mobile, envelope},
         person::{self, name::Name, revision},
         session,
-        website::AppId,
     },
     kernel::App,
     runtime::{self, Context, registry::Registry},
@@ -34,9 +33,9 @@ use crate::{
 /// Knowing the stored identifiers does not qualify a caller to construct an actor.
 ///
 /// ```compile_fail
-/// use domain::identity::{account, current::Actor, session, website::AppId};
-/// fn forge(account_id: account::Id, session_id: session::Id, app_id: AppId) -> Actor {
-///     Actor { account_id, session_id, app_id }
+/// use domain::identity::{account, current::Actor, session};
+/// fn forge(account_id: account::Id, session_id: session::Id, origin: session::Origin) -> Actor {
+///     Actor { account_id, session_id, origin }
 /// }
 /// ```
 ///
@@ -57,9 +56,9 @@ use crate::{
 /// ```
 ///
 /// ```compile_fail
-/// use domain::identity::{current::Actor, website::AppId};
-/// fn replace(actor: &mut Actor, value: AppId) {
-///     actor.app_id = value;
+/// use domain::identity::{current::Actor, session::Origin};
+/// fn replace(actor: &mut Actor, value: Origin) {
+///     actor.origin = value;
 /// }
 /// ```
 ///
@@ -78,12 +77,16 @@ use crate::{
 pub struct Actor {
     account_id: account::Id,
     session_id: session::Id,
-    app_id: AppId,
+    origin: session::Origin,
 }
 
 impl Actor {
     pub fn session_id(&self) -> session::Id {
         self.session_id
+    }
+
+    pub fn origin(&self) -> &session::Origin {
+        &self.origin
     }
 
     pub(crate) fn account_id(&self) -> account::Id {
@@ -150,9 +153,14 @@ impl Contact {
 }
 
 /// Unverified proof for the website session selected by this request.
-pub struct Proof {
-    pub id: session::Id,
-    pub token: session::Token,
+pub enum Proof {
+    Cookie {
+        id: session::Id,
+        token: session::Token,
+    },
+    Bearer {
+        token: session::Token,
+    },
 }
 
 pub struct Account {
@@ -192,7 +200,7 @@ struct Inner {
     app: App,
     context: Context,
     keys: Arc<Keys>,
-    app_id: AppId,
+    settings: session::settings::Settings,
     avatar: avatar::Service,
     registry: Arc<Registry>,
 }
@@ -217,7 +225,7 @@ impl Service {
     }
 
     fn confirm(&self, actor: &Actor, state: &database::State) -> Result<DateTime<Utc>, Error> {
-        if let Err(error) = state.validate(&self.0.app_id) {
+        if let Err(error) = state.validate(&self.0.settings) {
             if error.unreliable() {
                 self.0.registry.close();
             }
@@ -225,7 +233,7 @@ impl Service {
         }
         if state.session.id() != actor.session_id
             || state.session.account_id() != actor.account_id
-            || state.session.app_id() != &actor.app_id
+            || state.session.origin() != &actor.origin
         {
             self.0.registry.close();
             return Err(Error::Facts {
@@ -254,7 +262,7 @@ impl Service {
     pub(crate) fn prepare(
         app: App,
         keys: Arc<Keys>,
-        app_id: AppId,
+        settings: session::settings::Settings,
         avatar: avatar::Service,
     ) -> Self {
         Self(
@@ -263,7 +271,7 @@ impl Service {
                 registry: Arc::clone(app.registry()),
                 app,
                 keys,
-                app_id,
+                settings,
                 avatar,
             }),
             None,
@@ -326,23 +334,37 @@ impl Service {
         let result = timeout_at(
             deadline,
             budget.run(client, self.0.app.anchors(), |view| async move {
-                let state = database::find_session_by_id(
-                    client,
-                    &self.0.app,
-                    Read::Snapshot(view),
-                    proof.id,
-                )
-                .await?;
+                let state = match proof {
+                    Proof::Cookie { id, .. } => {
+                        database::find_session_by_id(client, &self.0.app, Read::Snapshot(view), *id)
+                            .await?
+                    }
+                    Proof::Bearer { token } => {
+                        database::find_session_by_token(
+                            client,
+                            &self.0.app,
+                            Read::Snapshot(view),
+                            token,
+                        )
+                        .await?
+                    }
+                };
                 let state = state.ok_or(Error::Invalid)?;
-                state.validate(&self.0.app_id)?;
-                if state.session.id() != proof.id || !proof.token.0.matches(state.session.hash()) {
+                let (token, transport) = match proof {
+                    Proof::Cookie { token, .. } => (token, "cookie"),
+                    Proof::Bearer { token } => (token, "bearer"),
+                };
+                if state.session.origin().transport() != transport
+                    || !token.0.matches(state.session.hash())
+                {
                     return Err(Error::Invalid);
                 }
+                state.validate(&self.0.settings)?;
                 database::profile(client, &state, &self.0.keys, self.0.app.keys()).await?;
                 Ok(Actor {
                     account_id: state.session.account_id(),
                     session_id: state.session.id(),
-                    app_id: state.session.app_id().clone(),
+                    origin: state.session.origin().clone(),
                 })
             }),
         )
@@ -851,7 +873,7 @@ mod tests {
                     let (context, services) = start(&database, &supplier).await;
                     let message_id = message(&database, services.authentication(), &mut supplier, "13900000000").await;
                     let Receipt::Session(issued) = Box::pin(services.authentication().create_session(input(Uuid::new_v4(), message_id, "13900000000", CODE))).await.expect("real R1") else { panic!("initialized account"); };
-                    let actor = services.current().authenticate(Proof { id: issued.id(), token: issued.token().text().parse().expect("original token") }).await.expect("healthy original session");
+                    let actor = services.current().authenticate(Proof::Cookie { id: issued.id(), token: issued.token().text().parse().expect("original token") }).await.expect("healthy original session");
                     if case == "expired" {
                         expire(&database, &services, issued.id(), issued.expires_at()).await;
                     }
@@ -883,7 +905,7 @@ mod tests {
                         ).await.expect("independent state-only revocation damage").get::<_, bool>(0));
                     }
                     let count: i64 = owner.client().query_one("SELECT count(*) FROM access.changes", &[]).await.expect("independent baseline").get(0);
-                    let error = services.current().authenticate(Proof {
+                    let error = services.current().authenticate(Proof::Cookie {
                         id: if case == "missing" { session::Id::new() } else { issued.id() },
                         token: if case == "token" { "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".parse().expect("other token") } else { issued.token().text().parse().expect("original token") },
                     }).await.err().expect("failed authentication withholds actor");
@@ -898,7 +920,7 @@ mod tests {
                     assert!(!format!("{error:?}").contains("private-"));
                     if case == "query" {
                         owner.client().batch_execute(&format!("GRANT SELECT ON identity.sessions TO {}", database.user)).await.expect("restore disposable permission");
-                        services.current().authenticate(Proof { id: issued.id(), token: issued.token().text().parse().expect("original token") }).await.expect("fresh authentication succeeds after query repair");
+                        services.current().authenticate(Proof::Cookie { id: issued.id(), token: issued.token().text().parse().expect("original token") }).await.expect("fresh authentication succeeds after query repair");
                     }
                     if damaged || case == "query" {
                         let result = Box::pin(services.role().create(actor, Uuid::new_v4().to_string().parse().expect("operation"), serde_json::from_value(serde_json::json!({"name":"After authentication failure","level":20,"permissions":[]})).expect("role input"))).await;
@@ -948,7 +970,7 @@ mod tests {
                     };
                     let actor = services
                         .current()
-                        .authenticate(Proof {
+                        .authenticate(Proof::Cookie {
                             id: issued.id(),
                             token: issued.token().text().parse().expect("token"),
                         })
@@ -1063,7 +1085,7 @@ mod tests {
                     };
                     let actor = services
                         .current()
-                        .authenticate(Proof {
+                        .authenticate(Proof::Cookie {
                             id: issued.id(),
                             token: issued.token().text().parse().expect("token"),
                         })
@@ -1101,7 +1123,7 @@ mod tests {
                         );
                         let actor = services
                             .current()
-                            .authenticate(Proof {
+                            .authenticate(Proof::Cookie {
                                 id: issued.id(),
                                 token: issued.token().text().parse().expect("token"),
                             })
@@ -1155,7 +1177,7 @@ mod tests {
                     let (context, services) = start(&database, &supplier).await;
                     let message_id = message(&database, services.authentication(), &mut supplier, "13900000000").await;
                     let Receipt::Session(issued) = services.authentication().create_session(input(Uuid::new_v4(), message_id, "13900000000", CODE)).await.expect("R1") else { panic!("existing account session"); };
-                    let manager = services.current().authenticate(Proof { id: issued.id(), token: issued.token().text().parse().expect("token") }).await.expect("middleware actor");
+                    let manager = services.current().authenticate(Proof::Cookie { id: issued.id(), token: issued.token().text().parse().expect("token") }).await.expect("middleware actor");
                     let actor = if change == "suspended" {
                         Box::pin(crate::access::appointment::tests::register(&database, &services, &mut supplier)).await
                     } else { manager.clone() };
@@ -1218,15 +1240,15 @@ mod tests {
                     let (id, token) = match issued {
                         Receipt::Session(session) => (session.id(), session.token().text()),
                         Receipt::Registration(credential) => {
-                            let receipt = services.registration().register(crate::registration::Input::new(Uuid::new_v4().to_string().parse().expect("operation"), credential.id(), credential.token().text().parse().expect("proof"), "Fixture Operator".parse().expect("name"), "00000020000229007X".parse().expect("number"))).await.expect("R2");
+                            let receipt = services.registration().register_input_for_test(crate::registration::Input::new(Uuid::new_v4().to_string().parse().expect("operation"), credential.id(), credential.token().text().parse().expect("proof"), "Fixture Operator".parse().expect("name"), "00000020000229007X".parse().expect("number"))).await.expect("R2");
                             (receipt.id(), receipt.token().text())
                         }
                     };
                     let observer = database.connections(&database.user).recover().await.expect("independent observer");
                     let counts: Vec<i64> = observer.client().query_one("SELECT ARRAY[(SELECT count(*) FROM identity.authentications),(SELECT count(*) FROM identity.sessions),(SELECT count(*) FROM identity.attempts),(SELECT count(*) FROM identity.receipts),(SELECT count(*) FROM identity.persons),(SELECT count(*) FROM identity.revisions),(SELECT count(*) FROM identity.accounts),(SELECT count(*) FROM identity.avatars)]", &[]).await.expect("original facts").get(0);
-                    let actor = services.current().authenticate(Proof { id, token: token.parse().expect("token") }).await.expect("current actor");
-                    assert!(matches!(services.current().authenticate(Proof { id: session::Id::new(), token: token.parse().expect("token") }).await, Err(Error::Invalid)));
-                    assert!(matches!(services.current().authenticate(Proof { id, token: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".parse().expect("other token") }).await, Err(Error::Invalid)));
+                    let actor = services.current().authenticate(Proof::Cookie { id, token: token.parse().expect("token") }).await.expect("current actor");
+                    assert!(matches!(services.current().authenticate(Proof::Cookie { id: session::Id::new(), token: token.parse().expect("token") }).await, Err(Error::Invalid)));
+                    assert!(matches!(services.current().authenticate(Proof::Cookie { id, token: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".parse().expect("other token") }).await, Err(Error::Invalid)));
                     let account = services.current().read(&actor).await.expect("complete profile");
                     assert_eq!(account.name().as_ref(), if registering { "Fixture Operator" } else { "隔离测试" });
                     assert_eq!(account.suffix(), if registering { "007X" } else { "0010" });
@@ -1255,7 +1277,7 @@ mod tests {
                         services.current().read(&actor).await.expect("read after handoff cleanup");
                         services.drain().await.expect("drained"); context.stop().await.expect("stopped");
                         let (context, services) = start(&database, &supplier).await;
-                        let actor = services.current().authenticate(Proof { id, token: token.parse::<session::Token>().expect("original token") }).await.expect("actor after restart");
+                        let actor = services.current().authenticate(Proof::Cookie { id, token: token.parse::<session::Token>().expect("original token") }).await.expect("actor after restart");
                         services.current().read(&actor).await.expect("profile after restart");
                         services.drain().await.expect("drained"); context.stop().await.expect("stopped");
                     }

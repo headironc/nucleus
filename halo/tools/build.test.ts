@@ -30,6 +30,7 @@ it("changes the release identity when TypeScript compiler options change", async
         join(temporary, "design/assets", file),
       );
     }
+    await cp(join(source, "../client/protocol"), join(temporary, "client/protocol"), { recursive: true });
     await symlink(
       join(source, "node_modules"),
       join(root, "node_modules"),
@@ -56,6 +57,10 @@ it("changes the release identity when TypeScript compiler options change", async
     const second = await build();
     expect(second.buildId).not.toBe(first.buildId);
     expect(second.resources).not.toEqual(first.resources);
+    const shared = join(temporary, "client/protocol/response.ts");
+    await writeFile(shared, `${await readFile(shared, "utf8")}\n// Shared input changed.\n`);
+    const third = await build();
+    expect(third.buildId).not.toBe(second.buildId);
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }

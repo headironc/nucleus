@@ -1,10 +1,10 @@
-//! Registration HTTP input and original website session delivery.
+//! Registration HTTP input and delivery from its verified authentication source.
 
 use std::time::Duration;
 
 use axum::{
     extract::State,
-    http::{StatusCode, header},
+    http::{HeaderMap, StatusCode, header},
     middleware,
     response::{IntoResponse, Response},
 };
@@ -60,16 +60,16 @@ struct Input {
 #[schema(as = registration::Receipt)]
 struct Receipt {
     code: &'static str,
-    session: session::Session,
+    session: session::Delivery,
 }
 
 #[utoipa::path(post, path = "/registrations", operation_id = "register",
-    params(("Operation-Id" = Uuid, Header, description = "Original R2 operation UUID"),
-        ("Origin" = String, Header, description = "Required configured HTTPS origin")),
+    description = "The verified original credential or receipt determines the source. Website sources require the configured Origin and deliver the original cookie; mini-program phone sources require no website Origin and deliver session id, opaque Bearer token and expiry. Failed responses never set a cookie.",
+    params(("Operation-Id" = Uuid, Header, description = "Original R2 operation UUID")),
     request_body(content = Input, content_type = "application/json"),
     responses(
-        (status = 201, description = "Account created; original session cookie", body = Receipt, headers(("Set-Cookie" = String, description = "Original secure session cookie"))),
-        (status = 200, description = "Original successful registration session", body = Receipt, headers(("Set-Cookie" = String, description = "The same original secure session cookie"))),
+        (status = 201, description = "Account created; source-specific original session", body = Receipt, headers(("Set-Cookie" = String, description = "Website mode only: original secure session cookie"))),
+        (status = 200, description = "Original successful registration session", body = Receipt, headers(("Set-Cookie" = String, description = "Website mode only: the same original secure session cookie"))),
         (status = 400, description = "invalid_input", body = response::Failure),
         (status = 401, description = "authentication_invalid", body = response::Failure),
         (status = 403, description = "permission_denied", body = response::Failure),
@@ -86,6 +86,7 @@ struct Receipt {
 async fn create(
     Extension(operation_id): Extension<operation::Id>,
     State(context): State<Context>,
+    headers: HeaderMap,
     Json(input): Json<Input>,
 ) -> Response {
     let input = domain::registration::Input::new(
@@ -95,6 +96,25 @@ async fn create(
         input.name,
         input.id_number,
     );
+    let input = match timeout(
+        Duration::from_secs(10),
+        context.services.registration().prepare(input),
+    )
+    .await
+    {
+        Ok(Ok(input)) => input,
+        Ok(Err(cause)) => return failure(cause, &context, operation_id).await,
+        Err(_) => {
+            return failed(
+                StatusCode::SERVICE_UNAVAILABLE,
+                response::Common::DependencyUnavailable.into(),
+            );
+        }
+    };
+    let bearer = input.origin().transport() == "bearer";
+    if !bearer && let Err(error) = request::origin(&headers, &context) {
+        return error.into_response();
+    }
     let receipt = match timeout(
         Duration::from_secs(30),
         context.services.registration().register(input),
@@ -110,6 +130,25 @@ async fn create(
             );
         }
     };
+    let status = if receipt.created() {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    if bearer {
+        return (
+            status,
+            Json(Receipt {
+                code: "ok",
+                session: session::Delivery::Mini(session::Mini {
+                    id: receipt.id(),
+                    token: receipt.token().text(),
+                    expires_at: receipt.expires_at(),
+                }),
+            }),
+        )
+            .into_response();
+    }
     let cookie = match session::cookie(receipt.id(), receipt.token(), receipt.expires_at()) {
         Ok(cookie) => cookie,
         Err(cause) => {
@@ -121,18 +160,14 @@ async fn create(
         }
     };
     (
-        if receipt.created() {
-            StatusCode::CREATED
-        } else {
-            StatusCode::OK
-        },
+        status,
         [(header::SET_COOKIE, cookie)],
         Json(Receipt {
             code: "ok",
-            session: session::Session {
+            session: session::Delivery::Website(session::Session {
                 id: receipt.id(),
                 expires_at: receipt.expires_at(),
-            },
+            }),
         }),
     )
         .into_response()

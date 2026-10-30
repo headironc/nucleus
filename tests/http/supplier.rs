@@ -104,6 +104,71 @@ impl Drop for Supplier {
     }
 }
 
+pub(crate) struct Mini {
+    port: u16,
+    task: JoinHandle<()>,
+    pub(crate) calls: Arc<AtomicUsize>,
+    pub(crate) tokens: Arc<AtomicUsize>,
+}
+
+impl Mini {
+    pub(crate) async fn start() -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("mini supplier");
+        let port = listener.local_addr().expect("mini address").port();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let tokens = Arc::new(AtomicUsize::new(0));
+        let token_calls = Arc::clone(&tokens);
+        let phone_calls = Arc::clone(&calls);
+        let router = Router::new()
+            .route("/cgi-bin/stable_token", post(move |axum::Json(input): axum::Json<serde_json::Value>| {
+                token_calls.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(input["appid"], "mini-fixture"); assert_eq!(input["force_refresh"], false);
+                async { axum::Json(serde_json::json!({"access_token":"fictional-access-token","expires_in":7200})) }
+            }))
+            .route("/wxa/business/getuserphonenumber", post(move |axum::Json(input): axum::Json<serde_json::Value>| {
+                phone_calls.fetch_add(1, Ordering::SeqCst);
+                async move {
+                    match input["code"].as_str().expect("phone code") {
+                        "invalid" => axum::Json(serde_json::json!({"errcode":40029})),
+                        "unsupported" => axum::Json(serde_json::json!({"errcode":0,"phone_info":{"phoneNumber":"12025550100","purePhoneNumber":"2025550100","countryCode":"1","watermark":{"appid":"mini-fixture"}}})),
+                        _ => axum::Json(serde_json::json!({"errcode":0,"phone_info":{"phoneNumber":"8613800000000","purePhoneNumber":"13800000000","countryCode":"86","watermark":{"appid":"mini-fixture"}}})),
+                    }
+                }
+            }));
+        let task = tokio::spawn(async move {
+            axum::serve(listener, router)
+                .await
+                .expect("mini supplier server");
+        });
+        Self {
+            port,
+            task,
+            calls,
+            tokens,
+        }
+    }
+
+    pub(crate) fn client(&self) -> domain::identity::mini::client::Client {
+        domain::identity::mini::client::Client::for_test(
+            self.port,
+            "mini-fixture".parse().expect("mini identity"),
+            domain::identity::mini::client::Secret::new(zeroize::Zeroizing::new(
+                "fictional-mini-secret".into(),
+            ))
+            .expect("secret"),
+        )
+        .expect("mini client")
+    }
+}
+
+impl Drop for Mini {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
 pub(crate) async fn message() -> domain::identity::message::client::Client {
     let supplier = fixture::supplier::Supplier::start().await;
     message_at(supplier.address(), supplier.authority())

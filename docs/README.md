@@ -2,7 +2,7 @@
 
 ## 阅读路径与权威
 
-当前设计按约 1500 人的内部小系统简化，先读[业务总览](overview.md)和[架构](architecture.md)。新增工牌使用固定快照、状态条件、人工重试与审计；同人同类型申请不限制数量。已有复杂实现按消费者迁移，目标不冒充已交付。首版包含网站管理与发布内容、网站和小程序共用已发布内容展示，工牌仍优先交付。真实数据上线前完成[备份与恢复](operations/backup.md)。
+当前设计按约 1500 人的内部小系统简化，先读[业务总览](overview.md)和[架构](architecture.md)。新增工牌使用固定快照、状态条件、人工重试与审计；同人同类型申请不限制数量。已有复杂实现按消费者迁移，目标不冒充已交付。首版包含网站管理与发布内容、网站和小程序共用已发布内容展示，工牌仍优先交付。小程序本片限于手机号认证、正式注册、本人账户及退出，具体状态见下表。真实数据上线前完成[备份与恢复](operations/backup.md)。
 
 先读[业务总览](overview.md)，再读架构的[应用内核](architecture.md#应用内核)与[威胁模型](architecture.md#威胁模型)，随后按用例进入下列正式业务专题。实施切片、开发循环与授权规则见[交付顺序](engineering/delivery.md)，模型选择、委派和接续见[模型政策](engineering/models.md)。架构拥有跨能力工程协议，业务专题拥有输入、资格、状态、事实、响应及专属恢复依据。
 
@@ -10,71 +10,72 @@
 
 ## 能力状态
 
-本表是交付状态的唯一台账：每个能力一行，“已交付”表示当前代码提供该能力，“目标”表示只有目标设计；标为暂缓的能力不属于当前交付范围。已交付能力的具体路由、方法与字段以实际 [OpenAPI](http/api.md#openapi-与实际入口) 为准，所属文档只保存业务规则与公开契约，不另记交付状态。交付范围变化时，由对应 PR 更新本表。
+本表是交付状态的唯一台账，每个能力一行。“已交付”表示当前代码提供该能力，“目标”表示只有目标设计。“受控验证”表示已有源码及受控行为验证，真实服务或平台组合仍未接纳。标为暂缓的能力不属于当前交付范围。已交付能力的具体路由、方法与字段以实际 [OpenAPI](http/api.md#openapi-与实际入口) 为准。所属文档只保存业务规则与公开契约，不另记交付状态。交付范围变化时，由对应 PR 更新本表。
 
-| 能力                                      | 状态   | 所属文档                                                                                                                                             |
-| ----------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 网站短信发码 C1 与登录 R1                 | 已交付 | [短信认证](identity/authentication.md)、[匿名身份 HTTP](http/identity.md)                                                                            |
-| 网站正式注册 R2                           | 已交付 | [正式注册](identity/registration.md)                                                                                                                 |
-| 空库初始化与停机指派                      | 已交付 | [Access 初始化与指派](operations/access.md)                                                                                                          |
-| 个人 main 固定发布候选与可信晋级工具      | 已退役 | [历史晋级契约](engineering/review-gate.md#个人-main-固定发布候选)；自动程序和专属回归已移除；历史源码与外部原操作材料保留                            |
-| 个人 dev 独立 PR 准入与可信 squash        | 已退役 | [历史 dev 契约](engineering/review-gate.md#个人-dev-严格同步-pr)；自动程序和专属回归已移除；历史源码与外部原操作材料保留                             |
-| 普通开发 PR 审查自动核验与 App 批准       | 目标   | [审查与批准目标](engineering/delivery.md#审查关卡与证据复用)；显式请求审查并采用共享额度兜底，App 程序、机器解析合同与部署尚未交付，不恢复旧控制器   |
-| 网站当前身份、本人资料与账户会话封印      | 已交付 | [当前身份](identity/current.md)、[账户](identity/account.md)、[会话事实](identity/session.md)                                                        |
-| Halo 网站本人姓名与身份证尾号摘要         | 已交付 | [当前身份](identity/current.md#本人账户投影)、[页面](client/pages.md#网站本人账户设计稿)                                                             |
-| Halo 网站本人微信绑定事实摘要             | 已交付 | [当前身份](identity/current.md#本人账户投影)、[页面](client/pages.md#网站本人账户设计稿)                                                             |
-| Halo 网站本人当前头像读取                 | 已交付 | [头像](identity/avatar.md)、[网站交付](http/site.md)、[网站验收](../halo/README.md#浏览器隔离验收)                                                   |
-| 默认头像与已知账户头像读取                | 已交付 | [头像](identity/avatar.md)                                                                                                                           |
-| 注销后默认头像元数据清理                  | 已交付 | [头像](identity/avatar.md#工作事务与故障恢复)                                                                                                        |
-| 网站本人头像上传、更换及原结果后端        | 已交付 | [头像](identity/avatar.md)                                                                                                                           |
-| 头像更换页面与小程序接入                  | 目标   | [头像](identity/avatar.md)                                                                                                                           |
-| 私人文件持久发布、读取句柄与幂等删除组件  | 已交付 | [本地文件](storage/files.md)                                                                                                                         |
-| 网站当前及全部退出                        | 已交付 | [退出](identity/revocation.md)                                                                                                                       |
-| 账户暂停恢复及状态历史                    | 已交付 | [暂停恢复](identity/suspension.md)                                                                                                                   |
-| 实名更正及系统管理员停机更正              | 已交付 | [实名更正](identity/correction.md)                                                                                                                   |
-| 人员状态、永久实名版本封印与统一鉴别      | 已交付 | [人员与实名版本](identity/person.md)                                                                                                                 |
-| 本人及管理注销                            | 已交付 | [注销](identity/cancellation.md)                                                                                                                     |
-| Halo 网站本人注销                         | 已交付 | [注销](identity/cancellation.md)、[页面](client/pages.md#网站本人注销设计稿)                                                                         |
-| 注销历史读取                              | 目标   | [注销](identity/cancellation.md)                                                                                                                     |
-| 网站本人及协助换号                        | 已交付 | [换号](identity/mobile.md)                                                                                                                           |
-| 小程序手机号认证与小程序会话（暂缓）      | 目标   | [小程序手机号](identity/mini-mobile.md)、[小程序会话](client/session.md)                                                                             |
-| 微信身份登录、绑定与解绑（暂缓）          | 目标   | [微信身份](identity/wechat.md)、[微信事实](identity/wechat-data.md)                                                                                  |
-| 权限目录与系统角色                        | 已交付 | [权限目录](access/capabilities.md)                                                                                                                   |
-| 机构与 Workforce 角色、机构 Holder 及指派 | 已交付 | [角色与指派](access/roles.md)、[状态历史与完整性](architecture.md#状态历史与完整性)                                                                  |
-| Workforce 授权生命周期与 Grant 封印       | 已交付 | [授权生命周期](access/grants.md)                                                                                                                     |
-| Halo 网站机构入口开通员工服务             | 已交付 | [授权生命周期](access/grants.md)、[页面](client/pages.md#网站机构入口开通员工服务)、[网站检查](../halo/README.md#机构入口开通员工服务)               |
-| Workforce 邀请码与封印状态                | 已交付 | [邀请](access/invitations.md)                                                                                                                        |
-| 政治面貌与封印状态                        | 已交付 | [政治面貌](center/affiliation.md)、[状态历史与完整性](architecture.md#状态历史与完整性)                                                              |
-| 政治面貌显示名称读取接口                  | 已交付 | [政治面貌固定值](center/values.md)                                                                                                                   |
-| 政治面貌停机更正                          | 已交付 | [政治面貌](center/affiliation.md#存储密码与维护)                                                                                                     |
-| Halo 网站本人政治面貌首次填写与当前值读取 | 已交付 | [政治面貌](center/affiliation.md)、[页面](client/pages.md#网站本人政治面貌)、[网站检查](../halo/README.md#本人政治面貌)                              |
-| 工号生命周期与封印状态                    | 已交付 | [工号](workforce/numbers.md)                                                                                                                         |
-| Workforce 目录、分类规则与配置完成        | 已交付 | [目录](workforce/directories.md)、[配置完成](workforce/completions.md)                                                                               |
-| 工牌固定模板、照片、申请、成品与发放      | 目标   | [模板与照片](workforce/media.md)、[申请](workforce/applications.md)、[成品与发放](workforce/fulfillment.md)                                          |
-| 栏目创建领域组件                          | 已交付 | [栏目](content/columns.md)；含永久原结果、导航顺序与封印核验；尚未装配栏目 HTTP 入口                                                                 |
-| 网站栏目管理与 HTTP 接入                  | 目标   | [栏目](content/columns.md)、[内容 HTTP](content/http.md)                                                                                             |
-| 网站内容管理与发布                        | 目标   | [草稿、版本与上线](content/publication.md)、[文章](content/articles.md)、[首页编排](content/home.md)、[内容图片](content/images.md)                  |
-| 网站与小程序共用已发布内容展示            | 目标   | [内容 HTTP](content/http.md)、[页面](client/pages.md#页面范围)                                                                                       |
-| 健康检查与 OpenAPI                        | 已交付 | [HTTP 入口](http/api.md)                                                                                                                             |
-| 事务可信时间与后台高水位                  | 已交付 | [时间与个人顺序](architecture.md#时间与个人顺序)、[数据库](database.md#c1-接纳与可信时间)                                                            |
-| 换钥与退役                                | 目标   | [密钥维护](operations/keys.md)                                                                                                                       |
-| Halo 网站 C1 页面与原操作恢复             | 已交付 | [页面](client/pages.md)、[网站工程](client/website.md)、[客户端恢复](client/recovery.md)                                                             |
-| Halo 网站短信登录、原结果恢复与可信本人   | 已交付 | [客户端恢复](client/recovery.md)、[网站会话](identity/website.md)、[当前本人](identity/current.md)                                                   |
-| Halo 网站首次注册与原结果恢复             | 已交付 | [正式注册](identity/registration.md)、[客户端恢复](client/recovery.md)、[网站会话](identity/website.md)                                              |
-| Halo 网站本次登录退出与原结果恢复         | 已交付 | [退出](identity/revocation.md)、[客户端恢复](client/recovery.md)、[网站会话](identity/website.md)                                                    |
-| Halo 网站全部退出与原结果恢复             | 已交付 | [退出](identity/revocation.md)、[客户端恢复](client/recovery.md)、[网站会话](identity/website.md)                                                    |
-| Halo 网站本人换号与原结果查询             | 已交付 | [换号](identity/mobile.md)、[页面](client/pages.md#网站本人换号设计稿)、[客户端恢复](client/recovery.md)、[网站验收](../halo/README.md#本人换号页面) |
-| Halo 网站本人实名更正记录                 | 已交付 | [实名更正](identity/correction.md#历史读取)、[客户端协议](client/protocol.md)、[网站验收](../halo/README.md#浏览器隔离验收)                          |
-| Halo 网站本人员工服务状态                 | 已交付 | [授权生命周期](access/grants.md)、[客户端协议](client/protocol.md)、[网站验收](../halo/README.md#浏览器隔离验收)                                     |
-| Halo 网站本人结束员工服务                 | 已交付 | [授权生命周期](access/grants.md)、[客户端协议](client/protocol.md)、[网站验收](../halo/README.md#浏览器隔离验收)                                     |
-| Halo 网站本人当前工号只读摘要             | 已交付 | [工号](workforce/numbers.md)、[客户端协议](client/protocol.md)、[网站验收](../halo/README.md#浏览器隔离验收)                                         |
-| Halo 网站本人首次领取工号                 | 目标   | [页面](client/pages.md#网站本人首次领取工号)、[网站检查](../halo/README.md#本人首次领取工号)；客户端候选已实现，真实组合验收待完成                   |
-| Halo 网站本人固定工牌申请                 | 目标   | [页面](client/pages.md#网站本人固定工牌申请)、[网站检查](../halo/README.md#固定工牌申请)；客户端候选已实现，真实组合验收待完成                       |
-| 公开设置与网站交付配置                    | 已交付 | [网站交付边界](http/site.md)、[部署设置](settings.md)                                                                                                |
-| 网站其余页面与小程序客户端                | 目标   | [页面](client/pages.md)、[网站工程](client/website.md)                                                                                               |
-| 真实部署、Nginx 与 systemd 验收           | 目标   | [业务交付顺序](engineering/delivery.md#里程碑与生产准备)                                                                                             |
-| 统一审计表                                | 目标   | [审计](architecture.md#审计)                                                                                                                         |
-| 每日备份与恢复演练                        | 目标   | [备份与恢复](operations/backup.md)                                                                                                                   |
+| 能力                                      | 状态     | 所属文档                                                                                                                                                                   |
+| ----------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 网站短信发码 C1 与登录 R1                 | 已交付   | [短信认证](identity/authentication.md)、[匿名身份 HTTP](http/identity.md)                                                                                                  |
+| 网站正式注册 R2                           | 已交付   | [正式注册](identity/registration.md)                                                                                                                                       |
+| 空库初始化与停机指派                      | 已交付   | [Access 初始化与指派](operations/access.md)                                                                                                                                |
+| 个人 main 固定发布候选与可信晋级工具      | 已退役   | [历史晋级契约](engineering/review-gate.md#个人-main-固定发布候选)；自动程序和专属回归已移除；历史源码与外部原操作材料保留                                                  |
+| 个人 dev 独立 PR 准入与可信 squash        | 已退役   | [历史 dev 契约](engineering/review-gate.md#个人-dev-严格同步-pr)；自动程序和专属回归已移除；历史源码与外部原操作材料保留                                                   |
+| 普通开发 PR 审查自动核验与 App 批准       | 目标     | [审查与批准目标](engineering/delivery.md#审查关卡与证据复用)；显式请求审查并采用共享额度兜底，App 程序、机器解析合同与部署尚未交付，不恢复旧控制器                         |
+| 网站当前身份、本人资料与账户会话封印      | 已交付   | [当前身份](identity/current.md)、[账户](identity/account.md)、[会话事实](identity/session.md)                                                                              |
+| Halo 网站本人姓名与身份证尾号摘要         | 已交付   | [当前身份](identity/current.md#本人账户投影)、[页面](client/pages.md#网站本人账户设计稿)                                                                                   |
+| Halo 网站本人微信绑定事实摘要             | 已交付   | [当前身份](identity/current.md#本人账户投影)、[页面](client/pages.md#网站本人账户设计稿)                                                                                   |
+| Halo 网站本人当前头像读取                 | 已交付   | [头像](identity/avatar.md)、[网站交付](http/site.md)、[网站验收](../halo/README.md#浏览器隔离验收)                                                                         |
+| 默认头像与已知账户头像读取                | 已交付   | [头像](identity/avatar.md)                                                                                                                                                 |
+| 注销后默认头像元数据清理                  | 已交付   | [头像](identity/avatar.md#工作事务与故障恢复)                                                                                                                              |
+| 网站本人头像上传、更换及原结果后端        | 已交付   | [头像](identity/avatar.md)                                                                                                                                                 |
+| 头像更换页面与小程序接入                  | 目标     | [头像](identity/avatar.md)                                                                                                                                                 |
+| 私人文件持久发布、读取句柄与幂等删除组件  | 已交付   | [本地文件](storage/files.md)                                                                                                                                               |
+| 网站当前及全部退出                        | 已交付   | [退出](identity/revocation.md)                                                                                                                                             |
+| 账户暂停恢复及状态历史                    | 已交付   | [暂停恢复](identity/suspension.md)                                                                                                                                         |
+| 实名更正及系统管理员停机更正              | 已交付   | [实名更正](identity/correction.md)                                                                                                                                         |
+| 人员状态、永久实名版本封印与统一鉴别      | 已交付   | [人员与实名版本](identity/person.md)                                                                                                                                       |
+| 本人及管理注销                            | 已交付   | [注销](identity/cancellation.md)                                                                                                                                           |
+| Halo 网站本人注销                         | 已交付   | [注销](identity/cancellation.md)、[页面](client/pages.md#网站本人注销设计稿)                                                                                               |
+| 注销历史读取                              | 目标     | [注销](identity/cancellation.md)                                                                                                                                           |
+| 网站本人及协助换号                        | 已交付   | [换号](identity/mobile.md)                                                                                                                                                 |
+| 小程序手机号认证、注册与 Bearer 会话后端  | 已交付   | [小程序手机号](identity/mini-mobile.md)、[本人读取](identity/current.md)、[退出](identity/revocation.md)；真实平台资格与集成验收另行完成                                   |
+| 微信身份登录、绑定与解绑（暂缓）          | 目标     | [微信身份](identity/wechat.md)、[微信事实](identity/wechat-data.md)                                                                                                        |
+| 权限目录与系统角色                        | 已交付   | [权限目录](access/capabilities.md)                                                                                                                                         |
+| 机构与 Workforce 角色、机构 Holder 及指派 | 已交付   | [角色与指派](access/roles.md)、[状态历史与完整性](architecture.md#状态历史与完整性)                                                                                        |
+| Workforce 授权生命周期与 Grant 封印       | 已交付   | [授权生命周期](access/grants.md)                                                                                                                                           |
+| Halo 网站机构入口开通员工服务             | 已交付   | [授权生命周期](access/grants.md)、[页面](client/pages.md#网站机构入口开通员工服务)、[网站检查](../halo/README.md#机构入口开通员工服务)                                     |
+| Workforce 邀请码与封印状态                | 已交付   | [邀请](access/invitations.md)                                                                                                                                              |
+| 政治面貌与封印状态                        | 已交付   | [政治面貌](center/affiliation.md)、[状态历史与完整性](architecture.md#状态历史与完整性)                                                                                    |
+| 政治面貌显示名称读取接口                  | 已交付   | [政治面貌固定值](center/values.md)                                                                                                                                         |
+| 政治面貌停机更正                          | 已交付   | [政治面貌](center/affiliation.md#存储密码与维护)                                                                                                                           |
+| Halo 网站本人政治面貌首次填写与当前值读取 | 已交付   | [政治面貌](center/affiliation.md)、[页面](client/pages.md#网站本人政治面貌)、[网站检查](../halo/README.md#本人政治面貌)                                                    |
+| 工号生命周期与封印状态                    | 已交付   | [工号](workforce/numbers.md)                                                                                                                                               |
+| Workforce 目录、分类规则与配置完成        | 已交付   | [目录](workforce/directories.md)、[配置完成](workforce/completions.md)                                                                                                     |
+| 工牌固定模板、照片、申请、成品与发放      | 目标     | [模板与照片](workforce/media.md)、[申请](workforce/applications.md)、[成品与发放](workforce/fulfillment.md)                                                                |
+| 栏目创建领域组件                          | 已交付   | [栏目](content/columns.md)；含永久原结果、导航顺序与封印核验；尚未装配栏目 HTTP 入口                                                                                       |
+| 网站栏目管理与 HTTP 接入                  | 目标     | [栏目](content/columns.md)、[内容 HTTP](content/http.md)                                                                                                                   |
+| 网站内容管理与发布                        | 目标     | [草稿、版本与上线](content/publication.md)、[文章](content/articles.md)、[首页编排](content/home.md)、[内容图片](content/images.md)                                        |
+| 网站与小程序共用已发布内容展示            | 目标     | [内容 HTTP](content/http.md)、[页面](client/pages.md#页面范围)                                                                                                             |
+| 健康检查与 OpenAPI                        | 已交付   | [HTTP 入口](http/api.md)                                                                                                                                                   |
+| 事务可信时间与后台高水位                  | 已交付   | [时间与个人顺序](architecture.md#时间与个人顺序)、[数据库](database.md#c1-接纳与可信时间)                                                                                  |
+| 换钥与退役                                | 目标     | [密钥维护](operations/keys.md)                                                                                                                                             |
+| Halo 网站 C1 页面与原操作恢复             | 已交付   | [页面](client/pages.md)、[网站工程](client/website.md)、[客户端恢复](client/recovery.md)                                                                                   |
+| Halo 网站短信登录、原结果恢复与可信本人   | 已交付   | [客户端恢复](client/recovery.md)、[网站会话](identity/website.md)、[当前本人](identity/current.md)                                                                         |
+| Halo 网站首次注册与原结果恢复             | 已交付   | [正式注册](identity/registration.md)、[客户端恢复](client/recovery.md)、[网站会话](identity/website.md)                                                                    |
+| Halo 网站本次登录退出与原结果恢复         | 已交付   | [退出](identity/revocation.md)、[客户端恢复](client/recovery.md)、[网站会话](identity/website.md)                                                                          |
+| Halo 网站全部退出与原结果恢复             | 已交付   | [退出](identity/revocation.md)、[客户端恢复](client/recovery.md)、[网站会话](identity/website.md)                                                                          |
+| Halo 网站本人换号与原结果查询             | 已交付   | [换号](identity/mobile.md)、[页面](client/pages.md#网站本人换号设计稿)、[客户端恢复](client/recovery.md)、[网站验收](../halo/README.md#本人换号页面)                       |
+| Halo 网站本人实名更正记录                 | 已交付   | [实名更正](identity/correction.md#历史读取)、[客户端协议](client/protocol.md)、[网站验收](../halo/README.md#浏览器隔离验收)                                                |
+| Halo 网站本人员工服务状态                 | 已交付   | [授权生命周期](access/grants.md)、[客户端协议](client/protocol.md)、[网站验收](../halo/README.md#浏览器隔离验收)                                                           |
+| Halo 网站本人结束员工服务                 | 已交付   | [授权生命周期](access/grants.md)、[客户端协议](client/protocol.md)、[网站验收](../halo/README.md#浏览器隔离验收)                                                           |
+| Halo 网站本人当前工号只读摘要             | 已交付   | [工号](workforce/numbers.md)、[客户端协议](client/protocol.md)、[网站验收](../halo/README.md#浏览器隔离验收)                                                               |
+| Halo 网站本人首次领取工号                 | 目标     | [页面](client/pages.md#网站本人首次领取工号)、[网站检查](../halo/README.md#本人首次领取工号)；客户端候选已实现，真实组合验收待完成                                         |
+| Halo 网站本人固定工牌申请                 | 目标     | [页面](client/pages.md#网站本人固定工牌申请)、[网站检查](../halo/README.md#固定工牌申请)；客户端候选已实现，真实组合验收待完成                                             |
+| 公开设置与网站交付配置                    | 已交付   | [网站交付边界](http/site.md)、[部署设置](settings.md)                                                                                                                      |
+| Orbit 小程序手机号入口与本人账户客户端    | 受控验证 | [Orbit](../orbit/README.md)、[小程序会话](client/session.md)、[客户端恢复](client/recovery.md)；已消费共同实际 OpenAPI，原生包及受控行为已验证，微信平台与真实业务链路待验 |
+| 网站及小程序其余页面                      | 目标     | [页面](client/pages.md)、[网站工程](client/website.md)                                                                                                                     |
+| 真实部署、Nginx 与 systemd 验收           | 目标     | [业务交付顺序](engineering/delivery.md#里程碑与生产准备)                                                                                                                   |
+| 统一审计表                                | 目标     | [审计](architecture.md#审计)                                                                                                                                               |
+| 每日备份与恢复演练                        | 目标     | [备份与恢复](operations/backup.md)                                                                                                                                         |
 
 现有业务历史不表示已有统一审计表。栏目创建领域组件不代表完整内容管理已经交付。首版公开内容的管理、发布和两端展示仍待实施。小程序公开读取不依赖手机号认证或微信身份，也不扩大工牌办理范围。旧内容设计的取舍见[网站公开内容](engineering/delivery.md#网站公开内容)。
 

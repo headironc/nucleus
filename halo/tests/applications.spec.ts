@@ -113,6 +113,7 @@ function control() {
     sessionInvalid: false,
     previewFailure: "",
     photoUnavailable: "" as "" | "preview" | "submit",
+    capacityExhausted: false,
     changed: false,
     photo: { ...photoMaterial },
     photoBytes: Buffer.alloc(0),
@@ -313,6 +314,11 @@ async function install(page: Page, state: Control) {
       });
     }
     if (path === "/api/v1/workforce/application-photos") {
+      if (state.capacityExhausted)
+        return route.fulfill({
+          status: 503,
+          json: { code: "dependency_unavailable" },
+        });
       const bytes = request.postDataBuffer()!;
       const image = inspectImage(new Uint8Array(bytes));
       if (
@@ -605,6 +611,36 @@ test("data_changed discards the accepted preview and requires a fresh explicit p
   await expect(page.getByRole("alert")).toContainText("工牌内容已变化");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(state.submissions).toHaveLength(1);
+  expect(state.saved).toHaveLength(0);
+});
+test("photo capacity refusal stays editable without preview, submission or automatic upload retry", async ({
+  page,
+}) => {
+  const state = control();
+  state.capacityExhausted = true;
+  let uploads = 0;
+  page.on("request", (request) => {
+    if (request.url().endsWith("/api/v1/workforce/application-photos"))
+      uploads++;
+  });
+  await open(page, state);
+  await prepare(page);
+  await page.clock.install();
+  await page.getByRole("button", { name: "预览工牌", exact: true }).click();
+  await expect(page.getByRole("alert")).toContainText(
+    "暂时无法加载，请刷新后重试。",
+  );
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("heading", { name: "未能确认，请刷新查看" }),
+  ).toHaveCount(0);
+  await page.clock.fastForward(6000);
+  await expect(
+    page.getByRole("button", { name: "预览工牌", exact: true }),
+  ).toBeEnabled();
+  expect(uploads).toBe(1);
+  expect(state.previews).toHaveLength(0);
+  expect(state.submissions).toHaveLength(0);
   expect(state.saved).toHaveLength(0);
 });
 for (const phase of ["preview", "submit"] as const) {

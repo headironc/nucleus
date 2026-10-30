@@ -11,7 +11,7 @@ import standaloneCode from "ajv/dist/standalone/index.js";
 import addFormats from "ajv-formats";
 
 const root = new URL("../", import.meta.url);
-type Method = `get` | `post` | `put` | `delete`;
+export type Method = `get` | `post` | `put` | `delete`;
 const endpoints: Record<string, readonly Method[]> = {
   "/api/v1/codes": ["post"],
   "/api/v1/settings": ["get"],
@@ -46,7 +46,7 @@ const endpoints: Record<string, readonly Method[]> = {
   "/api/v1/mobile-changes/{id}": ["get"],
 };
 
-export function selectDocument(document: OpenAPI3) {
+export function selectDocument(document: OpenAPI3, selectedEndpoints = endpoints) {
   if (document.openapi !== "3.1.0") throw new Error("Expected OpenAPI 3.1.0");
   const schemas: Record<string, SchemaObject> = {};
   function visit(value: unknown) {
@@ -65,7 +65,7 @@ export function selectDocument(document: OpenAPI3) {
     Object.values(value).forEach(visit);
   }
   const paths: Record<string, PathItemObject> = {};
-  for (const [path, methods] of Object.entries(endpoints)) {
+  for (const [path, methods] of Object.entries(selectedEndpoints)) {
     const selected: PathItemObject = {};
     const item = document.paths?.[path];
     if (!item || "$ref" in item) throw new Error("Missing concrete path");
@@ -81,7 +81,20 @@ export function selectDocument(document: OpenAPI3) {
   return { ...document, paths, components: { schemas } };
 }
 
-export function compile(document: ReturnType<typeof selectDocument>) {
+const retainedIdentities = {
+  accountId: "account.Id",
+  grantId: "grant.Id",
+  messageId: "message.Id",
+  personId: "person.Id",
+  sessionId: "session.Id",
+  transferId: "transfer.Id",
+};
+
+export function compile(
+  document: ReturnType<typeof selectDocument>,
+  selectedEndpoints = endpoints,
+  identities: Record<string, string> = retainedIdentities,
+) {
   const ajv = new Ajv2020({
     strict: true,
     allErrors: true,
@@ -137,14 +150,7 @@ export function compile(document: ReturnType<typeof selectDocument>) {
     Record<string, { validator: string; codes: string[] }>
   > = {};
   // Logout and termination recovery retain these identities without private projections.
-  for (const [name, source] of Object.entries({
-    accountId: "account.Id",
-    grantId: "grant.Id",
-    messageId: "message.Id",
-    personId: "person.Id",
-    sessionId: "session.Id",
-    transferId: "transfer.Id",
-  })) {
+  for (const [name, source] of Object.entries(identities)) {
     const schema = document.components.schemas[source];
     if (!schema) throw new Error(`Missing retained identity schema: ${source}`);
     ajv.addSchema({
@@ -154,7 +160,7 @@ export function compile(document: ReturnType<typeof selectDocument>) {
     });
     exports[name] = name;
   }
-  for (const [path, methods] of Object.entries(endpoints)) {
+  for (const [path, methods] of Object.entries(selectedEndpoints)) {
     for (const method of methods) {
       const operation = document.paths[path][method];
       if (!operation || "$ref" in operation || !operation.responses)

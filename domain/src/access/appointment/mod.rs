@@ -586,7 +586,7 @@ pub(crate) mod tests {
         };
         let registered = services
             .registration()
-            .register(crate::registration::Input::new(
+            .register_input_for_test(crate::registration::Input::new(
                 Uuid::new_v4().to_string().parse().expect("operation"),
                 credential.id(),
                 credential
@@ -601,7 +601,7 @@ pub(crate) mod tests {
             .expect("real distinct R2 account");
         services
             .current()
-            .authenticate(current::Proof {
+            .authenticate(current::Proof::Cookie {
                 id: registered.id(),
                 token: registered.token().text().parse().expect("session proof"),
             })
@@ -629,7 +629,7 @@ pub(crate) mod tests {
         };
         let registered = services
             .registration()
-            .register(crate::registration::Input::new(
+            .register_input_for_test(crate::registration::Input::new(
                 Uuid::new_v4().to_string().parse().expect("operation"),
                 credential.id(),
                 credential.token().text().parse().expect("proof"),
@@ -640,7 +640,7 @@ pub(crate) mod tests {
             .expect("R2 account");
         services
             .current()
-            .authenticate(current::Proof {
+            .authenticate(current::Proof::Cookie {
                 id: registered.id(),
                 token: registered.token().text().parse().expect("session proof"),
             })
@@ -947,7 +947,7 @@ pub(crate) mod tests {
                 // The earlier Account suspension revoked the original session.
                 let message_id=message(&database,services.authentication(),&mut supplier,"13800000000").await;
                 let Receipt::Session(issued)=Box::pin(services.authentication().create_session(crate::identity::authentication::session::tests::input(Uuid::new_v4(),message_id,"13800000000",CODE))).await.expect("fresh target session") else {panic!("existing account");};
-                let target=services.current().authenticate(current::Proof{id:issued.id(),token:issued.token().text().parse().expect("session proof")}).await.expect("fresh target actor");
+                let target=services.current().authenticate(current::Proof::Cookie {id:issued.id(),token:issued.token().text().parse().expect("session proof")}).await.expect("fresh target actor");
                 let allocated=Box::pin(services.number().allocate(target,Uuid::new_v4().to_string().parse().expect("allocation operation"),serde_json::from_value(json!({"subtype":801})).expect("allocation input"))).await.expect("independent number allocation");
                 let personal=row.client().query_one("SELECT person.sequence,EXISTS(SELECT 1 FROM identity.corrections correction WHERE correction.id=$2 AND correction.person_id=person.id AND correction.sequence=2 AND correction.before_id=(SELECT revision_id FROM identity.origins WHERE person_id=person.id)),EXISTS(SELECT 1 FROM workforce.allocations allocation WHERE allocation.number_id=$3 AND allocation.person_id=person.id AND allocation.sequence=1) FROM identity.persons person WHERE person.id=$1",&[&person,&corrected.correction().id(),&allocated.id()]).await.expect("independent correction record");
                 assert_eq!(personal.get::<_,i64>(0),2,"only the correction advances the Person");
@@ -1384,7 +1384,7 @@ pub(crate) mod tests {
             let manager=actor(&database,&services,&mut supplier).await;
             let message_id=message(&database,services.authentication(),&mut supplier,"13800000000").await;
             let Receipt::Session(issued)=Box::pin(services.authentication().create_session(input(Uuid::new_v4(),message_id,"13800000000",CODE))).await.expect("target logs in again") else {panic!("existing account session");};
-            let other=services.current().authenticate(current::Proof{id:issued.id(),token:issued.token().text().parse().expect("proof")}).await.expect("new session with assignment permission");
+            let other=services.current().authenticate(current::Proof::Cookie {id:issued.id(),token:issued.token().text().parse().expect("proof")}).await.expect("new session with assignment permission");
             assert!(matches!(Box::pin(services.appointment().assign(other,operation,command(&candidate,&returned))).await,Err(CommandError::Mismatch)),"different permitted person cannot claim the original operation");
             assert_eq!(Box::pin(services.appointment().assign(manager.clone(),operation,command(&candidate,&returned))).await.expect("same person through a new session").id(),original.id());
             observer.terminate().await.expect("observer ended");services.close();services.drain().await.expect("drained");context.stop().await.expect("stopped");drop(services);
@@ -1407,8 +1407,8 @@ pub(crate) mod tests {
             let id = message(&database, services.authentication(), &mut supplier, "13800000000").await;
             let Receipt::Registration(credential) = Box::pin(services.authentication().create_session(input(Uuid::new_v4(), id, "13800000000", CODE))).await.expect("R1") else { panic!("registration credential"); };
             let operation: operation::Id = Uuid::new_v4().to_string().parse().expect("operation");
-            let registered = services.registration().register(crate::registration::Input::new(operation, credential.id(), credential.token().text().parse().expect("proof"), "Target Person".parse().expect("name"), "00000020000229007X".parse().expect("number"))).await.expect("R2 account");
-            let target = services.current().authenticate(current::Proof { id: registered.id(), token: registered.token().text().parse().expect("session proof") }).await.expect("target actor");
+            let registered = services.registration().register_input_for_test(crate::registration::Input::new(operation, credential.id(), credential.token().text().parse().expect("proof"), "Target Person".parse().expect("name"), "00000020000229007X".parse().expect("number"))).await.expect("R2 account");
+            let target = services.current().authenticate(current::Proof::Cookie { id: registered.id(), token: registered.token().text().parse().expect("session proof") }).await.expect("target actor");
             let original = services.role().read_current(&target).await.expect("ordinary current role");
             let initial=services.appointment().list(&manager, crate::access::appointment::Filter::new(Pagination::new(1,100).expect("page"),None,None)).await.expect("initialization same-time exception and ordinary first appointment");
             assert_eq!(initial.count(),2);assert!(initial.appointments().iter().all(|appointment|appointment.sequence()==1));assert!(initial.appointments().iter().any(|appointment|i16::from(appointment.role().level())==1000));

@@ -3,12 +3,13 @@
 use std::{env, fmt};
 
 use config::{Config, Environment};
-use domain::identity::website;
+use domain::identity::{mini, session, website};
 use platform::database::assembly;
 
 pub(super) struct Settings {
     pub(super) database: assembly::Settings,
     pub(super) website: website::AppId,
+    mini: Option<mini::AppId>,
 }
 
 #[cfg(test)]
@@ -245,6 +246,20 @@ mod tests {
 }
 
 impl Settings {
+    pub(super) fn sessions(&self) -> Result<session::settings::Settings, Error> {
+        let settings = session::settings::Settings::new(
+            self.website.clone(),
+            session::settings::DEFAULT_SESSION_SECONDS,
+            session::settings::DEFAULT_RECOVERY_SECONDS,
+        )?;
+        match &self.mini {
+            Some(app_id) => Ok(
+                settings.with_mini(app_id.clone(), session::settings::DEFAULT_MOBILE_SECONDS)?
+            ),
+            None => Ok(settings),
+        }
+    }
+
     pub(super) fn load() -> Result<Self, Error> {
         let source = Environment::with_prefix("NUCLEUS_DATABASE")
             .prefix_separator("__")
@@ -256,15 +271,27 @@ impl Settings {
             .build()?
             .try_deserialize()?;
         let website = env::var("NUCLEUS_WECHAT__WEBSITE__APP_ID").map_err(Error::WebsiteInput)?;
+        let mini = match env::var("NUCLEUS_WECHAT__MINI_PROGRAM__APP_ID") {
+            Ok(value) => Some(value.parse().map_err(Error::Mini)?),
+            Err(env::VarError::NotPresent) => None,
+            Err(error) => return Err(Error::MiniInput(error)),
+        };
         Ok(Self {
             database: input.try_into()?,
             website: website.parse()?,
+            mini,
         })
     }
 }
 
 #[derive(thiserror::Error)]
 pub enum Error {
+    #[error("mini-program application identity must be Unicode")]
+    MiniInput(#[source] env::VarError),
+    #[error("mini-program application identity is invalid")]
+    Mini(#[source] website::Error),
+    #[error("{0}")]
+    Sessions(#[from] session::settings::Error),
     #[error("invalid NUCLEUS_DATABASE settings")]
     Input(#[from] config::ConfigError),
     #[error("{0}")]

@@ -1,7 +1,8 @@
 //! Opaque website SMS session identifiers and original token delivery.
 
+mod origin;
 pub mod settings;
-pub use crate::identity::credential::ParseError;
+pub use crate::identity::{credential::ParseError, session::origin::Origin};
 
 pub(crate) mod handoff;
 mod record;
@@ -81,6 +82,7 @@ pub(crate) enum Source {
 
 pub(crate) struct Input {
     pub(crate) source: Source,
+    pub(crate) origin: Origin,
     pub(crate) account_id: account::Id,
     pub(crate) operation_id: operation::Id,
     pub(crate) created_at: chrono::DateTime<chrono::Utc>,
@@ -106,7 +108,13 @@ pub(crate) async fn create(
     let sealed = token.seal(keys, credential::Binding::Handoff(id))?;
     let expires_at = input
         .created_at
-        .checked_add_signed(settings.lifetime())
+        .checked_add_signed(
+            settings
+                .lifetime_for(&input.origin)
+                .map_err(|_| Error::Facts {
+                    rule: "session source is configured",
+                })?,
+        )
         .ok_or(Error::Time)?;
     let handoff_expires_at = input
         .created_at
@@ -119,7 +127,7 @@ pub(crate) async fn create(
             authentication_id,
             receipt_id,
             hash: token.hash(),
-            app_id: settings.app_id().clone(),
+            origin: input.origin,
             expires_at,
         },
         input.operation_id,

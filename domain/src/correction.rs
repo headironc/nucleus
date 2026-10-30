@@ -961,7 +961,7 @@ pub(crate) mod tests {
         };
         let registered = services
             .registration()
-            .register(crate::registration::Input::new(
+            .register_input_for_test(crate::registration::Input::new(
                 Uuid::new_v4().to_string().parse().expect("operation"),
                 credential.id(),
                 credential
@@ -976,7 +976,7 @@ pub(crate) mod tests {
             .expect("real R2 account");
         services
             .current()
-            .authenticate(crate::identity::current::Proof {
+            .authenticate(crate::identity::current::Proof::Cookie {
                 id: registered.id(),
                 token: registered.token().text().parse().expect("session proof"),
             })
@@ -2027,7 +2027,7 @@ pub(crate) mod tests {
                 ).await.expect("third person R1") else {
                     panic!("new registration")
                 };
-                Box::pin(services.registration().register(crate::registration::Input::new(
+                Box::pin(services.registration().register_input_for_test(crate::registration::Input::new(
                     Uuid::new_v4().to_string().parse().expect("operation"),
                     credential.id(), credential.token().text().parse().expect("proof"),
                     "Third Person".parse().expect("name"),
@@ -2159,7 +2159,7 @@ pub(crate) mod tests {
                     free_number.parse().expect("number")
                 );
                 let registering = tokio::spawn(async move {
-                    service.register(command).await
+                    service.register_input_for_test(command).await
                 });
                 timeout(Duration::from_secs(3), async {
                     loop {

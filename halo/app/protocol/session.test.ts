@@ -44,6 +44,39 @@ const account = {
 afterEach(() => vi.unstubAllGlobals());
 
 describe("actual R1 and current-account protocols", () => {
+  it("keeps website inputs and delivered sessions within the cookie source", async () => {
+    const mobile = {
+      secret: input.secret,
+      credential: { type: "mobile", code: "fixture-phone-code" },
+    };
+    expect(validInput(mobile)).toBe(false);
+    expect(validSession({ ...session, token: "A".repeat(43) })).toBe(false);
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              code: "ok",
+              session: { ...session, token: "A".repeat(43) },
+            }),
+            { status: 200, headers: { "Content-Type": "application/json" } },
+          ),
+      ),
+    );
+    expect(await login(id, input, new AbortController().signal)).toEqual({
+      kind: "untrusted",
+    });
+    vi.mocked(fetch).mockClear();
+    expect(
+      await login(
+        id,
+        mobile as unknown as typeof input,
+        new AbortController().signal,
+      ),
+    ).toEqual({ kind: "untrusted" });
+    expect(fetch).not.toHaveBeenCalled();
+  });
   const malformedTokens = [
     "",
     "A".repeat(42),

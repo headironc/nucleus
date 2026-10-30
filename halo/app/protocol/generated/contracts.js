@@ -113,7 +113,8 @@ export default {
       "validator": "createSession_403",
       "codes": [
         "verification_invalid",
-        "permission_denied"
+        "permission_denied",
+        "mobile_unsupported"
       ]
     },
     "409": {

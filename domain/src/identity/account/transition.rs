@@ -449,7 +449,9 @@ mod tests {
                 authentication_id: id(number + 30),
                 receipt_id: Some(id(number + 60)),
                 hash: [number; 32],
-                app_id: "website-fixture".parse().expect("fixture app"),
+                origin: crate::identity::session::Origin::WebsiteMessage(
+                    "website-fixture".parse().expect("fixture app"),
+                ),
                 expires_at,
             },
             id(80),
@@ -650,7 +652,9 @@ mod tests {
                 authentication_id: id(32),
                 receipt_id: Some(id(62)),
                 hash: [2; 32],
-                app_id: "website-fixture".parse().expect("app"),
+                origin: crate::identity::session::Origin::WebsiteMessage(
+                    "website-fixture".parse().expect("app"),
+                ),
                 expires_at: now() + TimeDelta::hours(1),
             },
             id(92),
