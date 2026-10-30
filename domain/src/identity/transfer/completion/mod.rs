@@ -963,7 +963,7 @@ mod tests {
         };
         services
             .current()
-            .authenticate(Proof {
+            .authenticate(Proof::Cookie {
                 id: issued.id(),
                 token: issued.token().text().parse().expect("token"),
             })
@@ -1203,7 +1203,7 @@ mod tests {
                     let Receipt::Registration(credential) = services.authentication().create_session(authentication_input(Uuid::new_v4(), id, "13800000000", CODE)).await.expect("unoccupied new phone") else { panic!("new phone has no account yet"); };
                     let registration_input = crate::registration::Input::new(operation(), credential.id(), credential.token().text().parse().expect("registration proof"), "Other Person".parse().expect("name"), "00000020000229007X".parse().expect("number"));
                     let registration = services.registration().clone(); let transfer_service = services.transfer().clone(); let actor = original.clone();
-                    let register = Box::pin(async move { registration.register(registration_input).await });
+                    let register = Box::pin(async move { registration.register_input_for_test(registration_input).await });
                     let complete = Box::pin(async move { transfer_service.complete(actor, input(operation(), message_id, &code)).await });
                     let observer = database.connections(&database.user).recover().await.expect("independent observer");
                     let work = Box::pin(async {

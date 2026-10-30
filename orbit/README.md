@@ -11,20 +11,21 @@ cd halo
 bun install --frozen-lockfile --ignore-scripts
 cd ../orbit
 bun install --frozen-lockfile --ignore-scripts
-node tools/protocol.ts --proposal
+node tools/protocol.ts
 bun run typecheck
-ORBIT_API_ORIGIN=https://api.example.test ORBIT_APP_ID=touristappid \
-  bun tools/build.ts --proposal
+ORBIT_API_ORIGIN=https://api.example.test bun run build
 bun test tests
 ```
 
-`--proposal` 只消费明确命名的测试提议，生成 `.generated/` 与 `test-build/`。提议从现有网站快照派生，只供受控场景验证，不能代表后端已导出小程序协议。测试包在 `build-source.json` 标识来源，不进入正式构建目录。正式生成从实际后端导出的 `protocol/openapi.json` 读取；缺少该快照时明确失败，不能回退使用提议。
+Halo 与 Orbit 直接读取同一份实际后端导出的 `halo/protocol/openapi.json`，不另存小程序副本。生成器在 `.generated/` 生成类型及离线校验，`source.json` 绑定快照路径与 SHA-256。构建只输出正式 `build/`，并在 `build-source.json` 保留同一来源；缺少或无法编译真实快照时失败。构建和受控测试不访问真实 API；上面的 example.test 域名只用于本地隔离运行。
+
+共同契约包含网站短信和小程序手机号分支。Orbit 的输入类型与运行时只接纳 `mobile`，会话类型与登录、R2 响应校验只接纳带 token 的 Bearer 分支。待注册凭据沿同一真实契约，不通过客户端声明来源。网站适配器保留相反的 Message/Cookie 边界。
 
 原生传输固定使用 `wx.request` 的文本响应，按状态、媒体类型、schema 与应用码共同判断。意外的对象或 `ArrayBuffer` 不当作可信 JSON。运行时只使用随包交付的代码，不从项目根之外加载模块，不动态编译 schema。受控包测试在缺少 Node、DOM、fetch、URL 与 structuredClone 的宿主中实际加载生成的 `app.js` 与页面脚本；该测试不替代微信运行验收。
 
 ## 项目配置与正式构建
 
-构建要求显式设置 `ORBIT_API_ORIGIN`，没有默认 API 域名。AppID 默认读取公共 `project.config.json` 中已确认的小程序身份，显式 `ORBIT_APP_ID` 可覆盖该选择；私有配置继续忽略入库。API 必须是准确的 HTTPS origin；AppID 保留原文，只拒绝空白与控制字符。字符串通过检查不证明平台资格。`touristappid` 只允许显式测试构建，正式构建拒绝该身份。
+构建要求显式设置 `ORBIT_API_ORIGIN`，没有默认 API 域名。AppID 默认读取公共 `project.config.json` 中已确认的小程序身份，显式 `ORBIT_APP_ID` 可覆盖该选择；私有配置继续忽略入库。API 必须是准确的 HTTPS origin；AppID 保留原文，只拒绝空白与控制字符。字符串通过检查不证明平台资格。构建拒绝 `touristappid`，不以测试项目身份生成正式包。
 
 ```bash
 ORBIT_API_ORIGIN="$APPROVED_API_ORIGIN" ORBIT_APP_ID="$APPROVED_MINI_APP_ID" \
@@ -35,7 +36,7 @@ ORBIT_API_ORIGIN="$APPROVED_API_ORIGIN" ORBIT_APP_ID="$APPROVED_MINI_APP_ID" \
 
 安全随机数使用 [wx.getRandomValues](https://developers.weixin.qq.com/miniprogram/dev/api/device/crypto/wx.getRandomValues.html)，其最低基础库为 2.15.0。手机号只读取用户主动触发的 [getPhoneNumber](https://developers.weixin.qq.com/miniprogram/dev/framework/open-ability/getPhoneNumber.html) 事件 `detail.code`，不调用 `wx.login`。所选平台必须支持手机号 code 模式。随机能力缺失或失败时停止办理，不能退回伪随机数。AppSecret、供应商身份与可信来源归服务端；客户端不发送 AppID 来改变来源。
 
-正式验收还需要真实导出、准确 API 与头像合法域名、开发者登录及手机号授权资格。项目 JSON 可解析、受控包可执行及静态截图均不能证明这些前提。构建命令不登录微信、不上传或发布。
+微信平台及真实业务链路验收还需要准确 API 与头像合法域名、开发者登录及手机号授权资格。消费真实导出、项目 JSON 可解析、包内代码可执行及静态截图均不能证明这些前提。构建命令不登录微信、不上传或发布。
 
 ## 页面与本地资料
 

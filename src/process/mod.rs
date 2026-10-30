@@ -36,16 +36,18 @@ pub fn run() -> Result<(), RunError> {
     let connections = crate::database::load(settings.database)?;
     let (challenge, message) =
         suppliers::Clients::new(settings.challenge, settings.message)?.into_parts();
+    let mini = settings.mini.map(suppliers::mini).transpose()?;
     let runtime = tokio::runtime::Runtime::new().map_err(RunError::Runtime)?;
     let stop_budget = settings.process.stop;
     runtime.block_on(supervise(
-        Application::start(
+        Application::start_with_mini(
             connections,
             keys,
             settings.services,
             settings.process,
             challenge,
             message,
+            mini,
         ),
         stop_budget,
         settings.listen,
@@ -311,6 +313,27 @@ impl Application {
         supplier: client::Client,
         message: message::client::Client,
     ) -> Result<Self, Error> {
+        Box::pin(Self::start_with_mini(
+            connections,
+            keys,
+            services,
+            settings,
+            supplier,
+            message,
+            None,
+        ))
+        .await
+    }
+
+    pub async fn start_with_mini(
+        connections: Connections,
+        keys: domain::keys::Keys,
+        services: domain::startup::Settings,
+        settings: Settings,
+        supplier: client::Client,
+        message: message::client::Client,
+        mini: Option<domain::identity::mini::client::Client>,
+    ) -> Result<Self, Error> {
         let deadline = time::Instant::now() + Duration::from_secs(10);
         let context = runtime::Context::hold(connections)
             .await
@@ -319,8 +342,10 @@ impl Application {
             let barrier =
                 timeout_at(deadline, Barrier::begin_at(context.clone(), deadline)).await??;
             Ok::<_, Error>(
-                domain::startup::Services::start(barrier, keys, services, supplier, message)
-                    .await?,
+                domain::startup::Services::start_with_mini(
+                    barrier, keys, services, supplier, message, mini,
+                )
+                .await?,
             )
         }
         .await

@@ -259,7 +259,7 @@ mod tests {
         };
         let actor = services
             .current()
-            .authenticate(Proof {
+            .authenticate(Proof::Cookie {
                 id: issued.id(),
                 token: issued.token().text().parse().expect("token"),
             })
@@ -278,22 +278,20 @@ mod tests {
         else {
             panic!("unoccupied mobile")
         };
-        let issued = Box::pin(
-            services
-                .registration()
-                .register(crate::registration::Input::new(
-                    operation(),
-                    credential.id(),
-                    credential.token().text().parse().expect("token"),
-                    "Other Operator".parse().expect("name"),
-                    "00000020000229007X".parse().expect("identity number"),
-                )),
-        )
+        let issued = Box::pin(services.registration().register_input_for_test(
+            crate::registration::Input::new(
+                operation(),
+                credential.id(),
+                credential.token().text().parse().expect("token"),
+                "Other Operator".parse().expect("name"),
+                "00000020000229007X".parse().expect("identity number"),
+            ),
+        ))
         .await
         .expect("actual R2 account");
         services
             .current()
-            .authenticate(Proof {
+            .authenticate(Proof::Cookie {
                 id: issued.id(),
                 token: issued.token().text().parse().expect("session token"),
             })
@@ -455,7 +453,7 @@ mod tests {
                 services.close(); services.drain().await.expect("drained"); context.stop().await.expect("stopped");
                 let (context, services) = start(&database, &supplier).await;
                 let Receipt::Session(receipt) = receipt else { panic!("R1 session") };
-                let reader = services.current().authenticate(Proof { id: receipt.id(), token: receipt.token().text().parse().expect("token") }).await.expect("new process actor");
+                let reader = services.current().authenticate(Proof::Cookie { id: receipt.id(), token: receipt.token().text().parse().expect("token") }).await.expect("new process actor");
                 let read = services.revocation().read(&reader, operation_id).await.expect("restarted original").expect("original exists");
                 assert_eq!(read.scope(), super::Scope::All);
                 assert_eq!(read.initiator_id(), actor.session_id());
@@ -682,7 +680,7 @@ mod tests {
                     assert_eq!(completed.count().get(), if logout_first { 1 } else { 2 });
                     if logout_first {
                         let Receipt::Session(issued) = created.expect("later login remains valid") else { panic!("R1 session") };
-                        services.current().authenticate(Proof { id: issued.id(), token: issued.token().text().parse().expect("token") }).await.expect("later session valid");
+                        services.current().authenticate(Proof::Cookie { id: issued.id(), token: issued.token().text().parse().expect("token") }).await.expect("later session valid");
                     } else {
                         // A commit acknowledgement can arrive before logout, or recovery can see
                         // the already revoked handoff. Neither authorizes a replacement session.
@@ -811,7 +809,7 @@ mod tests {
                 context.stop().await.expect("context stopped");
                 let (context, services) = start(&database, &supplier).await;
                 let Receipt::Session(issued) = receipt else { panic!("session") };
-                let other = services.current().authenticate(Proof { id: issued.id(), token: issued.token().text().parse().expect("token") }).await.expect("new process actor");
+                let other = services.current().authenticate(Proof::Cookie { id: issued.id(), token: issued.token().text().parse().expect("token") }).await.expect("new process actor");
                 let original = services.revocation().read(&other, operation_id).await.expect("original set").expect("original exists");
                 assert_eq!(original.scope(), super::Scope::Current);
                 assert_eq!(original.initiator_id(), actor.session_id());
@@ -1081,7 +1079,7 @@ mod tests {
                 assert!(runtime.client().query_one("SELECT NOT EXISTS(SELECT 1 FROM identity.sessions WHERE id=$1) AND NOT EXISTS(SELECT 1 FROM identity.issuances WHERE id=$1) AND NOT EXISTS(SELECT 1 FROM identity.revocations WHERE id=$1) AND NOT EXISTS(SELECT 1 FROM identity.handoffs WHERE id=$1) AND EXISTS(SELECT 1 FROM identity.logouts WHERE id=$2 AND sessions=ARRAY[$1::uuid])",&[&actor.session_id(),&operation_id]).await.expect("independent cleanup observation").get::<_,bool>(0));
                 let (_,other)=issue(&database,&services,&mut supplier).await;
                 assert_ne!(other.session_id(),actor.session_id());
-                assert!(matches!(services.current().authenticate(Proof{id:original.id(),token:original.token().text().parse().expect("original token")}).await,Err(crate::identity::current::Error::Invalid)));
+                assert!(matches!(services.current().authenticate(Proof::Cookie {id:original.id(),token:original.token().text().parse().expect("original token")}).await,Err(crate::identity::current::Error::Invalid)));
                 let original=services.revocation().read(&other,operation_id).await.expect("account-lifetime result").expect("original exists");
                 assert_eq!(original.scope(), super::Scope::Current);
                 assert_eq!(original.initiator_id(), actor.session_id());

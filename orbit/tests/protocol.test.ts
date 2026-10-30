@@ -2,6 +2,25 @@ import { expect, test } from "bun:test";
 import { Protocol } from "../src/protocol";
 import { Transport } from "../src/transport";
 import { account, FakePlatform, ids, session } from "./fixture";
+import * as validators from "../.generated/validators.cjs";
+
+test("the real shared schema retains website branches while Orbit accepts only mobile and Bearer", () => {
+  const registry = validators as unknown as Record<string, (value: unknown) => boolean>;
+  const protocol = new Protocol();
+  const mobile = { secret: "A".repeat(43), credential: { type: "mobile", code: "phone-event-code" } };
+  const website = { secret: "A".repeat(43), credential: { type: "message", id: ids.registration, mobile: "13800138000", code: "123456" } };
+  const { token: _token, ...cookie } = session();
+  expect(registry.createSession_input(website)).toBe(true);
+  expect(protocol.validLogin(website)).toBe(false);
+  expect(protocol.validLogin(mobile)).toBe(true);
+  expect(protocol.validLogin({ ...mobile, credential: { type: "mobile", code: "x".repeat(2049) } })).toBe(false);
+  expect(registry.createSession_200({ code: "ok", session: cookie })).toBe(true);
+  expect(protocol.validSession(cookie)).toBe(false);
+  expect(protocol.validSession(session())).toBe(true);
+  for (const [endpoint, status] of [["POST /api/v1/sessions", 200], ["POST /api/v1/registrations", 200], ["POST /api/v1/registrations", 201]] as const) {
+    expect(protocol.decode({ statusCode: status, header: { "Content-Type": "application/json" }, data: JSON.stringify({ code: "ok", session: cookie }) }, endpoint)).toBeUndefined();
+  }
+});
 
 test.each([
   { status: 200, media: "text/html", body: { code: "ok", session: session() } },

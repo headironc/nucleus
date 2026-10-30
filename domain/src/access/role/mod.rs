@@ -751,7 +751,7 @@ pub(crate) mod tests {
         };
         services
             .current()
-            .authenticate(Proof {
+            .authenticate(Proof::Cookie {
                 id: issued.id(),
                 token: issued.token().text().parse().expect("token"),
             })
@@ -1541,11 +1541,11 @@ pub(crate) mod tests {
                 let administrator = actor(&database, &services, &mut supplier).await;
                 let id = message(&database, services.authentication(), &mut supplier, "13800138000").await;
                 let Receipt::Registration(credential) = Box::pin(services.authentication().create_session(input(Uuid::new_v4(), id, "13800138000", CODE))).await.expect("R1 registration credential") else { panic!("unoccupied mobile"); };
-                let issued = Box::pin(services.registration().register(crate::registration::Input::new(
+                let issued = Box::pin(services.registration().register_input_for_test(crate::registration::Input::new(
                     Uuid::new_v4().to_string().parse().expect("operation"), credential.id(), credential.token().text().parse().expect("token"),
                     "Registered Operator".parse().expect("name"), "00000020000229007X".parse().expect("number"),
                 ))).await.expect("actual R2");
-                let ordinary = services.current().authenticate(Proof { id: issued.id(), token: issued.token().text().parse().expect("token") }).await.expect("registered actor");
+                let ordinary = services.current().authenticate(Proof::Cookie { id: issued.id(), token: issued.token().text().parse().expect("token") }).await.expect("registered actor");
                 let observer = database.connections(&database.user).recover().await.expect("independent runtime observer");
                 for (actor, level, kind, name, expected) in [
                     (&administrator, 1000, Kind::Full, "系统管理员", PERMISSIONS.as_slice()),

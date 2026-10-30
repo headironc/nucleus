@@ -60,6 +60,22 @@ test("no account branches to real R2 fields, independent operation and current v
   expect(h.platform.records().registration).toBeUndefined();
 });
 
+test.each(["authentication", "registration"])("%s rejects a website Cookie handoff without clearing original recovery material", async kind => {
+  const h = setup(kind === "registration" ? { version: 1,
+    registration: { proof: proof(), createdAt: epoch, deadline: epoch + 600000 } } : undefined);
+  await h.controller.show();
+  const work = kind === "authentication" ? h.controller.authorize("phone-code") : h.controller.register("张宁", "11010519491231002X");
+  await h.platform.next(0);
+  const { token: _token, ...cookie } = session();
+  h.platform.reply(0, { code: "ok", session: cookie }, kind === "registration" ? 201 : 200);
+  await work;
+  expect(h.platform.requests).toHaveLength(1);
+  const records = h.platform.records();
+  expect(records.session).toBeUndefined();
+  expect(kind === "authentication" ? records.authentication?.uncertain : records.registration?.pending?.uncertain).toBe(true);
+  expect(h.controller.snapshot()).toMatchObject({ phase: "pending", name: "", canLogin: false });
+});
+
 test("unknown auth survives reopening, uses original bytes/key, and rejects a replacement code", async () => {
   const h = setup(); await h.controller.show();
   const work = h.controller.authorize("phone-code"); await h.platform.next(0);
