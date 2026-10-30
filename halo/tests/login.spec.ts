@@ -8,10 +8,11 @@ import { ownWorkforce } from "./workforce";
 import { ownNumbers } from "./numbers";
 import { ownTermination } from "./termination";
 import { admissionAndFirstNumber } from "./admission-number";
+import { ownBadgeApplications } from "./badge-applications";
 import { ownMobileChange } from "./mobile-change";
 import { cookieDigests, identityObservation, identityReads } from "./identity";
 import { affiliationObservation } from "./affiliation";
-import type { Account } from "../app/protocol/session";
+import type { Account, Session } from "../app/protocol/session";
 
 async function message(
   page: Page,
@@ -306,6 +307,67 @@ async function registerRealAccount(
   await expect(page.getByText(name, { exact: true })).toBeVisible();
   const account = (await (await currentRead).json()).account as Account;
   return { account, session: await selectedSession(page), sentAt };
+}
+
+async function prepareBadgeDirectory(
+  page: Page,
+  manager: Session,
+  other: { account: Account; session: Session },
+) {
+  await page.evaluate(async ({ manager, other }) => {
+    const request = async (
+      session: string, path: string, input: unknown, method = "POST", status = 201,
+    ) => {
+      // Setup observes the real two-per-second authenticated-write budget.
+      await new Promise((resolve) => setTimeout(resolve, 550));
+      const response = await fetch(`/api/v1/workforce/${path}`, {
+        method, credentials: "same-origin", redirect: "error",
+        headers: {
+          "Session-Id": session, "Operation-Id": crypto.randomUUID(),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+      });
+      if (response.status !== status)
+        throw new Error(`Badge setup ${path}: ${response.status}`);
+      return response.json();
+    };
+    const { role } = await request(manager.id, "roles", {
+      entry: "institution", name: "Badge fixture directory", level: 100,
+      permissions: ["workforce.directory"],
+    });
+    const candidate = await request(manager.id, "grants/candidates", {
+      entry: "institution", mobile: "13900000018",
+    }, "POST", 200);
+    if (candidate.identity.accountId !== other.account.id ||
+        candidate.identity.personId !== other.account.personId ||
+        candidate.identity.revisionId !== other.account.revisionId)
+      throw new Error("Badge setup candidate differs from registered observer");
+    const receipt = await request(manager.id, "grants", {
+      entry: "institution",
+      target: {
+        accountId: candidate.identity.accountId, personId: candidate.identity.personId,
+        revisionId: candidate.identity.revisionId, mobile: "13900000018",
+        assignmentId: candidate.assignmentId, suspensionId: candidate.suspensionId,
+        grant: candidate.grant,
+      },
+      role: { id: role.id, changeId: role.changeId },
+    });
+    if (receipt.grant.status !== "active")
+      throw new Error("Badge observer was not admitted");
+    const { item: group } = await request(other.session.id, "directories/groups", {
+      name: "Badge fixture group", enabled: true, index: 0,
+    });
+    const { item: department } = await request(other.session.id, "directories/departments", {
+      name: "Badge fixture department", enabled: true, index: 0,
+      groupId: group.id, parentId: null,
+    });
+    for (const subtype of [100, 200, 300, 400, 500, 600, 700, 801, 802, 803, 804, 901, 902, 903, 904, 1000]) {
+      await request(other.session.id, `rules/${subtype}`, {
+        departmentId: department.id, position: subtype !== 902,
+      }, "PUT");
+    }
+  }, { manager, other });
 }
 
 test("damaged closed login records discard secrets without starting another login", async ({
@@ -2127,6 +2189,9 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     await admissionAndFirstNumber(page, replacement, colleague, (session) =>
       choose(page, session),
     );
+    const other = await registerRealAccount(page, "13900000018", "Badge Observer", "000000200002298899");
+    await prepareBadgeDirectory(page, replacement, other);
+    await ownBadgeApplications(page, replacement, colleague, other, (session) => choose(page, session));
   });
   await ownWorkforce(page, replacement.id, secondSession!.id);
   const recoverTermination = await ownTermination(
