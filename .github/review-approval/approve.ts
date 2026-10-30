@@ -69,27 +69,51 @@ async function ownership(api: Api, pr: number) {
         { cause },
       );
     }
-    requireThat(
+    if (!(
       owned(current) &&
-        current.id === review.id &&
-        current.commit_id === review.commit_id &&
-        current.body === review.body &&
-        current.state === "DISMISSED",
-      `Cladiron approval ${review.id} withdrawal not confirmed${error ? " after unknown response" : ""}`,
-    );
+      current.id === review.id &&
+      current.commit_id === review.commit_id &&
+      current.body === review.body &&
+      current.state === "DISMISSED"
+    ))
+      throw new Error(
+        `Cladiron approval ${review.id} withdrawal not confirmed${error ? " after unknown response" : ""}`,
+        error ? { cause: error } : undefined,
+      );
   };
-  return { owned, read, dismiss };
+  const dismissAll = async (reviews: Record[]) => {
+    const failures: Error[] = [];
+    for (const review of reviews) {
+      try {
+        await dismiss(review);
+      } catch (cause) {
+        failures.push(
+          cause instanceof Error
+            ? cause
+            : new Error(`Cladiron approval ${review.id} withdrawal failed`, {
+                cause,
+              }),
+        );
+      }
+    }
+    if (failures.length)
+      throw new AggregateError(
+        failures,
+        failures.map((e) => e.message).join("; "),
+      );
+  };
+  return { owned, read, dismiss, dismissAll };
 }
 export async function withdraw(api: Api, pr: number) {
   requireThat(Number.isSafeInteger(pr) && pr > 0, "Invalid withdrawal PR");
-  const { owned, read, dismiss } = await ownership(api, pr);
+  const { owned, read, dismissAll } = await ownership(api, pr);
   const prior = (await read()).filter(
     (r) =>
       owned(r) &&
       r.state === "APPROVED" &&
       r.body?.includes("<!-- cladiron-approval:v1 "),
   );
-  for (const r of prior) await dismiss(r);
+  await dismissAll(prior);
   return prior.map((r) => r.id);
 }
 export async function approve(
@@ -108,7 +132,7 @@ export async function approve(
     /^run-[1-9][0-9]*-attempt-[1-9][0-9]*$/.test(operation),
     "Missing unique approval operation identity",
   );
-  const { owned, read, dismiss } = await ownership(api, pr);
+  const { owned, read, dismiss, dismissAll } = await ownership(api, pr);
   let selected: Record | undefined;
   try {
     const first = await load(api, pr);
@@ -147,10 +171,13 @@ export async function approve(
       reusable.length <= 1,
       "Multiple existing approvals for one binding",
     );
-    for (const stale of ownApprovals.filter((r) => !reusable.includes(r))) {
+    const stale = ownApprovals.filter((r) => !reusable.includes(r));
+    if (stale.length) {
       outcome.resolved = false;
-      outcome.reviews = [...new Set([...outcome.reviews, stale.id])];
-      await dismiss(stale);
+      outcome.reviews = [
+        ...new Set([...outcome.reviews, ...stale.map((r) => r.id)]),
+      ];
+      await dismissAll(stale);
     }
     const second = await load(api, pr);
     requireThat(
@@ -183,7 +210,7 @@ export async function approve(
       );
       if (matching.length !== 1) {
         outcome.reviews = matching.map((r) => r.id);
-        for (const r of matching) await dismiss(r);
+        await dismissAll(matching);
         if (matching.length > 0) {
           outcome.resolved = true;
           outcome.reviews = matching.map((r) => r.id);
@@ -249,7 +276,7 @@ export async function approve(
             ...new Set([...outcome.reviews, ...old.map((r) => r.id)]),
           ];
         }
-        for (const r of old) await dismiss(r);
+        await dismissAll(old);
       }
     } catch (withdrawal) {
       throw new AggregateError(

@@ -94,6 +94,8 @@ OCI 工作流保持原状。本合同未把 Docker 链路迁移到宿主机，�
 
 正常响应和超时都核对新 review ID、Cladiron 数字 bot 身份、App 身份（API 返回时）、完整 `H`、body marker 与 `APPROVED` 状态。每次写入的 body 另绑定唯一 run/attempt 操作身份。超时只查找相对写前列表唯一新增的精确 review；零个或多个匹配保持未知，不重复 POST。多个精确自有匹配逐项撤回并读回，不能任意选一个当成功。
 
+集合撤回先保留整批已知 ID，再逐项尝试并回读。某个 ID 的 PUT 或回读失败不能阻断其余 ID。完成所有可尝试项后汇总原始失败，保留未确认的 ID 和结果未知状态。原操作仍对每个 ID 最多发送一次 PUT，再遇同一 ID 只回读。PUT 报错但准确读回 `DISMISSED` 可以确认成功。部分成功或空集合不能把原批准的未知结果改为已确认。
+
 写入程序另保留绑定同一 intent 的 outcome，区分未尝试 POST、已确认原操作和仍未知的写入。只读 prepare 和批准使用不同步骤；prepare 失败不构成未知 POST。后续 dispatch 及 rerun 逐个核对每个已启动写入的 attempt，旧 attempt 的安全原件不能掩盖新 attempt 丢失的原件。没有可信终态时，原目标存在唯一、绑定原操作身份的 `APPROVED` 或 `DISMISSED` review 才能解除该项未知。同绑定的更早已撤回 review 不能充当后来写入的回执。intent 过期或写入步骤已开始但 intent 丢失时，停止并报告原 run/attempt，交所有者调查。
 
 历史审计针对原批准 POST。outcome 的 `attempted=false` 只表示尚未尝试该 POST，不证明旧 review 的撤回 PUT 已成功或全部外写已终结。原执行仍保留每个撤回 ID、读回、未知及失败，不把此字段当作跨 dispatch 自动重试撤回的协议。

@@ -4,6 +4,7 @@ import {
   approvalBody as operationBody,
   type Snapshot,
   type OperationOutcome,
+  withdraw,
 } from "./approve.ts";
 import { b } from "./fixtures.ts";
 import type { Api } from "./github.ts";
@@ -34,10 +35,15 @@ class ApprovalApi implements Api {
   outcome = "success";
   failDismiss = false;
   failDismissRead = false;
+  failedDismissals = new Set<number>();
+  failedReadbacks = new Set<number>();
   async get(path: string) {
     if (path.startsWith("/users/")) return user;
     if (this.failDismissRead && this.dismissalAttempts.length)
       throw new Error("Synthetic withdrawal readback failure");
+    const id = Number(path.split("/").at(-1));
+    if (this.failedReadbacks.has(id) && this.dismissalAttempts.includes(id))
+      throw new Error("Synthetic per-review readback failure");
     return this.reviews.find((r) => path.endsWith(`/${r.id}`));
   }
   async pages() {
@@ -70,7 +76,8 @@ class ApprovalApi implements Api {
   async put(path: string) {
     const id = Number(path.split("/").at(-2));
     this.dismissalAttempts.push(id);
-    if (this.failDismiss) throw new Error("Synthetic dismissal failure");
+    if (this.failDismiss || this.failedDismissals.has(id))
+      throw new Error("Synthetic dismissal failure");
     this.dismissals.push(id);
     this.reviews.find((r) => r.id === id)!.state = "DISMISSED";
     return {};
@@ -221,10 +228,79 @@ test("unknown ambiguous-approval rollback does not repeat the dismissal PUT", as
   await expect(approve(api, b.pr, async () => s)).rejects.toThrow(
     "1000 withdrawal not confirmed",
   );
-  expect(api.dismissalAttempts).toEqual([1000]);
+  expect(api.dismissalAttempts).toEqual([1000, 1001]);
   expect(api.posts).toHaveLength(1);
   expect(api.reviews.every((r) => r.state === "APPROVED")).toBe(true);
 });
+for (const route of ["ambiguous", "stale", "cleanup", "withdraw"])
+  for (const failure of ["PUT", "readback"])
+    for (const position of [0, 1])
+      test(`${route} withdrawal continues after ${failure} failure at position ${position}`, async () => {
+        const api = new ApprovalApi();
+        const count = route === "ambiguous" ? 2 : 3;
+        const ids = Array.from({ length: count }, (_, i) => 1000 + i);
+        if (route === "ambiguous") api.outcome = "unknown-multiple";
+        else
+          for (const id of ids)
+            api.reviews.push({
+              id,
+              user,
+              body: approvalBody(s),
+              commit_id: b.head,
+              state: "APPROVED",
+            });
+        if (failure === "PUT") api.failedDismissals.add(ids[position]);
+        else api.failedReadbacks.add(ids[position]);
+        if (route !== "ambiguous")
+          api.reviews.push({
+            id: 9000,
+            user: { ...user, id: 1 },
+            body: approvalBody(s),
+            commit_id: b.head,
+            state: "APPROVED",
+          });
+        const outcome: OperationOutcome = {
+          attempted: false,
+          resolved: false,
+          reviews: [],
+        };
+        let error: unknown;
+        try {
+          if (route === "withdraw") await withdraw(api, b.pr);
+          else
+            await approve(
+              api,
+              b.pr,
+              async () => {
+                if (route === "cleanup")
+                  throw new Error("Evidence unavailable");
+                return route === "stale" ? { ...s, digest: "e".repeat(64) } : s;
+              },
+              [],
+              outcome,
+            );
+        } catch (cause) {
+          error = cause;
+        }
+        expect(error).toBeInstanceOf(AggregateError);
+        expect(String(error)).toContain(String(ids[position]));
+        expect(api.dismissalAttempts).toEqual(ids);
+        expect(api.posts).toHaveLength(route === "ambiguous" ? 1 : 0);
+        for (const id of ids)
+          expect(api.reviews.find((r) => r.id === id)!.state).toBe(
+            failure === "PUT" && id === ids[position]
+              ? "APPROVED"
+              : "DISMISSED",
+          );
+        if (route !== "withdraw") {
+          expect(outcome.resolved).toBe(false);
+          expect(outcome.reviews).toEqual(ids);
+        }
+        if (route !== "ambiguous")
+          expect(api.reviews.find((r) => r.id === 9000)!.state).toBe(
+            "APPROVED",
+          );
+      });
 for (const stale of [false, true])
   test(`withdrawal readback failure preserves unknown and review ID, stale=${stale}`, async () => {
     const api = new ApprovalApi();
@@ -273,4 +349,54 @@ test("evidence read failure withdraws the exact old self approval", async () => 
     }),
   ).rejects.toThrow("Incomplete page");
   expect(api.dismissals).toEqual([1000]);
+});
+test("withdrawal preserves multiple original failures while completing the other IDs", async () => {
+  const api = new ApprovalApi();
+  for (const id of [1000, 1001, 1002])
+    api.reviews.push({
+      id,
+      user,
+      body: approvalBody(s),
+      commit_id: b.head,
+      state: "APPROVED",
+    });
+  api.failedDismissals.add(1000);
+  api.failedReadbacks.add(1002);
+  let error: any;
+  try {
+    await withdraw(api, b.pr);
+  } catch (cause) {
+    error = cause;
+  }
+  expect(error).toBeInstanceOf(AggregateError);
+  expect(error.errors).toHaveLength(2);
+  expect(error.errors[0].message).toContain("1000 withdrawal not confirmed");
+  expect(error.errors[0].cause.message).toBe("Synthetic dismissal failure");
+  expect(error.errors[1].message).toContain("1002 withdrawal readback failed");
+  expect(error.errors[1].cause.message).toBe(
+    "Synthetic per-review readback failure",
+  );
+  expect(api.dismissalAttempts).toEqual([1000, 1001, 1002]);
+  expect(api.reviews[1].state).toBe("DISMISSED");
+});
+test("an unknown PUT that actually dismissed a review is accepted by readback and does not stop the batch", async () => {
+  const api = new ApprovalApi();
+  for (const id of [1000, 1001])
+    api.reviews.push({
+      id,
+      user,
+      body: approvalBody(s),
+      commit_id: b.head,
+      state: "APPROVED",
+    });
+  const put = api.put.bind(api);
+  api.put = async (path) => {
+    const result = await put(path);
+    if (path.includes("/1000/"))
+      throw new Error("Synthetic response lost after success");
+    return result;
+  };
+  expect(await withdraw(api, b.pr)).toEqual([1000, 1001]);
+  expect(api.dismissalAttempts).toEqual([1000, 1001]);
+  expect(api.reviews.every((r) => r.state === "DISMISSED")).toBe(true);
 });
