@@ -11,6 +11,8 @@ use tokio::{runtime::Runtime, time::timeout};
 
 use crate::{application::*, database::*, supplier::*};
 
+mod admission;
+mod allocation;
 mod cancellation;
 mod mobile;
 mod termination;
@@ -268,6 +270,12 @@ fn browser_c1_preserves_original_send() {
             let mut workforce_tick = tokio::time::interval(Duration::from_millis(100));
             let mut workforce_before = BTreeMap::<&str, String>::new();
             let mut workforce_checked = BTreeSet::<&str>::new();
+            let admission_observer = connections(&server, &name, "clerk").recover().await.expect("admission observer");
+            let mut admission_tick = tokio::time::interval(Duration::from_millis(100));
+            let mut admission = admission::Observer::default();
+            let allocation_observer = connections(&server, &name, "clerk").recover().await.expect("first allocation observer");
+            let mut allocation_tick = tokio::time::interval(Duration::from_millis(100));
+            let mut allocation = allocation::Observer::default();
             let termination_observer = connections(&server, &name, "clerk").recover().await.expect("termination read observer");
             let mut termination_tick = tokio::time::interval(Duration::from_millis(100));
             let mut termination = termination::Observer::default();
@@ -298,6 +306,12 @@ fn browser_c1_preserves_original_send() {
                 tokio::select! {
                     // Observe queued calls before accepting the backend's completed drain.
                     biased;
+                    _ = admission_tick.tick(), if !admission.complete() => {
+                        admission.observe(admission_observer.client(), material.path()).await;
+                    }
+                    _ = allocation_tick.tick(), if admission.complete() && !allocation.complete() => {
+                        allocation.observe(allocation_observer.client(), material.path()).await;
+                    }
                     _ = mobile_tick.tick(), if !mobile_change.complete() => {
                         mobile_change.observe(mobile_observer.client(), material.path()).await;
                     }
@@ -691,6 +705,12 @@ fn browser_c1_preserves_original_send() {
             identity_observer.terminate().await.expect("end identity observer");
             assert_eq!(workforce_checked.len(), 6, "all service lifecycle read windows have independent no-write evidence");
             workforce_observer.terminate().await.expect("end Workforce observer");
+            assert!(admission.complete(), "admission, original replay and member read have independent durable evidence");
+            logs.record("admission_acceptance", admission.evidence());
+            admission_observer.terminate().await.expect("end admission observer");
+            assert!(allocation.complete(), "first allocation, original replay and current number read have independent durable evidence");
+            logs.record("allocation_acceptance", allocation.evidence());
+            allocation_observer.terminate().await.expect("end allocation observer");
             assert!(termination.complete(), "original termination and new-Session replay have independent durable evidence");
             termination_observer.terminate().await.expect("end termination observer");
             assert!(mobile_change.complete(), "mobile completion and original-result reads have independent durable evidence");
@@ -702,7 +722,7 @@ fn browser_c1_preserves_original_send() {
             for mobile in ["13900000000", "13900000001", "13900000002", "13900000003", "13900000004",
                 "13900000005", "13900000006", "13900000007", "13900000008",
                 "13900000009", "13900000010", "13900000011", "13900000012", "13900000013", "13900000014",
-                "13900000015", "13900000016"] {
+                "13900000015", "13900000016", "13900000017"] {
                 let expected = if mobile == "13900000000" { 4 }
                     else if matches!(mobile, "13900000013" | "13900000016") { 2 }
                     else { 1 };
@@ -710,8 +730,8 @@ fn browser_c1_preserves_original_send() {
             }
             assert_eq!(counts.get("13900000040"), Some(&3), "registration, second login and original-mobile verification each send once");
             assert_eq!(counts.get("13900000041"), Some(&2), "new-mobile verification and later login each send once");
-            assert_eq!(counts.len(), 19, "only explicit identity flows, re-registration and the separate number beneficiary setup send SMS");
-            assert!(supplier.calls.load(Ordering::SeqCst) >= 27);
+            assert_eq!(counts.len(), 20, "only explicit identity flows, re-registration and the separate number and admission beneficiary setups send SMS");
+            assert!(supplier.calls.load(Ordering::SeqCst) >= 28);
             let login: serde_json::Value = serde_json::from_slice(
                 &std::fs::read(material.path().join("login.json")).expect("browser login evidence"),
             ).expect("non-secret login evidence");
@@ -880,7 +900,7 @@ fn browser_c1_preserves_original_send() {
                 serde_json::json!({ "outcome": "completed" }),
             );
             logs.finish().expect("browser evidence writes");
-            println!("Identity evidence: 27 explicit sends for 19 mobiles, including separate number recovery and mobile-change accounts; original login and registration retain their Sessions and expiry; registration retains one Account and Person with later explicit Workforce admission and rejoining; current logout preserves its original singleton; all logout freezes two sessions and separately accepts one; pre-classification navigation and classification-save failure both recover after login; both later logins survive original-result reads; normal and lost-response cancellations retain independent Account, Person, Holder, Grant, Session, R2 and avatar evidence, while a same-number re-registration is distinct; delayed avatar expiry and five current-number windows preserve independently observed business facts, Cookies and expiry; mobile replacement revokes both originals and removes their Handoffs, while the later new-number login survives reading the original completion");
+            println!("Identity evidence: 28 explicit sends for 20 mobiles, including separate admission, number recovery and mobile-change accounts; original login and registration retain their Sessions and expiry; registration retains one Account and Person with later explicit Workforce admission and rejoining; current logout preserves its original singleton; all logout freezes two sessions and separately accepts one; pre-classification navigation and classification-save failure both recover after login; both later logins survive original-result reads; normal and lost-response cancellations retain independent Account, Person, Holder, Grant, Session, R2 and avatar evidence, while a same-number re-registration is distinct; delayed avatar expiry and five current-number windows preserve independently observed business facts, Cookies and expiry; mobile replacement revokes both originals and removes their Handoffs, while the later new-number login survives reading the original completion");
         }).await.expect("bounded website acceptance");
     });
 }
