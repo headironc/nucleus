@@ -48,6 +48,62 @@ export function assertContext(env = process.env) {
     throw new Error("Publication requires the trusted dev workflow_dispatch");
 }
 
+function packageRecord(pkg: any) {
+  const association = pkg?.repository;
+  const view =
+    association === undefined
+      ? "missing"
+      : association === null
+        ? "null"
+        : Array.isArray(association)
+          ? "array"
+          : typeof association;
+  if (
+    pkg?.id !== selected.packageId ||
+    pkg.name !== "nucleus-ci" ||
+    pkg.visibility !== "private" ||
+    (view !== "missing" &&
+      view !== "null" &&
+      (view !== "object" ||
+        association.id !== selected.repositoryId ||
+        association.full_name !== selected.repository))
+  )
+    throw new Error(
+      "Existing private package association is not ready: " +
+        JSON.stringify({
+          id: typeof pkg?.id === "number" ? pkg.id : null,
+          name: typeof pkg?.name === "string" ? pkg.name : null,
+          visibility:
+            typeof pkg?.visibility === "string" ? pkg.visibility : null,
+          repositoryView: view,
+          repositoryId:
+            typeof association?.id === "number" ? association.id : null,
+          repositoryName:
+            typeof association?.full_name === "string"
+              ? association.full_name
+              : null,
+        }),
+    );
+  return {
+    package: {
+      id: pkg.id,
+      name: pkg.name,
+      visibility: pkg.visibility,
+      ...(view === "object"
+        ? {
+            repository: {
+              id: association.id,
+              full_name: association.full_name,
+            },
+          }
+        : view === "null"
+          ? { repository: null }
+          : {}),
+    },
+    view,
+  };
+}
+
 export function assertPlatform(
   repository: any,
   run: any,
@@ -92,6 +148,7 @@ export function assertPlatform(
     artifact.id !== selected.artifact ||
     artifact.name !== `nucleus-ci-${selected.run}-1` ||
     artifact.expired !== false ||
+    typeof artifact.expires_at !== "string" ||
     !Number.isFinite(Date.parse(artifact.expires_at)) ||
     Date.parse(artifact.expires_at) <= now ||
     artifact.digest !== selected.zip ||
@@ -103,38 +160,9 @@ export function assertPlatform(
     artifact.workflow_run?.head_sha !== selected.source
   )
     throw new Error("Artifact ownership, bytes or expiration mismatch");
-  const association = pkg.repository;
-  const repositoryView =
-    association === undefined
-      ? "missing"
-      : association === null
-        ? "null"
-        : Array.isArray(association)
-          ? "array"
-          : typeof association;
   // This fixed publication requires independent operator association readbacks.
   // An unavailable job-token view is not an association verdict.
-  if (
-    pkg.id !== selected.packageId ||
-    pkg.name !== "nucleus-ci" ||
-    pkg.visibility !== "private" ||
-    (repositoryView !== "missing" &&
-      repositoryView !== "null" &&
-      (repositoryView !== "object" ||
-        association.id !== selected.repositoryId ||
-        association.full_name !== selected.repository))
-  )
-    throw new Error(
-      "Existing private package association is not ready: " +
-        JSON.stringify({
-          id: pkg.id ?? null,
-          name: pkg.name ?? null,
-          visibility: pkg.visibility ?? null,
-          repositoryView,
-          repositoryId: pkg.repository?.id ?? null,
-          repositoryName: pkg.repository?.full_name ?? null,
-        }),
-    );
+  const pack = packageRecord(pkg);
   if (
     !comparison ||
     !["ahead", "identical"].includes(comparison.status) ||
@@ -142,7 +170,58 @@ export function assertPlatform(
     comparison.merge_base_commit?.sha !== selected.source
   )
     throw new Error("Producer source no longer belongs to dev history");
-  return repositoryView;
+  return {
+    repository: {
+      id: repository.id,
+      full_name: repository.full_name,
+      default_branch: repository.default_branch,
+    },
+    run: {
+      id: run.id,
+      run_attempt: run.run_attempt,
+      event: run.event,
+      head_branch: run.head_branch,
+      head_sha: run.head_sha,
+      status: run.status,
+      conclusion: run.conclusion,
+      path: run.path,
+      repository: { id: run.repository.id },
+      head_repository: { id: run.head_repository.id },
+    },
+    jobs: selected.jobs.map((id) => {
+      const job = jobs.find((entry) => entry.id === id)!;
+      return {
+        id: job.id,
+        run_id: job.run_id,
+        run_attempt: job.run_attempt,
+        head_sha: job.head_sha,
+        status: job.status,
+        conclusion: job.conclusion,
+      };
+    }),
+    artifact: {
+      id: artifact.id,
+      name: artifact.name,
+      expired: artifact.expired,
+      expires_at: artifact.expires_at,
+      digest: artifact.digest,
+      size_in_bytes: artifact.size_in_bytes,
+      workflow_run: {
+        id: artifact.workflow_run.id,
+        repository_id: artifact.workflow_run.repository_id,
+        head_repository_id: artifact.workflow_run.head_repository_id,
+        head_branch: artifact.workflow_run.head_branch,
+        head_sha: artifact.workflow_run.head_sha,
+      },
+    },
+    package: pack.package,
+    packageRepositoryView: pack.view,
+    comparison: {
+      status: comparison.status,
+      base_commit: { sha: comparison.base_commit.sha },
+      merge_base_commit: { sha: comparison.merge_base_commit.sha },
+    },
+  };
 }
 
 export function api(path: string, pages = false): any {
@@ -158,8 +237,30 @@ export function api(path: string, pages = false): any {
     throw new Error(
       `GitHub read failed: ${path}; status=${result.status}; HTTP=${result.stderr.match(/HTTP (\d{3})/)?.[1] ?? "unknown"}`,
     );
-  return JSON.parse(result.stdout);
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    throw new Error(`GitHub returned invalid JSON: ${path}`);
+  }
 }
+
+export function accountAssociation(read: typeof api = api) {
+  const viewer = read("user");
+  if (viewer.login !== "headironc")
+    throw new Error("Independent association read requires the verified owner");
+  const pack = packageRecord(
+    read("users/headironc/packages/container/nucleus-ci"),
+  );
+  if (pack.view !== "object")
+    throw new Error("Independent account package association is unavailable");
+  return {
+    source: "independent-account",
+    observedAt: new Date().toISOString(),
+    operator: viewer.login,
+    package: pack.package,
+  };
+}
+
 export function platform() {
   const base = `repos/${selected.repository}`;
   const repository = api(base);
@@ -176,7 +277,7 @@ export function platform() {
   const artifact = api(`${base}/actions/artifacts/${selected.artifact}`);
   const pkg = api("users/headironc/packages/container/nucleus-ci");
   const comparison = api(`${base}/compare/${selected.source}...dev`);
-  const packageRepositoryView = assertPlatform(
+  const receipt = assertPlatform(
     repository,
     run,
     jobPages.flatMap((page) => page.jobs),
@@ -184,16 +285,10 @@ export function platform() {
     pkg,
     comparison,
   );
-  console.log(`Package repository metadata view: ${packageRepositoryView}`);
-  return {
-    repository,
-    run,
-    jobs: jobPages.flatMap((page) => page.jobs),
-    artifact,
-    package: pkg,
-    packageRepositoryView,
-    comparison,
-  };
+  console.log(
+    `Package repository metadata view: ${receipt.packageRepositoryView}`,
+  );
+  return receipt;
 }
 
 export async function frozen(directory: string) {
@@ -339,8 +434,13 @@ export function remoteState(result: Inspection): "absent" | "same" {
 export async function publish(
   inspect: () => Promise<Inspection>,
   copy: () => Promise<void>,
+  allowCopy = true,
 ) {
   if (remoteState(await inspect()) === "same") return { publication: "reused" };
+  if (!allowCopy)
+    throw new Error(
+      "Published version is absent; reuse-only verification forbids another copy",
+    );
   let failed = false;
   try {
     await copy();

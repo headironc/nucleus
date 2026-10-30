@@ -104,8 +104,8 @@ jobs:
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/accepted-artifact
           digest-mismatch: error
-      - name: Publish original bytes once and read back immutable identity
-        run: bun .github/halo-publish/registry.ts publish "$RUNNER_TEMP/accepted-artifact"
+      - name: Reuse the published bytes and read back immutable identity
+        run: bun .github/halo-publish/registry.ts reuse "$RUNNER_TEMP/accepted-artifact"
       - name: Remove job registry credentials
         if: always()
         run: |
