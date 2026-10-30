@@ -287,6 +287,7 @@ test.each([
   "tools/check-halo-test.test.ts",
   "tools/new-tool.ts",
   "unknown.txt",
+  "client/protocol/response.ts",
   "docs/input.json",
   "design/assets/client.ts",
   "design/package.json",

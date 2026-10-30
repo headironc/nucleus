@@ -1,7 +1,7 @@
 import contracts from "./generated/contracts.js";
 import * as validators from "./generated/validators.cjs";
+import { acceptedJson, type Contract } from "../../../client/protocol/response";
 
-type Contract = { validator: string; codes: string[] };
 export const registry = validators as unknown as Record<
   string,
   (value: unknown) => boolean
@@ -14,21 +14,14 @@ export async function decode(
   const contract = (contracts[endpoint] as Record<string, Contract>)[
     response.status
   ];
-  if (
-    !contract ||
-    response.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !==
-      "application/json"
-  ) {
+  if (!contract || response.headers.get("content-type")?.split(";")[0].trim().toLowerCase() !== "application/json") {
     return undefined;
   }
   try {
     const value: unknown = await response.json();
     if (
-      !registry[contract.validator](value) ||
-      !value ||
-      typeof value !== "object" ||
-      !("code" in value) ||
-      !contract.codes.includes(String(value.code))
+      !acceptedJson(response.status, response.headers.get("content-type"), value,
+        contracts[endpoint] as Record<string, Contract>, registry)
     )
       return undefined;
     return value;
