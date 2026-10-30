@@ -66,21 +66,26 @@ pub enum Status {
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
-#[serde(
-    tag = "status",
-    rename_all = "snake_case",
-    rename_all_fields = "camelCase"
-)]
+#[serde(tag = "status", rename_all = "snake_case")]
 #[schema(as = application::Decision)]
 pub enum Decision {
     Submitted,
     Approved {
+        #[serde(rename = "reviewerId")]
         reviewer_id: person::Id,
+        #[serde(rename = "reviewerName")]
+        reviewer_name: String,
+        #[serde(rename = "reviewedAt")]
         reviewed_at: DateTime<Utc>,
     },
     Rejected {
+        #[serde(rename = "reviewerId")]
         reviewer_id: person::Id,
+        #[serde(rename = "reviewerName")]
+        reviewer_name: String,
+        #[serde(rename = "reviewedAt")]
         reviewed_at: DateTime<Utc>,
+        #[serde(rename = "rejectionReason")]
         rejection_reason: Reason,
     },
 }
@@ -113,7 +118,7 @@ impl TryFrom<String> for Reason {
 #[serde(tag = "decision", rename_all = "snake_case", deny_unknown_fields)]
 #[schema(as = application::ReviewInput)]
 pub enum ReviewInput {
-    Approve,
+    Approve {},
     Reject { reason: Reason },
 }
 

@@ -1,5 +1,6 @@
 //! Fixed SQL and decoding for the application owner's actual projections.
 
+use chrono::{DateTime, Utc};
 use tokio_postgres::{Client, Row};
 
 use crate::{
@@ -105,30 +106,36 @@ impl TryFrom<Row> for Summary {
     }
 }
 
-impl TryFrom<Row> for Application {
+impl TryFrom<(Row, Option<person::revision::Identity>)> for Application {
     type Error = Error;
-    fn try_from(row: Row) -> Result<Self, Error> {
+    fn try_from((row, identity): (Row, Option<person::revision::Identity>)) -> Result<Self, Error> {
         let snapshot = serde_json::from_str(row.try_get::<_, &str>("snapshot")?)?;
         let photo = Photo::try_from(&row)?;
         let reviewer = row.try_get("reviewer_id")?;
         let reviewed = row.try_get("reviewed_at")?;
         let reason: Option<String> = row.try_get("rejection_reason")?;
         let summary = Summary::try_from(row)?;
-        let decision = match (summary.status, reviewer, reviewed, reason) {
-            (Status::Submitted, None, None, None) => Decision::Submitted,
-            (Status::Approved, Some(reviewer_id), Some(reviewed_at), None)
-                if reviewed_at >= summary.submitted_at =>
+        let decision = match (summary.status, reviewer, reviewed, reason, identity) {
+            (Status::Submitted, None, None, None, None) => Decision::Submitted,
+            (Status::Approved, Some(reviewer_id), Some(reviewed_at), None, Some(identity))
+                if reviewed_at >= summary.submitted_at && identity.person_id() == reviewer_id =>
             {
                 Decision::Approved {
                     reviewer_id,
+                    reviewer_name: identity.name().to_owned(),
                     reviewed_at,
                 }
             }
-            (Status::Rejected, Some(reviewer_id), Some(reviewed_at), Some(reason))
-                if reviewed_at >= summary.submitted_at =>
-            {
+            (
+                Status::Rejected,
+                Some(reviewer_id),
+                Some(reviewed_at),
+                Some(reason),
+                Some(identity),
+            ) if reviewed_at >= summary.submitted_at && identity.person_id() == reviewer_id => {
                 Decision::Rejected {
                     reviewer_id,
+                    reviewer_name: identity.name().to_owned(),
                     reviewed_at,
                     rejection_reason: reason.try_into().map_err(|_| Error::Configuration)?,
                 }
@@ -146,6 +153,25 @@ impl TryFrom<Row> for Application {
     }
 }
 
+async fn application(
+    client: &Client,
+    row: Row,
+    persons: &person::Reader,
+    now: DateTime<Utc>,
+) -> Result<Application, Error> {
+    let reviewer: Option<person::Id> = row.try_get("reviewer_id")?;
+    let identity = match reviewer {
+        Some(id) => Some(
+            persons
+                .find_identity(client, id, now)
+                .await?
+                .ok_or(Error::Configuration)?,
+        ),
+        None => None,
+    };
+    (row, identity).try_into()
+}
+
 pub(super) async fn submit(
     client: &Client,
     person: person::Id,
@@ -156,10 +182,7 @@ pub(super) async fn submit(
     let snapshot = serde_json::to_string(&snapshot)?;
     client.execute("INSERT INTO workforce.applications (id,person_id,kind,snapshot) VALUES ($1,$2,$3,$4::text::jsonb)", &[&id,&person,&kind(kind_value),&snapshot]).await?;
     client.execute("INSERT INTO audit.events (actor_id,action,target_type,target_id,details) VALUES ($1,'workforce.application.submitted','workforce.application',$2,'{}'::jsonb)", &[&person,&id]).await?;
-    match detail(client, person, true, id).await? {
-        Detail::Full { application } => Ok(*application),
-        _ => Err(Error::Configuration),
-    }
+    (application_row(client, id).await?, None).try_into()
 }
 
 pub(super) async fn list(
@@ -167,6 +190,8 @@ pub(super) async fn list(
     person: person::Id,
     active: bool,
     pagination: Pagination,
+    persons: &person::Reader,
+    now: DateTime<Utc>,
 ) -> Result<List, Error> {
     let count = client
         .query_one(
@@ -177,12 +202,13 @@ pub(super) async fn list(
         .try_get(0)?;
     if active {
         let rows = client.query("SELECT application.id,application.kind,application.status,application.submitted_at,application.reviewer_id,application.reviewed_at,application.rejection_reason,application.snapshot::text,photo.id AS photo_id,photo.resource_id,photo.width,photo.height FROM workforce.applications application JOIN workforce.photos photo ON photo.id=application.photo_id WHERE application.person_id=$1 ORDER BY application.submitted_at DESC,application.id DESC LIMIT $2 OFFSET $3", &[&person,&pagination.size(),&pagination.offset()]).await?;
+        let mut applications = Vec::with_capacity(rows.len());
+        for row in rows {
+            applications.push(application(client, row, persons, now).await?);
+        }
         Ok(List::Full {
             count,
-            applications: rows
-                .into_iter()
-                .map(Application::try_from)
-                .collect::<Result<_, _>>()?,
+            applications,
         })
     } else {
         let rows = client.query("SELECT id,kind,status,submitted_at FROM workforce.applications WHERE person_id=$1 AND status IN ('submitted','approved') ORDER BY submitted_at DESC,id DESC LIMIT $2 OFFSET $3", &[&person,&pagination.size(),&pagination.offset()]).await?;
@@ -201,11 +227,13 @@ pub(super) async fn detail(
     person: person::Id,
     active: bool,
     id: Id,
+    persons: &person::Reader,
+    now: DateTime<Utc>,
 ) -> Result<Detail, Error> {
     if active {
         let row = client.query_opt("SELECT application.id,application.kind,application.status,application.submitted_at,application.reviewer_id,application.reviewed_at,application.rejection_reason,application.snapshot::text,photo.id AS photo_id,photo.resource_id,photo.width,photo.height FROM workforce.applications application JOIN workforce.photos photo ON photo.id=application.photo_id WHERE application.person_id=$1 AND application.id=$2", &[&person,&id]).await?.ok_or(Error::TargetUnavailable)?;
         Ok(Detail::Full {
-            application: Box::new(row.try_into()?),
+            application: Box::new(application(client, row, persons, now).await?),
         })
     } else {
         let row = client.query_opt("SELECT id,kind,status,submitted_at FROM workforce.applications WHERE person_id=$1 AND id=$2 AND status IN ('submitted','approved')", &[&person,&id]).await?.ok_or(Error::TargetUnavailable)?;
@@ -277,9 +305,18 @@ pub(super) async fn owner(client: &Client, id: Id) -> Result<person::Id, Error> 
         .map_err(Error::from)
 }
 
-pub(super) async fn managed_application(client: &Client, id: Id) -> Result<Application, Error> {
+async fn application_row(client: &Client, id: Id) -> Result<Row, Error> {
     let row = client.query_opt("SELECT application.id,application.kind,application.status,application.submitted_at,application.reviewer_id,application.reviewed_at,application.rejection_reason,application.snapshot::text,photo.id AS photo_id,photo.resource_id,photo.width,photo.height FROM workforce.applications application JOIN workforce.photos photo ON photo.id=application.photo_id WHERE application.id=$1", &[&id]).await?.ok_or(Error::TargetUnavailable)?;
-    row.try_into()
+    Ok(row)
+}
+
+pub(super) async fn managed_application(
+    client: &Client,
+    id: Id,
+    persons: &person::Reader,
+    now: DateTime<Utc>,
+) -> Result<Application, Error> {
+    application(client, application_row(client, id).await?, persons, now).await
 }
 
 pub(super) async fn current_directory(
@@ -350,9 +387,11 @@ pub(super) async fn review(
     id: Id,
     reviewer: person::Id,
     input: super::ReviewInput,
+    persons: &person::Reader,
+    now: DateTime<Utc>,
 ) -> Result<Application, Error> {
     let (status, reason) = match input {
-        super::ReviewInput::Approve => ("approved", None),
+        super::ReviewInput::Approve {} => ("approved", None),
         super::ReviewInput::Reject { reason } => ("rejected", Some(reason)),
     };
     let changed = client.execute("UPDATE workforce.applications SET status=$2,reviewer_id=$3,reviewed_at=statement_timestamp(),rejection_reason=$4 WHERE id=$1 AND status='submitted'", &[&id,&status,&reviewer,&reason]).await?;
@@ -360,5 +399,5 @@ pub(super) async fn review(
         return Err(Error::StateChanged);
     }
     client.execute("INSERT INTO audit.events (actor_id,occurred_at,action,target_type,target_id,details) SELECT reviewer_id,reviewed_at,'workforce.application.' || status,'workforce.application',id,jsonb_build_object('previousStatus','submitted','status',status,'rejectionReason',rejection_reason) FROM workforce.applications WHERE id=$1", &[&id]).await?;
-    managed_application(client, id).await
+    managed_application(client, id, persons, now).await
 }

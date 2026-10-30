@@ -86,21 +86,13 @@ impl Service {
             budget.run(client, self.app.anchors(), |view| async move {
                 let read = Read::Snapshot(view);
                 let (_, now) = Box::pin(self.manager(client, actor, read)).await?;
-                let application = database::managed_application(client, id).await?;
+                let persons = self.persons.with_read(read);
+                let application = database::managed_application(client, id, &persons, now).await?;
                 let person = database::owner(client, id).await?;
-                let state = person::state::find(
-                    client,
-                    self.app.keys(),
-                    self.app.anchors(),
-                    read,
-                    person,
-                    now,
-                )
-                .await?
-                .ok_or(Error::Configuration)?;
-                let profile = person::revision::fetch(client, self.app.keys(), state.revision_id())
-                    .await
-                    .map_err(person::revision::ReadError::from)?;
+                let profile = persons
+                    .profile(client, person, now)
+                    .await?
+                    .ok_or(Error::Configuration)?;
                 let (account_active, participation_active) =
                     Box::pin(self.applicant(client, person, read, now)).await?;
                 let number = self.numbers.current_in(client, person, now, read).await?;
@@ -156,14 +148,22 @@ impl Service {
                 member::lock_current(client, account).await?;
             }
             let (reviewer, now) = Box::pin(self.manager(client, actor, Read::Shared)).await?;
-            if matches!(input, ReviewInput::Approve) {
+            if matches!(input, ReviewInput::Approve {}) {
                 let (account, participation) =
                     Box::pin(self.applicant(client, target, Read::Shared, now)).await?;
                 if !account || !participation {
                     return Err(Error::ApplicantUnavailable);
                 }
             }
-            database::review(client, id, reviewer, input).await
+            database::review(
+                client,
+                id,
+                reviewer,
+                input,
+                &self.persons.with_read(Read::Shared),
+                now,
+            )
+            .await
         }
         .await;
         finish(self, lease, result, true).await

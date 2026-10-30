@@ -86,7 +86,7 @@ JSON 中的科室、职务、职称、照片、背景和字体引用使用数据
 
 本人列表使用[共同分页](../http/lists.md)，按 `submittedAt DESC, id DESC` 排序。正常账户及活跃 Grant 返回 `{code: "ok", access: "full", count, applications}`；每项含 `id`、`kind`、`status`、`submittedAt`、`snapshot` 和 `photo`。当前没有工号仍可读完整历史。Grant 暂停或结束时返回 `access: "restricted"`，只列未发放可取消申请，每项恰为 `{id, kind, status, submittedAt}`，没有快照和照片。详情采用同一 `access` 区分，单项位于 `application`。他人或不可披露目标统一为 `404 target_unavailable`；失效会话或账户为 `401 authentication_invalid`。
 
-完整申请的 `approved` 状态另含稳定 `reviewerId` 和数据库时间 `reviewedAt`；`rejected` 再含非空 `rejectionReason`。`submitted` 不含审核字段。受限列表的条目、详情和 `count` 使用同一可取消状态范围，不计入或披露驳回记录及审核字段。
+完整申请的 `approved` 状态另含稳定 `reviewerId`、当前脱敏姓名 `reviewerName` 和数据库时间 `reviewedAt`；`rejected` 再含非空 `rejectionReason`。姓名从当前受保护人员资料读取，审核人账户失效或注销后仍可读取；姓名更正不改写原审核事实。数据库不另存审核姓名或实名版本。`submitted` 不含审核字段。受限列表的条目、详情和 `count` 使用同一可取消状态范围，不计入或披露驳回记录及审核字段。
 
 管理入口要求当前正常账户、活跃参与资格和 `workforce.approval`，按全单位范围读取。当前角色的数字等级不参与工牌对象判断，也不从自选科室推导范围。管理列表使用相同分页与排序，`status` 可选 `submitted`、`approved` 或 `rejected`，省略为 `submitted`。返回 `{code: "ok", count, applications}`，每项为四字段摘要加固定 `name`、`printedNumber`、`department`；不提供手机号或证件号搜索。
 

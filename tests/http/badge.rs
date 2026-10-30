@@ -64,7 +64,8 @@ fn fixed_badges_use_trusted_preview_and_private_resources_without_request_dedupl
             let post=|path:&str,actor:&(String,String)|request(reqwest::Method::POST,path,actor,true);
             let get=|path:&str,actor:&(String,String)|request(reqwest::Method::GET,path,actor,true);
             let role=post("/api/v1/workforce/roles",&institution).json(&json!({"entry":"institution","name":"Badge office","level":100,"permissions":["workforce.directory"]})).send().await.expect("role").json::<Value>().await.expect("role")["role"].clone();
-            for mobile in ["13800138000","13700000000"] {
+            let approval_role=post("/api/v1/workforce/roles",&institution).json(&json!({"entry":"institution","name":"Badge approvals","level":100,"permissions":["workforce.directory","workforce.approval"]})).send().await.expect("approval role").json::<Value>().await.expect("role")["role"].clone();
+            for (mobile,role) in [("13800138000",&approval_role),("13700000000",&role)] {
                 let candidate=post("/api/v1/workforce/grants/candidates",&institution).json(&json!({"entry":"institution","mobile":mobile})).send().await.expect("candidate").json::<Value>().await.expect("candidate");
                 let admitted=post("/api/v1/workforce/grants",&institution).json(&json!({"entry":"institution","target":{"accountId":candidate["identity"]["accountId"],"personId":candidate["identity"]["personId"],"revisionId":candidate["identity"]["revisionId"],"mobile":mobile,"assignmentId":candidate["assignmentId"],"suspensionId":candidate["suspensionId"],"grant":candidate["grant"]},"role":{"id":role["id"],"changeId":role["changeId"]}})).send().await.expect("admission");
                 assert_eq!(admitted.status(),201);
@@ -176,6 +177,7 @@ fn fixed_badges_use_trusted_preview_and_private_resources_without_request_dedupl
             let approved=approved.json::<Value>().await.expect("approved application");
             assert_eq!(approved["application"]["status"],"approved");
             assert!(approved["application"]["reviewerId"].is_string());
+            assert_eq!(approved["application"]["reviewerName"],"F*");
             assert!(approved["application"]["reviewedAt"].is_string());
             assert!(approved["application"].get("rejectionReason").is_none());
             assert_eq!(approved["application"]["snapshot"],preview["snapshot"]);
@@ -216,6 +218,18 @@ fn fixed_badges_use_trusted_preview_and_private_resources_without_request_dedupl
                 assert_eq!(denied.json::<Value>().await.expect("safe origin refusal"),json!({"code":"permission_denied"}));
             }
             let schema=client.get(format!("{base}/openapi/v1.json")).send().await.expect("schema").json::<Value>().await.expect("OpenAPI");
+            let variants=schema["components"]["schemas"]["application.Decision"]["oneOf"].as_array().expect("decision schemas");
+            for (response, mut fields) in [(&approved,vec!["status","reviewerId","reviewerName","reviewedAt"]),(&rejected,vec!["status","reviewerId","reviewerName","reviewedAt","rejectionReason"])] {
+                let actual=&response["application"];
+                let variant=variants.iter().find(|variant|variant["properties"]["status"]["const"]==actual["status"] || variant["properties"]["status"]["enum"].as_array().is_some_and(|values|values.contains(&actual["status"]))).expect("schema for actual decision");
+                let mut required=variant["required"].as_array().expect("required decision fields").iter().map(|value|value.as_str().expect("field")).collect::<Vec<_>>();
+                required.sort_unstable();fields.sort_unstable();assert_eq!(required,fields);
+                for field in fields {assert!(actual.get(field).is_some(),"actual response must satisfy declared field {field}");assert!(variant["properties"].get(field).is_some());}
+                for field in ["reviewer_id","reviewed_at","rejection_reason"] {assert!(variant["properties"].get(field).is_none());assert!(actual.get(field).is_none());}
+            }
+            if let Some(path)=std::env::var_os("NUCLEUS_BADGE_SCHEMA_EXPORT") {
+                std::fs::write(path,serde_json::to_vec(&json!({"schema":schema,"submitted":detail["application"],"approved":approved["application"],"rejected":rejected["application"]})).expect("real schema and response JSON")).expect("export actual HTTP schema evidence");
+            }
             for path in ["/api/v1/workforce/applications/preview","/api/v1/workforce/applications"] {
                 assert_eq!(schema["paths"][path]["post"]["responses"]["404"]["description"],"target_unavailable");
             }
