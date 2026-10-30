@@ -410,10 +410,24 @@ for (const [name, change] of Object.entries({
     );
   },
   "null without receipt": (f: Awaited<ReturnType<typeof fixture>>) => {
+    const summary = f.api.f.comments.find((c) => c.id === 201);
+    summary.body = summary.body.replace(
+      /"security_review":\{"commit_sha":"[a-f0-9]{40}","has_any_findings":false,"has_unresolved_findings":false/,
+      `"security_review":{"commit_sha":"${b.head}","has_any_findings":null,"has_unresolved_findings":null`,
+    );
     f.api.f.comments = f.api.f.comments.filter((c) => c.id !== 203);
   },
-  "receipt predates capture": (f: Awaited<ReturnType<typeof fixture>>) => {
-    f.api.f.comments.find((c) => c.id === 203).created_at = at("13:09:59");
+  "null security even with a receipt after capture": (
+    f: Awaited<ReturnType<typeof fixture>>,
+  ) => {
+    const summary = f.api.f.comments.find((c) => c.id === 201);
+    summary.body = summary.body.replace(
+      /"security_review":\{"commit_sha":"[a-f0-9]{40}","has_any_findings":false,"has_unresolved_findings":false/,
+      `"security_review":{"commit_sha":"${b.head}","has_any_findings":null,"has_unresolved_findings":null`,
+    );
+    const other = { ...b, head: `${b.head.slice(0, 10)}${"f".repeat(30)}` };
+    f.api.f.comments.find((c) => c.id === 203).body =
+      providerFixture(other).comments[4].body;
   },
   "new finding": (f: Awaited<ReturnType<typeof fixture>>) => {
     const c = f.api.f.comments.find((c) => c.id === 201);

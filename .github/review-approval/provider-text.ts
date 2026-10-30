@@ -57,7 +57,7 @@ Once complete, Codex will leave suggestions, or a comment if no findings are fou
 
 export function codexReceipt(
   body: unknown,
-): { kind: "code" | "security"; head: string } | null {
+): { kind: "code" | "security" } | null {
   if (typeof body !== "string") return null;
   const heads = [
     ...body.matchAll(/\*\*Reviewed commit:\*\* `([a-f0-9]{10})`/g),
@@ -65,7 +65,9 @@ export function codexReceipt(
   if (heads.length !== 1) return null;
   const head = heads[0][1];
   const code = `<!-- codex-review-receipt:v1 -->\n\nCodex Review: Didn't find any major issues. Keep it up!\n\n**Reviewed commit:** \`${head}\`\n\n${codeAbout}`;
-  if (body === code) return { kind: "code", head };
+  // Recognize the complete informational layout, without exposing the short
+  // prefix as a candidate identity or a no-findings authorization result.
+  if (body === code) return { kind: "code" };
   const tasks = [
     ...body.matchAll(
       /https:\/\/chatgpt\.com\/codex\/cloud\/tasks\/(task_e_[a-f0-9]{32})/g,
@@ -73,7 +75,7 @@ export function codexReceipt(
   ];
   if (tasks.length !== 1) return null;
   const security = `<!-- codex-review-receipt:v1 -->\n\n### 🛡️ Codex Security Review · _Automatically triggered_\n\nSecurity review completed. No security issues were found in this pull request.\n\n**Reviewed commit:** \`${head}\`\n\n[View security finding report](https://chatgpt.com/codex/cloud/tasks/${tasks[0][1]})\n\n_Only the user who started this review can view the report in Codex._\n\n${securityAbout}`;
-  return body === security ? { kind: "security", head } : null;
+  return body === security ? { kind: "security" } : null;
 }
 
 export function cubicReport(body: unknown, b: Binding): boolean {

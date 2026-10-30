@@ -43,7 +43,13 @@ export function providerFixture(binding = b) {
       performed_via_github_app: { id: 1144995 },
       created_at: at("13:05:00"),
       updated_at: at("13:09:08"),
+      // The observed layout has null security flags. Positive combinations
+      // synthesize an explicit full-head disposition; null is tested separately.
       body: bodies.summary
+        .replaceAll(
+          '"has_any_findings":null,"has_unresolved_findings":null',
+          '"has_any_findings":false,"has_unresolved_findings":false',
+        )
         .replaceAll("1".repeat(40), binding.head)
         .replaceAll("`1111111`", `\`${binding.head.slice(0, 7)}\``)
         .replaceAll(

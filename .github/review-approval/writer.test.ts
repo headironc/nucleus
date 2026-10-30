@@ -190,6 +190,28 @@ test("executor changes block both writer and dedicated withdrawal before token c
   expect(f.api.posts).toBe(0);
   expect(f.api.puts).toEqual([]);
 });
+for (const operation of ["prepare", "approve"])
+  test(`null security with a trusted abbreviated receipt blocks ${operation} before mint`, async () => {
+    const f = await fixture();
+    const summary = f.api.f.comments.find((c) => c.id === 201);
+    summary.body = summary.body.replace(
+      /"security_review":\{"commit_sha":"[a-f0-9]{40}","has_any_findings":false,"has_unresolved_findings":false/,
+      `"security_review":{"commit_sha":"${b.head}","has_any_findings":null,"has_unresolved_findings":null`,
+    );
+    const result =
+      operation === "prepare"
+        ? prepareIntent(f.api, b.pr, b.base, {}, 700, 1, f.controls.invalidate)
+        : approveCandidate(f.api, f.planned, b.base, {}, f.controls);
+    await expect(result).rejects.toThrow("unknown for the full head");
+    expect(f.counts()).toEqual({
+      invalidation: true,
+      minted: 0,
+      revoked: 0,
+      persisted: operation === "approve" ? 1 : 0,
+    });
+    expect(f.api.posts).toBe(0);
+    expect(f.api.puts).toEqual([]);
+  });
 for (const field of ["head", "merge"])
   test(`trusted ${field} drift invalidates evidence before mint and withdraws only prior App approval`, async () => {
     const f = await fixture();

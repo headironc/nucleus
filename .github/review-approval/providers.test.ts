@@ -74,12 +74,63 @@ for (const quota of [false, true])
       });
   }
 
-test("observed completed shapes plus synthetic bound requests accept null security only with explicit receipt", () => {
+test("synthetic explicit full-head dispositions accept without standalone receipts", () => {
   const f = providerFixture();
+  f.comments = f.comments.filter((c) => c.id !== 202 && c.id !== 203);
   expect(verifyProviders(b, f.comments, f.reviews, f.checks).results).toEqual([
-    401, 301, 201, 203,
+    401, 301, 201,
   ]);
 });
+for (const quota of [false, true])
+  test(`full-head disposition ignores known abbreviated receipts from another head, quota=${quota}`, () => {
+    const f = providerFixture();
+    const selection = quota
+      ? ({ request: 101, head: b.head, base: b.base } as QuotaEvidence)
+      : undefined;
+    const results = verifyProviders(
+      b,
+      f.comments,
+      f.reviews,
+      f.checks,
+      selection,
+    ).results;
+    f.comments[4] = providerFixture({ ...b, head: "f".repeat(40) }).comments[4];
+    expect(
+      verifyProviders(b, f.comments, f.reviews, f.checks, selection).results,
+    ).toEqual(results);
+    const other = `${b.head.slice(0, 10)}${"e".repeat(30)}`;
+    f.comments[2].body = f.comments[2].body.replace(
+      `"security_review":{"commit_sha":"${b.head}"`,
+      `"security_review":{"commit_sha":"${other}"`,
+    );
+    expect(() =>
+      verifyProviders(b, f.comments, f.reviews, f.checks, selection),
+    ).toThrow("full-head completion");
+  });
+for (const quota of [false, true])
+  for (const receipt of [false, true])
+    test(`null security cannot borrow a colliding-prefix receipt, quota=${quota}, receipt=${receipt}`, () => {
+      const other = { ...b, head: `${b.head.slice(0, 10)}${"f".repeat(30)}` };
+      expect(other.head).not.toBe(b.head);
+      const f = providerFixture();
+      f.comments[2].body = laneFlags(
+        f.comments[2].body,
+        "security_review",
+        null,
+      );
+      f.comments = f.comments.filter((c) => c.id !== 203);
+      if (receipt) {
+        const otherReceipt = providerFixture(other).comments[4];
+        expect(otherReceipt.body).toBe(providerFixture().comments[4].body);
+        f.comments.push(otherReceipt);
+      }
+      const selection = quota
+        ? ({ request: 101, head: b.head, base: b.base } as QuotaEvidence)
+        : undefined;
+      expect(() =>
+        verifyProviders(b, f.comments, f.reviews, f.checks, selection),
+      ).toThrow("unknown for the full head");
+    });
 for (const [label, change] of Object.entries({
   "forged owner login": (f: any) => {
     f.comments[0].user = { ...f.comments[0].user, id: 1 };
@@ -118,21 +169,14 @@ for (const [label, change] of Object.entries({
     f.reviews[0].body = "**No issues found** across 41 files";
   },
   "Codex null without receipt": (f: any) => {
+    f.comments[2].body = laneFlags(f.comments[2].body, "security_review", null);
     f.comments.pop();
   },
   "forged Codex receipt App": (f: any) => {
     f.comments.at(-1).performed_via_github_app.id = 1;
   },
-  "Codex receipt wrong abbreviated head": (f: any) => {
-    f.comments.at(-1).body = f.comments
-      .at(-1)
-      .body.replace(b.head.slice(0, 10), "0000000000");
-  },
   "unknown security flags": (f: any) => {
-    f.comments[2].body = f.comments[2].body.replace(
-      '"has_unresolved_findings":null',
-      '"has_unresolved_findings":true',
-    );
+    f.comments[2].body = laneFlags(f.comments[2].body, "security_review", null);
   },
   "P0 threshold cannot hide unresolved findings": (f: any) => {
     f.comments[2].body = f.comments[2].body.replace(

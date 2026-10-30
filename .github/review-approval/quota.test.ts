@@ -155,7 +155,7 @@ test("trusted cross-PR quota selection uses complete Codex code/security without
   const { api } = await fixture();
   const result = await snapshot(api, b.pr, now);
   expect(result.evidence.providers.cubic).toBe("quota-unavailable");
-  expect(result.evidence.providers.results).toEqual([201, 203]);
+  expect(result.evidence.providers.results).toEqual([201]);
   expect(result.evidence.providers.quota?.selection.check).toBe(601);
   expect(api.f.comments.some((c) => c.body === requestBodies(b)[0])).toBe(
     false,
@@ -447,9 +447,14 @@ test("quota does not hide earlier unresolved threadless Cubic findings or incomp
   });
   await expect(snapshot(f.api, b.pr, now)).rejects.toThrow("cannot erase");
   f.api.f.reviews = [];
+  const summary = f.api.f.comments.find((c) => c.id === 201);
+  summary.body = summary.body.replace(
+    /"security_review":\{"commit_sha":"[a-f0-9]{40}","has_any_findings":false,"has_unresolved_findings":false/,
+    `"security_review":{"commit_sha":"${b.head}","has_any_findings":null,"has_unresolved_findings":null`,
+  );
   f.api.f.comments = f.api.f.comments.filter((c) => c.id !== 203);
   await expect(snapshot(f.api, b.pr, now)).rejects.toThrow(
-    "security no-findings receipt",
+    "unknown for the full head",
   );
 });
 test("quota disposition follows each finding and never hides same-time or later reports", async () => {

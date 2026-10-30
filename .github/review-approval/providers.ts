@@ -404,38 +404,13 @@ export function verifyProviders(
       );
     }
   }
-  let securityReceipt: Record | undefined;
-  if (
-    securityState.has_any_findings === null &&
-    securityState.has_unresolved_findings === null
-  ) {
-    securityReceipt = latest(
-      comments.filter(
-        (c) =>
-          bot(c, codex) &&
-          time(c.created_at) > time(securityRequest.created_at) &&
-          codexReceipt(c.body)?.kind === "security" &&
-          codexReceipt(c.body)?.head === b.head.slice(0, 10),
-      ),
-      "explicit Codex security no-findings receipt",
-    );
-    requireThat(
-      summary.id !== securityReceipt.id,
-      "Security receipt must be independent of null summary",
-    );
-    if (starts.security)
-      requireThat(
-        time(securityReceipt.created_at) >=
-          time(starts.security.proof.capturedAt),
-        "Security receipt predates the observed running lane",
-      );
-  } else {
-    requireThat(
-      typeof securityState.has_any_findings === "boolean" &&
-        securityState.has_unresolved_findings === false,
-      "Codex security findings unresolved or unknown",
-    );
-  }
+  // Observed standalone receipts expose only a 10-hex prefix. Neither their
+  // timestamp nor a separate full-head summary binds that receipt to this H.
+  requireThat(
+    typeof securityState.has_any_findings === "boolean" &&
+      securityState.has_unresolved_findings === false,
+    "Codex security findings unresolved or unknown for the full head",
+  );
   for (const c of comments.filter(
     (c) => c.user?.id === cubic.bot || c.user?.id === codex.bot,
   )) {
@@ -493,11 +468,7 @@ export function verifyProviders(
     requests: [cubicRequest, codeRequest, securityRequest].flatMap((c) =>
       c ? [{ id: c.id, createdAt: c.created_at }] : [],
     ),
-    results: [
-      ...cubicIds,
-      summary.id,
-      ...(securityReceipt ? [securityReceipt.id] : []),
-    ],
+    results: [...cubicIds, summary.id],
     findings: [...reviews, ...comments]
       .filter((c) => c.user?.id === cubic.bot || c.user?.id === codex.bot)
       .map((c) => c.id),

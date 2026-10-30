@@ -34,7 +34,7 @@ Codex 可能持续更新同一条 summary。容器创建时间早于本轮请求
 
 批准时通过 `code_start_artifact`、`security_start_artifact` 显式选择最多两个 artifact ID；两者允许相同。不扫描历史 artifact 寻找可通过的结果。消费者核对仓库、固定名称、digest、未过期状态和唯一上传。producer 核验覆盖 owner/triggering actor、workflow 路径和 dispatch 事件，也覆盖 `dev`、当前 `B` 和准确 run/attempt。捕获和上传步骤、作业、Actions App/suite 均须成功。失败、取消、旧 attempt、缺少 lane 或原件均拒绝，不回退旧证据。
 
-消费者通过已有有界 ZIP 读取器读取唯一 JSON 文件，再重新解析原始 running 正文。终态须来自同一 summary ID/node ID 和可信 App/bot，绑定同一完整 `H`。完成时间晚于该 lane 的启动且不早于捕获。请求、`H/B`、身份、summary 或时间发生矛盾均拒绝。安全标志为 null 时，独立安全回执还须不早于捕获。最终发现处置、未知正文、线程和 CI 继续单独核验。snapshot digest 与 operation intent 保存 artifact 身份、digest 和完整原件。后续读取保持同一显式选择。
+消费者通过已有有界 ZIP 读取器读取唯一 JSON 文件，再重新解析原始 running 正文。终态须来自同一 summary ID/node ID 和可信 App/bot，绑定同一完整 `H`。完成时间晚于该 lane 的启动且不早于捕获。请求、`H/B`、身份、summary 或时间发生矛盾均拒绝。启动观察不能把未知的安全终态变成通过。最终发现处置、未知正文、线程和 CI 继续单独核验。snapshot digest 与 operation intent 保存 artifact 身份、digest 和完整原件。后续读取保持同一显式选择。
 
 该路径证明“请求后观察到同 PR、完整 head 的最新摘要正在运行，随后同一摘要报告完成”。供应商未暴露独立运行 ID 或 `B`；本合同不把摘要关联称为独立运行证明。首次新建且创建时间晚于请求的 summary 继续使用原路径。新的安全请求仍会使旧安全启动证据失效。聊天中的历史投影只用于设计，不能代替受信 producer 捕获的机器原件。
 
@@ -42,7 +42,9 @@ Codex 可能持续更新同一条 summary。容器创建时间早于本轮请求
 
 [适配器](../../.github/review-approval/providers.ts)只解析已识别的供应商结构，不做通用自然语言裁判。Cubic 使用 App `1082092`、bot `191113872` 的真实 check 和 review。核对请求后的开始和完成时间、完整 `H`、唯一 review 及 delivery marker。单独的 `SUCCESS` 无效；merge-only、quota、`NEUTRAL`、未知完成形状和缺失报告都不能证明 Cubic 审查通过。Quota 只按下节的已验证输入选择适用提供方，审计状态保留 `quota-unavailable`。
 
-Codex 使用 App `1144995`、bot `199175422` 的完整状态 marker，分别核对代码和安全审查的完整 `H` 及 completed 状态。代码发现须有明确的 `has_unresolved_findings=false`。安全标志为 `null` 时，只接受独立、身份可信且属于对应请求和摘要的明确无安全问题回执；空内容或 `null` 本身无效。不要求不存在公开入口的私有完整报告，也不把 P0 报告阈值当作其余发现均已处理。
+Codex 使用 App `1144995`、bot `199175422` 的完整状态 marker，分别核对代码和安全审查的完整 `H` 及 completed 状态。两类发现均须有 Boolean 类型的 `has_any_findings` 和明确的 `has_unresolved_findings=false`。安全标志为 `null` 时保持阻塞。
+
+已观察到的独立无发现回执只展示 10 位提交 SHA。两个不同完整提交可有相同前缀；可信 bot、时间顺序、独立 task 链接和另一个完整 `H` 摘要不能把回执绑定到该完整提交。此类回执只作为已识别的说明正文，不进入通过结果，也不消除未知终态。只有取得完整 SHA 或可核实地绑定完整 `H` 的不可变提供方操作身份，并接纳其真实合同后，才可扩展这一路径；目前不推定该能力存在。不要求不存在公开入口的私有完整报告，也不把 P0 报告阈值当作其余发现均已处理。
 
 保留旧轮报告。已有发现须明确处置：Cubic 的旧发现需要明确的 addressed 结论；Codex 按 Code、Security 分别核对旧摘要。旧报告先通过身份、完整布局和时间校验，lane 完成时间不得超过报告的 `updated_at` 边界。当前 lane 的明确未解决发现状态为 false，且完成时间严格晚于旧报告边界，才处置旧未解决或未知结果。另一 lane 导致的摘要更新时间不能代替本 lane 完成时间，安全 null 及独立无发现回执也不能代替明确处置。同刻、晚到及坏时间均拒绝。新一轮 no-findings 不能抹掉旧的未知发现。未知供应商评论、threadless blocker 或无法关联的报告保持阻塞，待适配器有真实样本和接纳后扩展；不凭合成测试推定新供应商格式真实存在。
 
