@@ -11,7 +11,6 @@ import type {
   CurrentAffiliationResult,
   NamedAffiliation,
 } from "../protocol/affiliation";
-import type { MarkerStore } from "./marker";
 
 type Identity =
   | { kind: "identity-loading" }
@@ -38,25 +37,16 @@ export type AffiliationPanel =
   | { kind: "unset" }
   | { kind: "dictionary-error"; retryAt: number; limited: boolean }
   | { kind: "value-dictionary-error"; retryAt: number; limited: boolean }
-  | { kind: "marker-unavailable" }
   | { kind: "form"; choice: AffiliationCode | null }
   | { kind: "confirm"; choice: AffiliationCode }
   | { kind: "submitting"; choice: AffiliationCode }
-  | { kind: "submit-storage"; choice: AffiliationCode; retry: boolean; uncertain: boolean }
-  | { kind: "submit-limited"; choice: AffiliationCode; retryAt: number }
-  | { kind: "submit-conflict"; choice: AffiliationCode }
+  | { kind: "submit-limited"; retryAt: number }
+  | { kind: "submit-conflict" }
   | { kind: "submit-invalid"; choice: AffiliationCode }
-  | { kind: "submit-failed"; choice: AffiliationCode; retryAt: number }
-  | { kind: "submit-mismatch"; choice: AffiliationCode }
+  | { kind: "submit-failed"; retryAt: number }
+  | { kind: "submit-mismatch" }
   | { kind: "success" }
-  | { kind: "unknown"; choice: AffiliationCode; canRetry: true; retryAt: number }
-  | { kind: "unknown"; canRetry: false }
-  | { kind: "retry-submitting"; choice: AffiliationCode }
-  | { kind: "retry-wait"; choice: AffiliationCode; retryAt: number }
-  | { kind: "retry-mismatch"; choice: AffiliationCode }
-  | { kind: "retry-conflict"; choice: AffiliationCode }
-  | { kind: "retry-stopped"; choice: AffiliationCode }
-  | { kind: "current-unset" };
+  | { kind: "unknown"; retryAt: number };
 
 export type AffiliationSnapshot =
   | Identity
@@ -78,17 +68,16 @@ type Dependencies = {
     code: AffiliationCode,
     signal: AbortSignal,
   ): Promise<AffiliationWriteResult>;
-  marker: MarkerStore;
   build(): Promise<boolean>;
   now(): number;
   operation(): string;
 };
 
-type Original = Readonly<{
+type Submission = Readonly<{
   operation: string;
   code: AffiliationCode;
   binding: CurrentBinding;
-}> & { uncertain: boolean; retryAt: number };
+}>;
 
 type ReadTarget = "initial" | "current" | "replace";
 
@@ -115,9 +104,8 @@ function masked(state: CurrentState): Identity {
 }
 
 /**
- * Owns first-affiliation reads, the original PUT, and fail-closed recovery.
- * No political value, choice, digest or operation is written outside this
- * page's memory; only the session-scoped marker survives in sessionStorage.
+ * Owns explicit first writes and independent current-state reads.
+ * Unknown writes discard their input and are never replayed.
  */
 export class Affiliation {
   private state: AffiliationSnapshot = { kind: "identity-loading" };
@@ -128,7 +116,6 @@ export class Affiliation {
   private readRequest?: AbortController;
   private writeRequest?: AbortController;
   private options: readonly NamedAffiliation[] = [];
-  private original?: Original;
   private readTarget: ReadTarget = "initial";
   private readonly unwatch: () => void;
 
@@ -160,7 +147,6 @@ export class Affiliation {
 
   private clearPrivate() {
     this.options = [];
-    this.original = undefined;
   }
 
   private changed = () => {
@@ -222,19 +208,8 @@ export class Affiliation {
     const current = this.dependencies.current;
     const binding = current.binding();
     if (!binding) return;
-    const marker = this.dependencies.marker.read(binding.selection.id);
     this.options = [];
     this.readTarget = "initial";
-    if (marker !== "absent") {
-      // Missing or corrupt material for a possibly sent request never reopens
-      // a fresh form, even when the current record later reads as unset.
-      this.showPanel(
-        marker === "denied"
-          ? { kind: "marker-unavailable" }
-          : { kind: "unknown", canRetry: false },
-      );
-      return;
-    }
     this.showPanel({ kind: "reading" });
     const generation = this.generation;
     const serial = ++this.readSerial;
@@ -247,7 +222,11 @@ export class Affiliation {
       current.matches(binding);
     let retryAt = 0;
     let limited = false;
-    const rememberWait = <T extends CurrentAffiliationResult | AffiliationValuesResult>(result: T): T => {
+    const rememberWait = <
+      T extends CurrentAffiliationResult | AffiliationValuesResult,
+    >(
+      result: T,
+    ): T => {
       if (result.kind === "failure") {
         const wait = this.wait(result);
         retryAt = Math.max(retryAt, wait.retryAt);
@@ -276,8 +255,12 @@ export class Affiliation {
       }
       if (!active() || !(await current.confirm(binding)) || !active()) return;
       const [affiliation, values] = await Promise.all([
-        this.dependencies.read(binding.selection.id, request.signal).then(rememberWait),
-        this.dependencies.values(binding.selection.id, request.signal).then(rememberWait),
+        this.dependencies
+          .read(binding.selection.id, request.signal)
+          .then(rememberWait),
+        this.dependencies
+          .values(binding.selection.id, request.signal)
+          .then(rememberWait),
       ]);
       if (!active()) return;
       if (affiliation.kind === "untrusted" || values.kind === "untrusted") {
@@ -299,7 +282,10 @@ export class Affiliation {
         return;
       }
       if (!(await current.confirm(binding)) || !active()) return;
-      if (affiliation.kind === "failure" || affiliation.kind === "disconnected") {
+      if (
+        affiliation.kind === "failure" ||
+        affiliation.kind === "disconnected"
+      ) {
         this.showPanel({
           kind: "read-error",
           ...combinedWait(),
@@ -308,7 +294,10 @@ export class Affiliation {
       }
       if (values.kind !== "values") {
         this.showPanel({
-          kind: affiliation.kind === "unset" ? "dictionary-error" : "value-dictionary-error",
+          kind:
+            affiliation.kind === "unset"
+              ? "dictionary-error"
+              : "value-dictionary-error",
           ...combinedWait(),
         });
         return;
@@ -328,7 +317,10 @@ export class Affiliation {
               value: affiliation.affiliation,
               name,
             }
-          : { kind: "value-dictionary-error", ...this.wait({ kind: "disconnected" }) },
+          : {
+              kind: "value-dictionary-error",
+              ...this.wait({ kind: "disconnected" }),
+            },
       );
     } catch {
       if (active())
@@ -358,10 +350,7 @@ export class Affiliation {
       serial === this.readSerial &&
       generation === this.generation &&
       current.matches(binding);
-    const finish = (
-      panel: AffiliationPanel,
-      read: AffiliationRead,
-    ) => {
+    const finish = (panel: AffiliationPanel, read: AffiliationRead) => {
       if (target === "replace") this.showPanel(panel);
       else this.showCurrent(read);
     };
@@ -377,10 +366,7 @@ export class Affiliation {
         ),
         limited: false,
       };
-      finish(
-        { kind: "read-error", ...wait },
-        { kind: "error", ...wait },
-      );
+      finish({ kind: "read-error", ...wait }, { kind: "error", ...wait });
     }, 35_000);
     try {
       if (!(await this.dependencies.build().catch(() => false))) {
@@ -388,7 +374,10 @@ export class Affiliation {
         return;
       }
       if (!active() || !(await current.confirm(binding)) || !active()) return;
-      const result = await this.dependencies.read(binding.selection.id, request.signal);
+      const result = await this.dependencies.read(
+        binding.selection.id,
+        request.signal,
+      );
       if (!active() || !(await current.confirm(binding)) || !active()) return;
       if (result.kind === "untrusted") {
         current.reload();
@@ -403,14 +392,11 @@ export class Affiliation {
       }
       if (result.kind === "failure") {
         const wait = this.wait(result);
-        finish(
-          { kind: "read-error", ...wait },
-          { kind: "error", ...wait },
-        );
+        finish({ kind: "read-error", ...wait }, { kind: "error", ...wait });
         return;
       }
       if (result.kind === "unset") {
-        finish({ kind: "current-unset" }, { kind: "unset" });
+        finish({ kind: "unset" }, { kind: "unset" });
         return;
       }
       if (result.kind === "disconnected") {
@@ -421,10 +407,7 @@ export class Affiliation {
           ),
           limited: false,
         };
-        finish(
-          { kind: "read-error", ...wait },
-          { kind: "error", ...wait },
-        );
+        finish({ kind: "read-error", ...wait }, { kind: "error", ...wait });
         return;
       }
       let name = this.options.find(
@@ -463,7 +446,10 @@ export class Affiliation {
       if (!(await current.confirm(binding)) || !active()) return;
       if (!name) {
         finish(
-          { kind: "value-dictionary-error", ...this.wait({ kind: "disconnected" }) },
+          {
+            kind: "value-dictionary-error",
+            ...this.wait({ kind: "disconnected" }),
+          },
           {
             kind: "dictionary-error",
             retryAt: Math.min(
@@ -490,10 +476,7 @@ export class Affiliation {
           ),
           limited: false,
         };
-        finish(
-          { kind: "read-error", ...wait },
-          { kind: "error", ...wait },
-        );
+        finish({ kind: "read-error", ...wait }, { kind: "error", ...wait });
       }
     } finally {
       clearTimeout(timer);
@@ -512,7 +495,14 @@ export class Affiliation {
 
   startForm() {
     if (this.state.kind !== "ready") return;
-    if (this.state.panel.kind !== "unset") return;
+    if (
+      this.state.panel.kind !== "unset" &&
+      !(
+        this.state.panel.kind === "unknown" &&
+        this.state.current.kind === "unset"
+      )
+    )
+      return;
     this.showPanel({ kind: "form", choice: null });
   }
 
@@ -537,13 +527,6 @@ export class Affiliation {
     this.showPanel({ kind: "form", choice: panel.choice });
   }
 
-  reconfirm() {
-    if (this.state.kind !== "ready") return;
-    const panel = this.state.panel;
-    if (panel.kind !== "submit-storage" || panel.retry) return;
-    this.showPanel({ kind: "confirm", choice: panel.choice });
-  }
-
   async submit(): Promise<void> {
     if (this.state.kind !== "ready") return;
     const panel = this.state.panel;
@@ -551,55 +534,16 @@ export class Affiliation {
     const current = this.dependencies.current;
     const binding = current.binding();
     if (!binding) return;
-    const original: Original = {
+    const submission: Submission = {
       operation: this.dependencies.operation(),
       code: panel.choice,
       binding,
-      uncertain: false,
-      retryAt: 0,
     };
-    this.original = original;
-    await this.send(original, false);
+    await this.send(submission);
   }
-
-  async retrySubmit(): Promise<void> {
-    if (this.state.kind !== "ready" || this.writeRequest) return;
-    const panel = this.state.panel;
-    if (
-      ![
-        "submit-limited",
-        "submit-failed",
-        "unknown",
-        "retry-wait",
-        "submit-storage",
-      ].includes(panel.kind)
-    )
-      return;
-    if ("retryAt" in panel && panel.retryAt > this.dependencies.now()) return;
-    if (panel.kind === "unknown" && !panel.canRetry) return;
-    if (panel.kind === "submit-storage" && !panel.retry) return;
-    const original = this.original;
-    if (!original) {
-      this.showPanel({ kind: "unknown", canRetry: false });
-      return;
-    }
-    if (original.retryAt > this.dependencies.now()) return;
+  private async send(submission: Submission): Promise<void> {
     const current = this.dependencies.current;
-    if (!current.matches(original.binding)) {
-      this.original = undefined;
-      this.showPanel({ kind: "unknown", canRetry: false });
-      return;
-    }
-    await this.send(original, true);
-  }
-
-  private async send(original: Original, retry: boolean): Promise<void> {
-    const current = this.dependencies.current;
-    if (!current.matches(original.binding)) {
-      this.original = undefined;
-      this.showPanel({ kind: "unknown", canRetry: false });
-      return;
-    }
+    if (!current.matches(submission.binding)) return;
     const generation = this.generation;
     const serial = ++this.writeSerial;
     this.writeRequest?.abort();
@@ -608,180 +552,139 @@ export class Affiliation {
     const active = () =>
       serial === this.writeSerial &&
       generation === this.generation &&
-      current.matches(original.binding);
-    this.showPanel(
-      retry
-        ? { kind: "retry-submitting", choice: original.code }
-        : { kind: "submitting", choice: original.code },
-    );
+      current.matches(submission.binding);
+    this.showPanel({ kind: "submitting", choice: submission.code });
     const timer = setTimeout(() => {
       if (!active()) return;
       this.writeSerial++;
       request.abort();
       if (this.writeRequest === request) this.writeRequest = undefined;
-      this.unknown(original);
+      this.unknown();
     }, 35_000);
     try {
       if (!(await this.dependencies.build().catch(() => false))) {
         if (active()) current.reload();
         return;
       }
-      if (!active() || !(await current.confirm(original.binding)) || !active())
+      if (
+        !active() ||
+        !(await current.confirm(submission.binding)) ||
+        !active()
+      )
         return;
-      if (!this.dependencies.marker.mark(original.binding.selection.id)) {
-        if (!retry) this.original = undefined;
-        this.showPanel({
-          kind: "submit-storage",
-          choice: original.code,
-          retry,
-          uncertain: original.uncertain,
-        });
-        return;
-      }
       const result = await this.dependencies.create(
-        original.operation,
-        original.binding.selection.id,
-        original.code,
+        submission.operation,
+        submission.binding.selection.id,
+        submission.code,
         request.signal,
       );
       if (!active()) return;
-      if (!(await current.confirm(original.binding)) || !active()) return;
-      await this.classify(result, original);
+      if (!(await current.confirm(submission.binding)) || !active()) return;
+      await this.classify(result, submission);
     } catch {
-      if (active()) this.unknown(original);
+      if (active()) this.unknown();
     } finally {
       clearTimeout(timer);
       if (this.writeRequest === request) this.writeRequest = undefined;
     }
   }
 
-  private unknown(original: Original, retryAfter = 0) {
-    original.uncertain = true;
-    original.retryAt = Math.min(Number.MAX_SAFE_INTEGER, this.dependencies.now() + Math.max(5_000, retryAfter));
-    this.showPanel({ kind: "unknown", choice: original.code, canRetry: true, retryAt: original.retryAt });
+  private unknown(retryAfter = 0) {
+    this.showPanel({
+      kind: "unknown",
+      retryAt: this.wait({ kind: "failure", retryAfter }).retryAt,
+    });
   }
 
   private async classify(
     result: AffiliationWriteResult,
-    original: Original,
+    submission: Submission,
   ): Promise<void> {
     if (result.kind === "ok") {
-      this.original = undefined;
-      this.dependencies.marker.clear(original.binding.selection.id);
       this.showPanel({ kind: "success" });
       return;
     }
     if (result.kind === "untrusted" || result.kind === "disconnected") {
-      this.unknown(original);
+      this.unknown();
       return;
     }
     if (result.status === 401 || result.status === 403) {
-      this.original = undefined;
-      await this.dependencies.current.reject(
-        original.binding,
-        result.status,
-      );
+      await this.dependencies.current.reject(submission.binding, result.status);
       return;
     }
     const code = result.code;
-    if (!original.uncertain) {
-      if (code === "rate_limited") {
-        const { retryAt } = this.wait(result);
-        this.showPanel({
-          kind: "submit-limited",
-          choice: original.code,
-          retryAt,
-        });
-        return;
-      }
-      if (code === "invalid_input") {
-        this.original = undefined;
-        this.showPanel({ kind: "submit-invalid", choice: original.code });
-        return;
-      }
-      if (code === "state_conflict") {
-        this.original = undefined;
-        this.showPanel({ kind: "submit-conflict", choice: original.code });
-        return;
-      }
-      if (code === "request_mismatch") {
-        this.original = undefined;
-        this.showPanel({ kind: "submit-mismatch", choice: original.code });
-        return;
-      }
-      if (code === "dependency_unavailable") {
-        const { retryAt } = this.wait(result);
-        this.showPanel({
-          kind: "submit-failed",
-          choice: original.code,
-          retryAt,
-        });
-        return;
-      }
-      this.unknown(original, result.retryAfter);
-      return;
-    }
-    if (code === "rate_limited" || code === "dependency_unavailable") {
+    if (code === "rate_limited") {
       const { retryAt } = this.wait(result);
       this.showPanel({
-        kind: "retry-wait",
-        choice: original.code,
+        kind: "submit-limited",
         retryAt,
       });
       return;
     }
-    if (code === "request_mismatch") {
-      this.original = undefined;
-      this.showPanel({ kind: "retry-mismatch", choice: original.code });
+    if (code === "invalid_input") {
+      this.showPanel({ kind: "submit-invalid", choice: submission.code });
       return;
     }
     if (code === "state_conflict") {
-      this.original = undefined;
-      this.showPanel({ kind: "retry-conflict", choice: original.code });
+      this.showPanel({ kind: "submit-conflict" });
       return;
     }
-    if (code === "invalid_input") {
-      this.original = undefined;
-      this.showPanel({ kind: "retry-stopped", choice: original.code });
+    if (code === "request_mismatch") {
+      this.showPanel({ kind: "submit-mismatch" });
       return;
     }
-    this.unknown(original, result.retryAfter);
+    if (code === "dependency_unavailable") {
+      const { retryAt } = this.wait(result);
+      this.showPanel({
+        kind: "submit-failed",
+        retryAt,
+      });
+      return;
+    }
+    this.unknown(result.retryAfter);
   }
 
   private readBlocked(read: AffiliationRead): boolean {
-    return read.kind === "loading" ||
+    return (
+      read.kind === "loading" ||
       ((read.kind === "error" || read.kind === "dictionary-error") &&
-        read.retryAt > this.dependencies.now());
+        read.retryAt > this.dependencies.now())
+    );
   }
 
   viewCurrent() {
-    if (this.state.kind !== "ready" || this.readBlocked(this.state.current)) return;
+    if (this.state.kind !== "ready" || this.readBlocked(this.state.current))
+      return;
     const panel = this.state.panel;
     if (
       ![
         "success",
         "unknown",
-        "marker-unavailable",
+        "submit-limited",
+        "submit-failed",
         "submit-conflict",
         "submit-mismatch",
-        "retry-mismatch",
-        "retry-conflict",
-        "retry-stopped",
       ].includes(panel.kind)
     )
       return;
+    if ("retryAt" in panel && panel.retryAt > this.dependencies.now()) return;
     const replace = [
       "submit-conflict",
       "submit-mismatch",
+      "submit-limited",
+      "submit-failed",
     ].includes(panel.kind);
     void this.readCurrent(replace ? "replace" : "current");
   }
 
   retryRead() {
-    if (this.state.kind !== "ready" || this.readBlocked(this.state.current)) return;
+    if (this.state.kind !== "ready" || this.readBlocked(this.state.current))
+      return;
     const panel = this.state.panel;
     if (
-      (panel.kind === "read-error" || panel.kind === "dictionary-error" || panel.kind === "value-dictionary-error") &&
+      (panel.kind === "read-error" ||
+        panel.kind === "dictionary-error" ||
+        panel.kind === "value-dictionary-error") &&
       panel.retryAt > this.dependencies.now()
     )
       return;
