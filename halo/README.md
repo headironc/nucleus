@@ -27,6 +27,8 @@ bun run build
 
 完整单元测试包含真实 Nginx 代理回归。默认使用 `/usr/sbin/nginx`，可通过 `HALO_NGINX` 指定可执行文件。
 
+生产代理只为精确的头像路径开放 2 MiB、工牌照片路径开放 8 MiB、工牌申请提交路径开放 128 KiB 请求正文。预览和其他 API 保持 8 KiB。`tools/nginx.test.ts` 使用实际生产配置，核对边界字节、超限和近邻路径拒绝，以及工牌照片的鉴权头、Cookie、上游缓存策略和拒绝响应透传。该代理回归使用隔离 HTTP 上游；真实照片解码、存储与申请事务另由业务组合验收覆盖。
+
 应用类型检查显式执行 `typescript-compiler` 别名中的 TypeScript 7。`openapi-typescript` 仍依赖 TypeScript 5 的 AST API，因此 `typescript` 保留其支持范围内的最新稳定版 5.9.3。根维护工具也使用 TypeScript 7。生成器支持新版 API 后，再移除这项兼容分离；当前不把生成器的 AST 库宣称为全局最新版本。
 
 构建期依赖链 `@react-router/dev@8.5.1 → @babel/core@7.29.7 → gensync@1.0.0-beta.2` 仍要求 `gensync@^1.0.0-beta.2`。现有稳定版 0.1.0 不满足该范围，因此锁定上游要求的 beta.2，保留这一预发布限制。上游提供可合法解析到稳定 gensync 的兼容构建依赖链，并通过相关验收后，再解除限制。
