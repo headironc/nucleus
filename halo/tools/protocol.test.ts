@@ -31,6 +31,7 @@ describe("the actual OpenAPI / Ajv generator combination", () => {
       "/api/v1/settings",
       "/api/v1/workforce/current/grant",
       "/api/v1/workforce/current/numbers",
+      "/api/v1/workforce/directories",
       "/api/v1/workforce/grants",
       "/api/v1/workforce/grants/candidates",
       "/api/v1/workforce/grants/{id}/terminations",

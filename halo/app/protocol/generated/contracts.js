@@ -913,6 +913,56 @@ export default {
       ]
     }
   },
+  "GET /api/v1/workforce/directories": {
+    "200": {
+      "validator": "readWorkforceDirectorySelection_200",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "readWorkforceDirectorySelection_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "readWorkforceDirectorySelection_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "readWorkforceDirectorySelection_403",
+      "codes": [
+        "permission_denied"
+      ]
+    },
+    "413": {
+      "validator": "readWorkforceDirectorySelection_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "429": {
+      "validator": "readWorkforceDirectorySelection_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "readWorkforceDirectorySelection_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "readWorkforceDirectorySelection_503",
+      "codes": [
+        "dependency_unavailable"
+      ]
+    }
+  },
   "POST /api/v1/workforce/grants/{id}/terminations": {
     "201": {
       "validator": "terminateWorkforceGrant_201",

@@ -1,0 +1,157 @@
+@layer components {
+  .application-layout {
+    width: min(100% - 2.5rem, 68rem);
+    margin: 3rem auto 5rem;
+  }
+  .application-layout h1 {
+    font: 600 clamp(1.75rem, 4vw, 2.5rem)/1.4 var(--song);
+    margin: 1rem 0;
+  }
+  .application-photo {
+    display: grid;
+    gap: 1rem;
+    padding-block: 1.5rem;
+    text-align: left;
+    min-width: 0;
+  }
+  .application-fields {
+    display: grid;
+    gap: 1.75rem;
+    min-width: 0;
+    border: 0;
+    padding: 0;
+  }
+  .application-kinds {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    border: 0;
+    padding: 0;
+    min-width: 0;
+  }
+  .application-kinds legend { font-weight: 600; margin-bottom: 0.75rem; }
+  .application-kinds label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--control-line);
+    border-radius: var(--radius-s);
+  }
+  .application-field { display: grid; gap: 0.75rem; min-width: 0; }
+  .application-field > label { font-weight: 600; }
+  .application-field select {
+    width: 100%;
+    min-width: 0;
+    min-height: 48px;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid var(--control-line);
+    border-radius: var(--radius-s);
+    background: var(--field);
+    color: var(--ink);
+    font: inherit;
+  }
+  .application-checkbox { display: flex; gap: 0.65rem; align-items: start; line-height: 1.8; }
+  .application-checkbox input { margin-top: 0.35rem; flex-shrink: 0; }
+  .application-selected { line-height: 1.8; overflow-wrap: anywhere; }
+  .application-notice { padding: 1rem; background: var(--warn-soft); color: var(--warn); line-height: 1.8; }
+  .application-kinds input, .application-checkbox input { width: 1.15rem; height: 1.15rem; accent-color: var(--accent); }
+  .application-photo h2 {
+    font-size: 1.2rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+  }
+  .application-photo p,
+  .application-photo figcaption {
+    line-height: 1.8;
+    overflow-wrap: anywhere;
+  }
+  .application-photo > label,
+  .application-photo legend {
+    font-weight: 600;
+  }
+  .application-photo input[type="file"] {
+    width: 100%;
+    min-width: 0;
+    font: inherit;
+    color: var(--sub);
+    overflow-wrap: anywhere;
+  }
+  .application-photo input::file-selector-button {
+    padding: 0.6rem 0.8rem;
+    min-height: 44px;
+    border: 1px solid var(--control-line);
+    border-radius: var(--radius-s);
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    margin-right: 0.75rem;
+  }
+  .application-photo-editor {
+    display: grid;
+    grid-template-columns: minmax(0, 15rem) minmax(0, 1fr);
+    gap: 1.5rem 2rem;
+    padding: 1.5rem;
+    background: var(--paper);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-m);
+  }
+  .application-photo-editor figure {
+    min-width: 0;
+    margin: 0;
+  }
+  .application-photo-editor canvas {
+    display: block;
+    width: 100%;
+    height: auto;
+    background: var(--muted);
+  }
+  .application-photo-editor figcaption {
+    font-size: 0.8rem;
+    color: var(--sub);
+    margin-top: 0.75rem;
+  }
+  .application-photo-editor fieldset {
+    border: 0;
+    padding: 0;
+    min-width: 0;
+  }
+  .application-photo-editor fieldset > label {
+    display: grid;
+    gap: 0.35rem;
+    margin: 1rem 0;
+  }
+  .application-photo-editor input[type="range"] {
+    width: 100%;
+    min-height: 44px;
+    accent-color: var(--accent);
+  }
+  .application-photo-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 1.25rem;
+  }
+  .application-photo-note {
+    grid-column: 1 / -1;
+    color: var(--sub);
+    font-size: 0.85rem;
+  }
+  .application-photo-actions .primary,
+  .application-photo-actions .secondary {
+    white-space: normal;
+    min-height: 44px;
+  }
+  .application-photo-actions .secondary {
+    padding: 0.6rem 1rem;
+    border: 1px solid var(--control-line);
+    border-radius: var(--radius-s);
+    background: var(--surface);
+    color: var(--ink);
+  }
+  @media (max-width: 620px) {
+    .application-layout { width: calc(100% - 2rem); margin-top: 1.5rem; }
+    .application-photo-editor { grid-template-columns: minmax(0, 1fr); padding: 1rem; }
+    .application-photo-editor figure { width: min(100%, 13.5rem); margin-inline: auto; }
+  }
+}

@@ -241,6 +241,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workforce/directories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read the currently selectable directory for badge applicants and managers in one three-second read-only snapshot. Requires a normal account and current unsuspended Workforce membership, but no domain permission. Enabled groups, departments with fully enabled lineage, enabled roster entries and positions for those departments, and the enabled title tree are ordered by index then id; positions are ordered by department id, entry index then entry id. Every configured rule retains its department reference and reports whether that default is currently selectable; missing subtype codes are explicit. Disabled items, enabled flags and creation operation ids are not returned. Missing referenced rows are dependency failures, not empty selections. No query or body is accepted. Origin must match when supplied; absent Origin requires Sec-Fetch-Site: same-origin. Any supplied Sec-Fetch-Site must be same-origin. No cookie is set. */
+        get: operations["readWorkforceDirectorySelection"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workforce/grants/{id}/terminations": {
         parameters: {
             query?: never;
@@ -717,6 +734,93 @@ export interface components {
         "number.Id": string;
         /** @enum {integer} */
         "number.Subtype": 100 | 200 | 300 | 400 | 500 | 600 | 700 | 801 | 802 | 803 | 804 | 901 | 902 | 903 | 904 | 1000;
+        "directory.selection.Response": components["schemas"]["directory.selection.Selection"] & {
+            code: string;
+        };
+        "directory.selection.Selection": {
+            categories: components["schemas"]["directory.selection.Category"][];
+            departments: components["schemas"]["directory.selection.Department"][];
+            disciplines: components["schemas"]["directory.selection.Discipline"][];
+            groups: components["schemas"]["directory.selection.Group"][];
+            missing: components["schemas"]["number.Subtype"][];
+            positions: components["schemas"]["directory.selection.Position"][];
+            rules: components["schemas"]["directory.selection.Rule"][];
+            titles: components["schemas"]["directory.selection.Title"][];
+        };
+        "directory.selection.Category": {
+            id: components["schemas"]["directory.category.Id"];
+            index: components["schemas"]["directory.Index"];
+            name: components["schemas"]["directory.Name"];
+        };
+        /**
+         * Format: uuid
+         * @description The identifier of a title category.
+         */
+        "directory.category.Id": string;
+        /** Format: int32 */
+        "directory.Index": number;
+        "directory.Name": string;
+        "directory.selection.Department": {
+            groupId: components["schemas"]["directory.group.Id"];
+            id: components["schemas"]["directory.department.Id"];
+            index: components["schemas"]["directory.Index"];
+            name: components["schemas"]["directory.Name"];
+            parentId: components["schemas"]["directory.department.Id"] | null;
+        };
+        /** Format: uuid */
+        "directory.group.Id": string;
+        /** Format: uuid */
+        "directory.department.Id": string;
+        "directory.selection.Discipline": {
+            categoryId: components["schemas"]["directory.category.Id"];
+            id: components["schemas"]["directory.discipline.Id"];
+            index: components["schemas"]["directory.Index"];
+            name: components["schemas"]["directory.Name"];
+        };
+        /**
+         * Format: uuid
+         * @description The identifier of a title discipline.
+         */
+        "directory.discipline.Id": string;
+        "directory.selection.Group": {
+            id: components["schemas"]["directory.group.Id"];
+            index: components["schemas"]["directory.Index"];
+            name: components["schemas"]["directory.Name"];
+        };
+        "directory.selection.Position": {
+            departmentId: components["schemas"]["directory.department.Id"];
+            entryId: components["schemas"]["directory.roster.Id"];
+            index: components["schemas"]["directory.Index"];
+            name: components["schemas"]["directory.Name"];
+            positionId: components["schemas"]["directory.position.Id"];
+        };
+        /**
+         * Format: uuid
+         * @description The identifier of one configured department position.
+         */
+        "directory.roster.Id": string;
+        /**
+         * Format: uuid
+         * @description The identifier of a Workforce position.
+         */
+        "directory.position.Id": string;
+        "directory.selection.Rule": {
+            departmentId: components["schemas"]["directory.department.Id"];
+            id: components["schemas"]["number.Subtype"];
+            position: boolean;
+            selectable: boolean;
+        };
+        "directory.selection.Title": {
+            disciplineId: components["schemas"]["directory.discipline.Id"];
+            id: components["schemas"]["directory.title.Id"];
+            index: components["schemas"]["directory.Index"];
+            name: components["schemas"]["directory.Name"];
+        };
+        /**
+         * Format: uuid
+         * @description The identifier of a complete title.
+         */
+        "directory.title.Id": string;
         "termination.Input": {
             target: components["schemas"]["grant.member.Target"];
         };
@@ -2657,6 +2761,110 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["number.Current"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description internal_error */
+            500: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    readWorkforceDirectorySelection: {
+        parameters: {
+            query?: never;
+            header: {
+                "Operation-Id": string;
+                "Session-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current selectable directory and subtype rules */
+            200: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["directory.selection.Response"];
                 };
             };
             /** @description invalid_input */
