@@ -620,6 +620,13 @@ fn browser_c1_preserves_original_send() {
                 "success": browser_status.success(),
                 "code": browser_status.code(),
             }));
+            // Preserve completed business observations even if a later browser step fails.
+            if admission.complete() {
+                logs.record("admission_acceptance", admission.evidence());
+            }
+            if allocation.complete() {
+                logs.record("allocation_acceptance", allocation.evidence());
+            }
             assert!(browser_status.success(), "browser acceptance failed");
             let media = std::fs::read_to_string(material.path().join("media.jsonl"))
                 .expect("real signed-image reads through the fictional media entry");
@@ -706,10 +713,8 @@ fn browser_c1_preserves_original_send() {
             assert_eq!(workforce_checked.len(), 6, "all service lifecycle read windows have independent no-write evidence");
             workforce_observer.terminate().await.expect("end Workforce observer");
             assert!(admission.complete(), "admission, original replay and member read have independent durable evidence");
-            logs.record("admission_acceptance", admission.evidence());
             admission_observer.terminate().await.expect("end admission observer");
             assert!(allocation.complete(), "first allocation, original replay and current number read have independent durable evidence");
-            logs.record("allocation_acceptance", allocation.evidence());
             allocation_observer.terminate().await.expect("end allocation observer");
             assert!(termination.complete(), "original termination and new-Session replay have independent durable evidence");
             termination_observer.terminate().await.expect("end termination observer");
