@@ -228,6 +228,35 @@ test("confirmed receipt is shown immediately when persistence fails", async ({
   expect(state.posts).toHaveLength(1);
 });
 
+test("unsaved pending material is never described as a confirmed allocation", async ({
+  page,
+  context,
+}) => {
+  await page.addInitScript(() => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key === "halo.number-allocation")
+        throw new DOMException("Storage unavailable", "QuotaExceededError");
+      return original.call(this, key, value);
+    };
+  });
+  const state = await start(page, context);
+  await confirm(page);
+  await expect(
+    page.getByRole("heading", { name: "暂时无法保存申请信息", exact: true }),
+  ).toBeVisible();
+  expect(state.posts).toHaveLength(0);
+  await page.getByRole("button", { name: "重新检查", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "领取结果待确认", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("领取结果已确认", { exact: false })).toHaveCount(
+    0,
+  );
+  await expect(page.getByText("92605", { exact: true })).toHaveCount(0);
+  expect(state.posts).toHaveLength(0);
+});
+
 test("lost response reload replays only the same explicit original", async ({
   page,
   context,

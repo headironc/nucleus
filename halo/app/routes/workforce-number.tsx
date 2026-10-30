@@ -248,11 +248,13 @@ function AllocationPanel({ controller }: { controller: AllocationController }) {
               <p className="employee-number">{fixed.display}</p>
             </section>
           )}
-          {state.kind === "result" && !state.persisted && (
-            <p role="alert">
-              领取结果已确认，但浏览器未能保存。请记下工号，或返回员工服务查看。
-            </p>
-          )}
+          {state.kind === "result" &&
+            state.allocation.outcome === "complete" &&
+            !state.persisted && (
+              <p role="alert">
+                领取结果已确认，但浏览器未能保存。请记下工号，或返回员工服务查看。
+              </p>
+            )}
           {state.kind === "entry" && (
             <form
               onSubmit={(event) => {
