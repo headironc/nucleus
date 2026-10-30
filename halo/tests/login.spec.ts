@@ -7,6 +7,7 @@ import { ownHistory } from "./history";
 import { ownWorkforce } from "./workforce";
 import { ownNumbers } from "./numbers";
 import { ownTermination } from "./termination";
+import { admissionAndFirstNumber } from "./admission-number";
 import { ownMobileChange } from "./mobile-change";
 import { cookieDigests, identityObservation, identityReads } from "./identity";
 import { affiliationObservation } from "./affiliation";
@@ -2116,6 +2117,17 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     }
   });
   await choose(page, replacement);
+  await test.step("institution admission and first number through the real pages", async () => {
+    const colleague = await registerRealAccount(
+      page,
+      "13900000017",
+      "Admission Colleague",
+      "000000200002298880",
+    );
+    await admissionAndFirstNumber(page, replacement, colleague, (session) =>
+      choose(page, session),
+    );
+  });
   await ownWorkforce(page, replacement.id, secondSession!.id);
   const recoverTermination = await ownTermination(
     page,
