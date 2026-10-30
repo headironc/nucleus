@@ -54,7 +54,7 @@ function actions(source: string, page: NativePage) {
       const parent = panel.match(/wx:if="\{\{(.*?)\}\}"/)![1];
       if (!runInNewContext(parent, page.data)) return [];
     }
-    const condition = match[1].match(/wx:if="\{\{(.*?)\}\}"/)?.[1].replaceAll("&amp;", "&");
+    const condition = match[1].match(/wx:if="\{\{(.*?)\}\}"/)?.[1];
     if (condition && !runInNewContext(condition, page.data)) return [];
     const text = match[2].replace(/\{\{(.*?)\}\}/g, (_, expression) => String(runInNewContext(expression, page.data)));
     return [{ binding, text }];

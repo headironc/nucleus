@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { readFile } from "node:fs/promises";
-import { runInNewContext } from "node:vm";
+import { runInNewContext, Script } from "node:vm";
 import { createHash } from "node:crypto";
 import { account, epoch, FakePlatform, proof, session } from "./fixture";
 
@@ -46,6 +46,22 @@ test("the native build records the one actual shared OpenAPI snapshot", async ()
   const source = JSON.parse(await readFile(new URL("../build/build-source.json", import.meta.url), "utf8"));
   expect(source).toMatchObject({ source: "export", snapshot: "halo/protocol/openapi.json",
     sha256: createHash("sha256").update(snapshot).digest("hex"), platformAcceptance: false });
+});
+
+test("all shipped WXML bindings preserve raw source bytes and pass a host expression syntax check", async () => {
+  const manifest = JSON.parse(await readFile(new URL("../src/app.json", import.meta.url), "utf8"));
+  let bindings = 0;
+  for (const page of manifest.pages as string[]) {
+    const source = await readFile(new URL(`../src/${page}.wxml`, import.meta.url), "utf8");
+    expect(await readFile(new URL(`../build/${page}.wxml`, import.meta.url), "utf8")).toBe(source);
+    // WXML binding expressions are checked as written, without HTML entity decoding.
+    // This catches source encoding failures; only the platform compiler proves WXML support.
+    for (const match of source.matchAll(/\{\{([\s\S]*?)\}\}/g)) {
+      expect(() => new Script(`(${match[1]})`, { filename: `${page}.wxml` })).not.toThrow();
+      bindings++;
+    }
+  }
+  expect(bindings).toBeGreaterThan(0);
 });
 
 test("native sessions page binds delayed modal confirmations and exposes only safe display fields", async () => {

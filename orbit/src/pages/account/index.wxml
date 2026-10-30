@@ -4,7 +4,7 @@
   <view class="notice" wx:if="{{message}}" role="status">{{message}}</view>
 
   <!-- snapshot:login:start -->
-  <view class="intro-card" wx:if="{{canLogin &amp;&amp; phase !== 'complete'}}">
+  <view class="intro-card" wx:if="{{canLogin && phase !== 'complete'}}">
     <view class="card-title">手机号登录</view>
     <view class="body-copy">请主动授权微信绑定的手机号。手机号验证不会关联微信身份。</view>
     <button class="primary" open-type="getPhoneNumber" bindgetphonenumber="authorize" disabled="{{busy}}">使用手机号登录</button>
@@ -28,7 +28,7 @@
   <!-- snapshot:account:start -->
   <view class="intro-card" wx:if="{{phase === 'account'}}">
     <view class="profile">
-      <image class="avatar" wx:if="{{avatar &amp;&amp; !avatarFailed}}" src="{{avatar}}" mode="aspectFit" binderror="avatarError" />
+      <image class="avatar" wx:if="{{avatar && !avatarFailed}}" src="{{avatar}}" mode="aspectFit" binderror="avatarError" />
       <view class="avatar avatar-placeholder" wx:else>人</view>
       <view><view class="profile-name">{{name}}</view><view class="small-copy">当前已登录的本人账户</view></view>
     </view>
@@ -44,12 +44,12 @@
   </view>
   <!-- snapshot:account:end -->
 
-  <button class="secondary" wx:if="{{phase !== 'account' &amp;&amp; canCheck}}" bindtap="check" disabled="{{busy}}">检查登录状态</button>
-  <view class="notice" wx:if="{{logoutPending &amp;&amp; phase === 'account'}}">此前退出结果仍待确认。</view>
+  <button class="secondary" wx:if="{{phase !== 'account' && canCheck}}" bindtap="check" disabled="{{busy}}">检查登录状态</button>
+  <view class="notice" wx:if="{{logoutPending && phase === 'account'}}">此前退出结果仍待确认。</view>
   <button class="secondary" wx:if="{{canRecover}}" bindtap="recover" disabled="{{busy}}">{{logoutPending ? '查看退出结果' : '检查本次办理结果'}}</button>
   <button class="text-button" wx:if="{{canReset}}" bindtap="restartLogin" disabled="{{busy}}">重新验证手机号</button>
   <view class="small-copy" wx:if="{{busy}}">请稍候…</view>
   <navigator class="home-link primary" wx:if="{{homeAction}}" url="/pages/home/index" open-type="reLaunch">返回公开首页</navigator>
   <navigator class="home-link" wx:else url="/pages/home/index" open-type="reLaunch">返回公开首页</navigator>
-  <button class="text-button" wx:if="{{phase === 'complete' &amp;&amp; canLogin}}" bindtap="check">重新登录</button>
+  <button class="text-button" wx:if="{{phase === 'complete' && canLogin}}" bindtap="check">重新登录</button>
 </view>
