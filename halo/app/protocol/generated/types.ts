@@ -1201,7 +1201,7 @@ export interface components {
             scope: components["schemas"]["revocation.Scope"];
         };
         /** @enum {string} */
-        "revocation.Scope": "current" | "all";
+        "revocation.Scope": "current" | "all" | "other";
         "revocation.Revocation": {
             id: components["schemas"]["session.Id"];
             /** Format: date-time */

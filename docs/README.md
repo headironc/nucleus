@@ -29,7 +29,7 @@
 | 网站本人头像上传、更换及原结果后端        | 已交付   | [头像](identity/avatar.md)                                                                                                                                                 |
 | 头像更换页面与小程序接入                  | 目标     | [头像](identity/avatar.md)                                                                                                                                                 |
 | 私人文件持久发布、读取句柄与幂等删除组件  | 已交付   | [本地文件](storage/files.md)                                                                                                                                               |
-| 网站当前及全部退出                        | 已交付   | [退出](identity/revocation.md)                                                                                                                                             |
+| 本人会话列表、当前、其他及全部退出        | 已交付   | [退出](identity/revocation.md)                                                                                                                                             |
 | 账户暂停恢复及状态历史                    | 已交付   | [暂停恢复](identity/suspension.md)                                                                                                                                         |
 | 实名更正及系统管理员停机更正              | 已交付   | [实名更正](identity/correction.md)                                                                                                                                         |
 | 人员状态、永久实名版本封印与统一鉴别      | 已交付   | [人员与实名版本](identity/person.md)                                                                                                                                       |

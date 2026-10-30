@@ -598,15 +598,19 @@ impl history::Kind for Record {
             },
             "logout" => {
                 let initiator_id = row.try_get("session_id").map_err(Error::decode)?;
-                let scope = row.try_get("scope").map_err(Error::decode)?;
                 let sessions = sessions(row)?;
-                if !sessions.contains(&initiator_id)
-                    || (scope == Scope::Current && sessions.as_slice() != [initiator_id])
-                {
-                    return Err(Error::Integrity(
-                        "a logout retains its initiator and fixed scope",
-                    ));
-                }
+                let scope = match row.try_get::<_, &str>("scope").map_err(Error::decode)? {
+                    "current" if sessions.as_slice() == [initiator_id] => Scope::Current,
+                    "all" if sessions.contains(&initiator_id) => Scope::All,
+                    "other" if sessions.len() == 1 && sessions[0] != initiator_id => {
+                        Scope::Other(sessions[0])
+                    }
+                    _ => {
+                        return Err(Error::Integrity(
+                            "a logout retains its initiator and fixed scope",
+                        ));
+                    }
+                };
                 Event::Logout {
                     initiator_id,
                     scope,
@@ -1021,7 +1025,7 @@ impl history::Record for Record {
                 client.execute(
                     "INSERT INTO identity.logouts (id,account_id,person_id,sequence,revoked_at,initiator_id,scope,sessions,seal,seal_key_id,seal_version) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)",
                     &[&self.data.operation_id, &self.account_id, &self.data.person_id, &self.sequence,
-                      &self.data.happened_at, initiator_id, scope, sessions, &seal.tag(), &seal.key_id(), &seal.version()],
+                      &self.data.happened_at, initiator_id, &scope.as_ref(), sessions, &seal.tag(), &seal.key_id(), &seal.version()],
                 ).await?;
             }
             Event::Correction(id) => {
