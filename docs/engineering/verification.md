@@ -62,9 +62,9 @@ plan 直接调用现分类器。无法核实比较时保守选择 full/all；畸
 
 ### Runner 首个真实消费者
 
-[Runner probe](../../.github/workflows/runner-probe.yml) 只接受准确 `headironc/nucleus` 仓库的默认 `dev` 手动派发。现场负责人先绑定已审合并提交，以完整 SHA 填入 `expected_revision`。作业核对仓库 ID、事件、ref、源码和 workflow SHA，再检出同一提交并核 HEAD；checkout 不保留凭据。派发前确认无在途 probe。固定 concurrency 禁止并行且不取消原运行，不把串行机制当作堆积请求的许可。
+[Runner probe](../../.github/workflows/runner-probe.yml) 只接受准确 `headironc/nucleus` 仓库的默认 `dev` 手动派发。现场负责人先绑定已审合并提交，以完整 SHA 填入 `expected_revision`。作业核对仓库 ID、事件、ref、源码和 workflow SHA，再检出同一提交并核 HEAD；checkout 不保留凭据。派发前确认无在途 probe。固定 workflow concurrency 隔离不同 run 且不取消原运行，不把串行机制当作堆积请求的许可。
 
-唯一 job 使用 `nucleus-runners`，超时 45 分钟。原生 container 初始化以 `github.actor` 和只读包权限的 `github.token` 拉取固定 digest。默认权限为 `contents: read`，仅该 job 增加 `packages: read`。镜像及首次发布、冷拉取证据归 [Halo 镜像合同](../../halo/README.md#首次私有包发布与冷拉取)。源码准备可独立推进，真实派发等待准确成品与兼容输入被接纳。
+默认单 job 使用 `nucleus-runners`，超时 45 分钟。原生 container 初始化以 `github.actor` 和只读包权限的 `github.token` 拉取固定 digest。默认权限为 `contents: read`，仅该 job 增加 `packages: read`。镜像及首次发布、冷拉取证据归 [Halo 镜像合同](../../halo/README.md#首次私有包发布与冷拉取)。源码准备可独立推进，真实派发等待准确成品与兼容输入被接纳。
 
 容器以镜像默认非 root 用户运行。Runner 负责工作区、临时目录和 HOME 挂载的可写性，保留镜像预装的 Cargo/Rustup 路径。workflow 不提升权限、放宽文件模式或注入管理秘密，也不使用跨任务缓存。初始化或写权限失败保持失败结论。
 
@@ -89,6 +89,14 @@ workflow 向 helper 显式传入两个 Boolean 值。helper 只接受其中一�
 原生 deadline 可能截断 `always()`、最终上传或容器收尾。有序 PG/容器清理、日志上传与 VM 级回收分别按原件报告。若有序收尾被截断，只有 deadline 原因、活 PG 前态、必要预保全诊断，以及 GARM 完成/删除、原 LXD operation 成功、准确 VM/根盘缺席、runner 注销、槽位释放和 disabled 均有证据时，才接受为“硬超时后由 VM 回收封闭”。这不追认有序停止或上传成功。源码测试只验证模式绑定和信号处理；真实 deadline、重启和双容量仍各自验收。
 
 默认成功验收同时要求完整 package 检查、PG scan empty、TMPDIR removed、原 run/job 成功终态，以及 GARM 自动回收对应 VM 的证据。失败验收另须证明前序完整检查成功、固定 marker、步骤退出码 42 和原 run/job 的 failure 终态。清理、artifact 上传与自动销毁证据仍须完整。取消、超时、bootstrap 或其他前序失败不能充当预期失败。硬终止可能阻止清理，单有 `always()` 不证明资源已回收。现场负责人持有唯一 dispatch、运行观察和 VM 生命周期责任；源码检查与合并不代替实际验收，也不证明全部 CI 已迁移。
+
+`queue_probe` 默认为 false，保留默认 job 和 artifact 名。仅显式开启时，一次 dispatch 展开固定 `one`、`two` 两项 matrix，`max-parallel: 2`、`fail-fast: false`。两项没有依赖、job concurrency 或 Environment 审批，各自消费同一准确源码、镜像和完整 platform/清理链。与失败、取消、超时输入互斥；第一步在 checkout 和私有 PG 准备前拒绝冲突，不能据此声称在 VM 分配前拒绝。
+
+两项在完整检查及 PG 清理成功后，分别通过 [queue helper](../../.github/runner-probe/queue.ts) 持有固定 300 秒观察窗口。开始和结束 marker 绑定 run、attempt、source、cell 及固定时长；job 和最终 artifact 名包含 cell。中断或窗口失败保持非零且不产生完成 marker，最终上传仍为 `always()`。窗口完成本身不证明排队或释放，源码不接受任意数量、时长、命令或资源名。
+
+现场按实际先后称 A/B，不假设 matrix 启动顺序。在空项目、无在途操作、min0/max1 的唯一窗口只派发一次。先证明 A 仍 running、B 有独立 job ID 且真实需求已到同池；GitHub queued 或 workflow 层等待不足。A 的观察窗口开始后 120 秒内未取得 B 的入池证据则记未覆盖，正常收尾，不延长窗口或主动取消 A。
+
+在两条需求重叠期间，原观察链至少覆盖两个 autoscale 周期，保存 GARM 全状态实例计数及 LXD 创建事件，证明始终最多一台，包括 creating/deleting。A 正常清理并自动释放槽后，B 才以不同 runner ID/name、GARM UUID、VM UUID 和 root 身份执行并完整回收。两条 run/attempt/job/artifact、PG/tmp、原 operation、VM/root、runner 注销、容量释放及最终 disabled 的证据各自闭合，才接受排队成功。A 异常、第二 VM 提前创建、身份混淆或第三需求均保留失败，交原现场恢复，不重复 dispatch 或用取消 B 改写结论。结果未知时读原句柄，不另发写入。容量故障、删除失败、多槽及生产切换分别验收。
 
 [专用 PR 检查](../../.github/workflows/runner-probe-checks.yml)执行 `.github/runner-probe/` 的类型与回归，覆盖实际来源拒绝、只读权限、完整命令、日志失败传播和清理条件。helper 回归构建固定 PG 18.4，在取消和超时模式运行真实私有 cluster，核活动 SQL、INT/TERM、部分失败、模式与身份拒绝及失败收尾；测试终态核进程消失和原私有范围清理。固定 actionlint 1.7.12 核两份工作流，额外 runner 标签由 `.github/actionlint.yaml` 声明。产品代码、镜像及 fixture 输入未变时按下文复用原证据；当前 required CI 仍须通过，回归不启动 VM 或 registry 操作。
 

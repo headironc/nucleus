@@ -22,6 +22,11 @@ on:
         required: false
         type: boolean
         default: false
+      queue_probe:
+        description: Run two independent jobs through the single runner slot
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -36,12 +41,18 @@ defaults:
 
 jobs:
   platform:
+    name: ${{ inputs.queue_probe && format('platform ({0})', matrix.cell) || 'platform' }}
     if: >-
       github.event_name == 'workflow_dispatch' &&
       github.repository_id == '1432619931' &&
       github.repository == 'headironc/nucleus' &&
       github.ref == 'refs/heads/dev'
     runs-on: nucleus-runners
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        cell: ${{ fromJSON(inputs.queue_probe && '["one","two"]' || '["single"]') }}
     timeout-minutes: 45
     permissions:
       contents: read
@@ -57,6 +68,8 @@ jobs:
       FAIL_AFTER_CHECKS: ${{ inputs.fail_after_checks }}
       CANCEL_AFTER_CHECKS: ${{ inputs.cancel_after_checks }}
       TIMEOUT_AFTER_CHECKS: ${{ inputs.timeout_after_checks }}
+      QUEUE_PROBE: ${{ inputs.queue_probe }}
+      QUEUE_CELL: ${{ matrix.cell }}
     steps:
       - name: Bind reviewed dev revision
         run: |
@@ -70,6 +83,9 @@ jobs:
           test "$FAIL_AFTER_CHECKS:$CANCEL_AFTER_CHECKS" != true:true
           test "$FAIL_AFTER_CHECKS:$TIMEOUT_AFTER_CHECKS" != true:true
           test "$CANCEL_AFTER_CHECKS:$TIMEOUT_AFTER_CHECKS" != true:true
+          if test "$QUEUE_PROBE" = true; then
+            test "$FAIL_AFTER_CHECKS:$CANCEL_AFTER_CHECKS:$TIMEOUT_AFTER_CHECKS" = false:false:false
+          fi
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ inputs.expected_revision }}
@@ -113,10 +129,13 @@ jobs:
       - name: Check and clean private PostgreSQL scope
         if: always()
         run: bun tools/package-postgresql.ts cleanup 2>&1 | tee "$RUNNER_TEMP/runner-probe-cleanup.log"
+      - name: Hold queue observation window
+        if: success() && inputs.queue_probe == true
+        run: bun .github/runner-probe/queue.ts 2>&1 | tee "$RUNNER_TEMP/runner-probe-queue.log"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         if: always()
         with:
-          name: runner-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          name: ${{ inputs.queue_probe && format('runner-probe-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.cell) || format('runner-probe-{0}-{1}', github.run_id, github.run_attempt) }}
           path: ${{ runner.temp }}/runner-probe-*.log
           retention-days: 7
           if-no-files-found: warn

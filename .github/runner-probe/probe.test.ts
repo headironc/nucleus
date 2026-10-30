@@ -108,6 +108,13 @@ test("only manual dev work can enter the dedicated runner job", () => {
           type: "boolean",
           default: false,
         },
+        queue_probe: {
+          description:
+            "Run two independent jobs through the single runner slot",
+          required: false,
+          type: "boolean",
+          default: false,
+        },
       },
     },
   });
@@ -219,6 +226,8 @@ test("native initialization alone receives the read-only package credential", ()
     FAIL_AFTER_CHECKS: "${{ inputs.fail_after_checks }}",
     CANCEL_AFTER_CHECKS: "${{ inputs.cancel_after_checks }}",
     TIMEOUT_AFTER_CHECKS: "${{ inputs.timeout_after_checks }}",
+    QUEUE_PROBE: "${{ inputs.queue_probe }}",
+    QUEUE_CELL: "${{ matrix.cell }}",
   });
   expect(source).not.toMatch(
     /secrets\.|docker login|sudo|chmod|actions\/cache|rust-cache|CARGO_HOME|RUSTUP_HOME/,
@@ -413,7 +422,7 @@ test("cleanup and diagnostics remain eligible after failure or cancellation, whi
   }
   expect(job.steps.indexOf(cleanup)).toBeLessThan(job.steps.indexOf(upload));
   expect(upload.with).toEqual({
-    name: "runner-probe-${{ github.run_id }}-${{ github.run_attempt }}",
+    name: "${{ inputs.queue_probe && format('runner-probe-{0}-{1}-{2}', github.run_id, github.run_attempt, matrix.cell) || format('runner-probe-{0}-{1}', github.run_id, github.run_attempt) }}",
     path: "${{ runner.temp }}/runner-probe-*.log",
     "retention-days": 7,
     "if-no-files-found": "warn",
