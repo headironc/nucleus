@@ -52,6 +52,8 @@ PR reviews、issue comments、inline comments、review threads 和嵌套 comment
 
 REST 的 jobs、artifacts、workflow_runs 和 check_runs 每页均要求对象、对应数组及非负安全整数 `total_count`。跨页总数变化、最终累计不足和重复身份均失败；总数为零且数组明确为空才是空集合。数组端点不套用该对象合同。这些条件不提供 API 原子快照，也不证明不存在同数量内容漂移，批准仍核对后续完整证据读取。
 
+ZIP 原件只在内存中读取唯一且有界的 JSON 成员，不解压文件。子进程固定使用 `/usr/bin/python3 -I -S`，工作目录为 `/`，环境为空；检出目录、`PYTHONPATH`、site 启动代码和 PATH 中的同名解释器均不能提供解析代码。批准步骤的秘密不传入子进程。系统解释器及标准库由受信 runner 提供，缺失或解析失败时拒绝，不回退到检出目录或继承环境。
+
 REST PR reviews 中尚无已接纳的 Codex 正文合同，因此该 bot 在此表面的报告保守阻塞，等待真实样本及可核处置合同。现有 issue summary 的无未解决发现状态不能代替未知 formal-review 正文的解析，也不能消除更晚的 threadless 报告。
 
 ## Cubic 额度选择输入

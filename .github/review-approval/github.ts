@@ -160,15 +160,18 @@ export class Github implements Api {
           `sha256:${new Bun.CryptoHasher("sha256").update(bytes).digest("hex")}`,
         "Receipt artifact digest mismatch",
       );
-    // Read the single bounded JSON member in memory; never extract artifact paths.
+    // Read only system stdlib from a safe directory, without the writer's
+    // environment. The checkout must not supply Python modules or startup code.
     const result = spawnSync(
-      "python3",
+      "/usr/bin/python3",
       [
+        "-I",
+        "-S",
         "-c",
         "import io,sys,zipfile\nz=zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read()))\nassert z.namelist()==[sys.argv[1]]\ni=z.infolist()[0]\nassert 0<i.file_size<16384\nsys.stdout.buffer.write(z.read(i))",
         filename,
       ],
-      { input: bytes, maxBuffer: 16384, timeout: 10000 },
+      { cwd: "/", env: {}, input: bytes, maxBuffer: 16384, timeout: 10000 },
     );
     requireThat(result.status === 0, "Cannot read CI receipt archive");
     return JSON.parse(result.stdout.toString("utf8"));

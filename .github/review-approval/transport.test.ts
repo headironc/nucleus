@@ -5,21 +5,42 @@ import { EvidenceApi } from "./evidence.test.ts";
 import { b } from "./fixtures.ts";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.fetch = originalFetch;
 });
-for (const filename of ["operation.json", "review-start.json"] as const)
+for (const filename of [
+  "receipt.json",
+  "operation.json",
+  "review-start.json",
+] as const)
   test(`artifact transport authenticates only GitHub and reads a single bounded ${filename} without extraction`, async () => {
     const packed = spawnSync(
-      "python3",
+      "/usr/bin/python3",
       [
+        "-I",
+        "-S",
         "-c",
         "import io,sys,zipfile\nb=io.BytesIO()\nwith zipfile.ZipFile(b,'w') as z:z.writestr(sys.argv[1],sys.stdin.buffer.read())\nsys.stdout.buffer.write(b.getvalue())",
         filename,
       ],
-      { input: JSON.stringify({ version: 1, head: b.head }), timeout: 10000 },
+      {
+        cwd: "/",
+        env: {},
+        input: JSON.stringify({ version: 1, head: b.head }),
+        timeout: 10000,
+      },
     );
     expect(packed.status).toBe(0);
     const bytes = packed.stdout;
@@ -50,9 +71,112 @@ for (const filename of ["operation.json", "review-start.json"] as const)
     );
     expect(calls[1].init.headers).toBeUndefined();
     calls.length = 0;
-    await expect(api.receipt(artifact)).rejects.toThrow(
-      "Cannot read CI receipt archive",
-    );
+    await expect(
+      api.receipt(
+        artifact,
+        filename === "receipt.json" ? "operation.json" : "receipt.json",
+      ),
+    ).rejects.toThrow("Cannot read CI receipt archive");
+  });
+for (const kind of ["module", "package"])
+  test(`artifact parsing ignores checkout ${kind}, startup hooks, PATH and credential environment`, () => {
+    const directory = mkdtempSync(join(tmpdir(), "receipt-python-"));
+    try {
+      const marker = join(directory, "module-marker"),
+        siteMarker = join(directory, "site-marker"),
+        pathMarker = join(directory, "path-marker"),
+        canary = "synthetic-credential-canary";
+      const poison = `import importlib.machinery,importlib.util,os,pathlib,sys,sysconfig\npathlib.Path(${JSON.stringify(marker)}).write_text(os.environ.get('CLADIRON_PRIVATE_KEY','missing'))\ns=importlib.machinery.PathFinder.find_spec('zipfile',[sysconfig.get_path('stdlib')])\nm=importlib.util.module_from_spec(s)\nsys.modules['zipfile']=m\ns.loader.exec_module(m)\nZipFile=m.ZipFile\n`;
+      const modulePath =
+        kind === "module"
+          ? join(directory, "zipfile.py")
+          : join(directory, "zipfile", "__init__.py");
+      if (kind === "package") mkdirSync(join(directory, "zipfile"));
+      writeFileSync(modulePath, poison);
+      writeFileSync(
+        join(directory, "sitecustomize.py"),
+        `import os,pathlib\npathlib.Path(${JSON.stringify(siteMarker)}).write_text(os.environ.get('CLADIRON_PRIVATE_KEY','missing'))\n`,
+      );
+      const bin = join(directory, "bin");
+      mkdirSync(bin);
+      writeFileSync(
+        join(bin, "python3"),
+        '#!/bin/sh\nprintf fake > "$PYTHON_PATH_MARKER"\nexec /usr/bin/python3 "$@"\n',
+        { mode: 0o755 },
+      );
+      const exposed = {
+        PATH: bin,
+        PYTHONPATH: directory,
+        CLADIRON_PRIVATE_KEY: canary,
+        PYTHON_PATH_MARKER: pathMarker,
+      };
+      const control = spawnSync("/usr/bin/python3", ["-c", "import zipfile"], {
+        cwd: directory,
+        env: exposed,
+        encoding: "utf8",
+        timeout: 10000,
+      });
+      expect(control.status, control.stderr).toBe(0);
+      expect(readFileSync(marker, "utf8")).toBe(canary);
+      expect(readFileSync(siteMarker, "utf8")).toBe(canary);
+      const pathControl = spawnSync("python3", ["-I", "-S", "-c", "pass"], {
+        cwd: directory,
+        env: exposed,
+        encoding: "utf8",
+        timeout: 10000,
+      });
+      expect(pathControl.status, pathControl.stderr).toBe(0);
+      expect(readFileSync(pathMarker, "utf8")).toBe("fake");
+      for (const path of [marker, siteMarker, pathMarker]) rmSync(path);
+      const script = `
+        import { mock } from "bun:test";
+        const realSpawn = (await import("node:child_process")).spawnSync;
+        let probes = 0;
+        mock.module("node:child_process", () => ({spawnSync(command,args,options) {
+          const probe = realSpawn(command,[...args.slice(0,args.indexOf("-c")+1),"import json,os;print(json.dumps(dict(os.environ)))"],{...options,input:undefined,encoding:"utf8"});
+          if (probe.status !== 0) throw new Error("Environment probe failed");
+          const environment = JSON.parse(probe.stdout);
+          for (const name of ["CLADIRON_PRIVATE_KEY","GITHUB_TOKEN","TEST_WRITE_TOKEN","PYTHONPATH","PYTHONHOME","PYTHONOPTIMIZE","PATH"])
+            if (name in environment) throw new Error("Inherited child environment: "+name);
+          probes++;
+          return realSpawn(command,args,options);
+        }}));
+        const { Github } = await import(${JSON.stringify(new URL("./github.ts", import.meta.url).href)});
+        const api = new Github("synthetic-read-token","synthetic-write-token");
+        for (const filename of ["receipt.json","operation.json","review-start.json"]) {
+          const packed = realSpawn("/usr/bin/python3",["-I","-S","-c","import io,sys,zipfile\\nb=io.BytesIO()\\nwith zipfile.ZipFile(b,'w') as z:z.writestr(sys.argv[1],b'{\\\"version\\\":1}')\\nsys.stdout.buffer.write(b.getvalue())",filename],{cwd:"/",env:{},timeout:10000});
+          if (packed.status !== 0) throw new Error("Packing failed");
+          let downloads = 0;
+          globalThis.fetch = async () => ++downloads === 1 ? new Response(null,{status:302,headers:{location:"https://fixture.blob.core.windows.net/synthetic"}}) : new Response(packed.stdout);
+          const result = await api.receipt({id:900,size_in_bytes:packed.stdout.length},filename);
+          if (result.version !== 1 || downloads !== 2) throw new Error("Receipt changed");
+          downloads = 0;
+          let rejected = false;
+          try { await api.receipt({id:900,size_in_bytes:packed.stdout.length},filename === "receipt.json" ? "operation.json" : "receipt.json"); }
+          catch (error) { rejected = error.message === "Cannot read CI receipt archive"; }
+          if (!rejected) throw new Error("Unexpected member accepted with PYTHONOPTIMIZE");
+        }
+        console.log(JSON.stringify({parsed:3,probes}));
+      `;
+      const parsed = spawnSync(process.execPath, ["--eval", script], {
+        cwd: directory,
+        env: {
+          ...exposed,
+          PYTHONHOME: join(directory, "invalid-python-home"),
+          PYTHONOPTIMIZE: "1",
+          GITHUB_TOKEN: canary,
+          TEST_WRITE_TOKEN: canary,
+        },
+        encoding: "utf8",
+        timeout: 30000,
+      });
+      expect(parsed.status, parsed.stderr).toBe(0);
+      expect(JSON.parse(parsed.stdout)).toEqual({ parsed: 3, probes: 6 });
+      for (const path of [marker, siteMarker, pathMarker])
+        expect(existsSync(path)).toBe(false);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 test("artifact transport refuses an unrelated redirect origin before sending any credential", async () => {
   let count = 0;
