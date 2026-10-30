@@ -4006,7 +4006,7 @@ mod tests {
                         .expect("proxy settings"),
                     Password::new(fixture::PASSWORD.into()).expect("password"), roots,
                 ).expect("proxy connections");
-                let startup = Box::pin(Application::start(
+                let mut startup = Box::pin(Application::start(
                     startup_connections,
                     keys(0),
                     services(2),
@@ -4021,23 +4021,30 @@ mod tests {
                     Stage::BarrierConnection | Stage::DatabasePrerequisites => 11,
                     _ => 15,
                 };
-                let ((result, finished_at), intercepted_at) = timeout(Duration::from_secs(bound), async {
-                    tokio::join!(async {
-                        let result = startup.await;
-                        (result, Instant::now())
-                    }, async {
-                        timeout(Duration::from_secs(5), async {
+                let deadline = Instant::now() + Duration::from_secs(bound);
+                let intercepted_at = timeout(Duration::from_secs(5), async {
+                    tokio::select! {
+                        biased;
+                        () = async {
                             if matches!(stage, Stage::ClockConnection | Stage::BarrierConnection) {
                                 intercepted.await.expect("SSL negotiation intercepted");
                             } else {
                                 proxy.intercepted().await;
                             }
-                        })
-                            .await
-                            .expect("the selected startup wait actually reached the proxy");
-                        Instant::now()
-                    })
-                }).await.expect("startup fails within its existing bound");
+                        } => Instant::now(),
+                        _ = &mut startup => panic!("startup ended before the selected fault was observed"),
+                    }
+                }).await.expect("the selected startup wait actually reached the proxy");
+                // History has its own ten-second query budget after earlier scans.
+                // Measure its existing failure-and-cleanup bound from interception.
+                let deadline = if stage == Stage::HistoryStates {
+                    intercepted_at + Duration::from_secs(bound)
+                } else {
+                    deadline
+                };
+                let result = tokio::time::timeout_at(deadline, startup)
+                    .await.expect("startup fails within its existing bound");
+                let finished_at = Instant::now();
                 if stage == Stage::TrustedTime {
                     // Exclude preceding startup work; allow one second for cleanup and scheduling.
                     let elapsed = finished_at.duration_since(intercepted_at);
