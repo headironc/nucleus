@@ -60,49 +60,11 @@ plan 直接调用现分类器。无法核实比较时保守选择 full/all；畸
 
 该状态只证明 package 责任，不包含 Halo、main 晋级、部署或自动准入。HTTP 中要求 Halo/Node/浏览器的测试仍明确 ignored，本状态不声称浏览器覆盖。本地继续按当前 classifier 的完整选检执行或核对输入后复用有效证据，不因托管范围排除 Halo 而免检。
 
-### Runner 首个真实消费者
+### 托管执行环境
 
-[Runner probe](../../.github/workflows/runner-probe.yml) 只接受准确 `headironc/nucleus` 仓库的默认 `dev` 手动派发。现场负责人先绑定已审合并提交，以完整 SHA 填入 `expected_revision`。作业核对仓库 ID、事件、ref、源码和 workflow SHA，再检出同一提交并核 HEAD；checkout 不保留凭据。派发前确认无在途 probe。固定 concurrency 禁止并行且不取消原运行，不把串行机制当作堆积请求的许可。
+当前 CI 统一使用 GitHub 托管的 Ubuntu 24.04。Docs、维护工具、Rust 检查和 Packages 保持各自的检查责任、选检规则与失败传播。Packages 继续验证完整分组和分片，独立准备 PostgreSQL，并核对每行私有资源的清理。Halo 继续执行[本地检查](../../halo/README.md#构建与本地检查)和[浏览器隔离验收](../../halo/README.md#浏览器隔离验收)。
 
-唯一 job 使用 `nucleus-runners`，超时 45 分钟。原生 container 初始化以 `github.actor` 和只读包权限的 `github.token` 拉取固定 digest。默认权限为 `contents: read`，仅该 job 增加 `packages: read`。镜像及首次发布、冷拉取证据归 [Halo 镜像合同](../../halo/README.md#首次私有包发布与冷拉取)。源码准备可独立推进，真实派发等待准确成品与兼容输入被接纳。
-
-容器以镜像默认非 root 用户运行。Runner 负责工作区、临时目录和 HOME 挂载的可写性，保留镜像预装的 Cargo/Rustup 路径。workflow 不提升权限、放宽文件模式或注入管理秘密，也不使用跨任务缓存。初始化或写权限失败保持失败结论。
-
-先执行 `bun tools/halo-ci-image.ts verify`，核镜像输入与预装 PostgreSQL，再创建 job 私有 TMPDIR。完整消费者命令为 `bun tools/check-packages.ts --package platform --test-threads 2`，包含 build、test/doctest 和 rustdoc；`CARGO_BUILD_JOBS=2` 限制编译并发。最后以 `always()` 调用原 PostgreSQL 清理入口。日志管道保留失败退出，清理发现泄漏时仍失败。诊断日志按 run/attempt 上传并保留 7 天，取消保持非成功。
-
-`fail_after_checks` 是默认 false 的 Boolean 输入。省略或关闭时沿用成功路径。仅显式开启且前序步骤全部成功时，在完整 platform 检查后输出固定 `RUNNER_PROBE_EXPECTED_FAILURE` marker，再以 42 退出。marker 包含准确 run、attempt、source 和固定原因，写入既有 artifact 范围内的 `runner-probe-failure.log`。输入不接受命令、路径或自定义故障文本。前序自然失败不会伪造该 marker；后续清理和上传仍以 `always()` 执行，也不会把原失败变为成功。
-
-`cancel_after_checks` 和 `timeout_after_checks` 同样默认为 false。失败、取消与超时三个输入至多开启一个，来源检查在 checkout 和私有资源准备前拒绝所有冲突组合。完整 platform 成功后，取消或超时调用同一 [helper](../../.github/runner-probe/cancel.ts)。它在既有私有 TMPDIR 内启动 PostgreSQL 18.4，只监听独占 Unix socket。helper 持续拥有 cluster 和固定 `pg_sleep(3600)` 查询；独立 SQL 确认同一 backend 活动后才发布 READY。白名单投影绑定 run、attempt、source、预期模式、PID、启动时间和 data/socket 路径，不输出环境或凭据。
-
-workflow 向 helper 显式传入两个 Boolean 值。helper 只接受其中一个为 true，将受控的 `cancel` 或 `timeout` 模式绑定到 owner、存储状态、活动查询和清理。错误值或存储模式失配保持失败，不停止另一模式拥有的进程。模式表示预期触发方式，不证明实际中断原因。缺少私有 scope 的早期清理安全返回，不为失败路径创建新资源。
-
-启动步骤返回后，先上传独立命名的 `runner-probe-pre-interrupt` artifact，再进入等待步骤。取消模式再次核对同一活动 backend，输出 `RUNNER_PROBE_CANCEL_WAITING`。现场负责人确认预上传成功、等待步骤正在运行且 job/runner/VM 身份一致后，才向准确 run 发送一次普通取消。早期 READY、查询自然结束、排队取消或命令退出均不能替代这个边界。job 仍采用原生 45 分钟上限，不接受任意命令、路径或时限输入。
-
-等待的 INT/TERM 保持非零结果，并请求原 helper 有界停止。独立 `always()` 步骤先按所有权、PID 启动时间和 data 路径核对，再停止原 PG/query；已结束的原身份允许重复收尾，PID 重用或失配拒绝操作。局部初始化失败也由 helper 收尾，失败不会因补救成功而变绿。随后原 `package-postgresql.ts cleanup` 独立扫描整个范围；发现泄漏仍报错。最终 artifact 保留 helper 和扫描诊断，名称与中断前 artifact 分开。
-
-取消验收要求原 run/job 均为 cancelled、活 PG 前态和取消触发准确、有序 PG/容器清理成功、诊断完整，以及 GARM 自动注销 runner、回收准确 VM/根盘、释放容量并恢复 disabled 的原件。仅靠 VM 销毁封闭资源时，报告有序清理未通过。源码合并和本地信号测试不证明真实 Actions 取消、容器信号传播或自动回收。
-
-超时模式复用启动、预上传、等待及两层清理。等待步骤输出独立的 `RUNNER_PROBE_TIMEOUT_WAITING`，仍核同一 backend。查询等待 60 分钟，job 保持原生 45 分钟期限；不增加更短的 step、shell 或 statement timeout，也不主动取消或杀进程代替 deadline。自然 SQL 结束、owner 丢失或前序失败均不能算超时命中。
-
-现场超时验收先核 platform 成功、真实 PG READY、预上传和活动等待，再由原观察链取得接近 deadline 的有界活动证据。绑定实际 runner 版本、job 开始、平台期限、结束时间及原 annotations。`timed_out` 可直接证明原因；若 run/job 只显示 failure 或 cancelled，必须补齐准确 job 的平台超时诊断、该 runner 版本的解释和本次无手动取消的记录。约 45 分钟的耗时、红色状态或预期模式均不单独证明原因。
-
-原生 deadline 可能截断 `always()`、最终上传或容器收尾。有序 PG/容器清理、日志上传与 VM 级回收分别按原件报告。若有序收尾被截断，只有 deadline 原因、活 PG 前态、必要预保全诊断，以及 GARM 完成/删除、原 LXD operation 成功、准确 VM/根盘缺席、runner 注销、槽位释放和 disabled 均有证据时，才接受为“硬超时后由 VM 回收封闭”。这不追认有序停止或上传成功。源码测试只验证模式绑定和信号处理；真实 deadline、重启和双容量仍各自验收。
-
-默认成功验收同时要求完整 package 检查、PG scan empty、TMPDIR removed、原 run/job 成功终态，以及 GARM 自动回收对应 VM 的证据。失败验收另须证明前序完整检查成功、固定 marker、步骤退出码 42 和原 run/job 的 failure 终态。清理、artifact 上传与自动销毁证据仍须完整。取消、超时、bootstrap 或其他前序失败不能充当预期失败。硬终止可能阻止清理，单有 `always()` 不证明资源已回收。现场负责人持有唯一 dispatch、运行观察和 VM 生命周期责任；源码检查与合并不代替实际验收，也不证明全部 CI 已迁移。
-
-[专用 PR 检查](../../.github/workflows/runner-probe-checks.yml)执行 `.github/runner-probe/` 的类型与回归，覆盖实际来源拒绝、只读权限、完整命令、日志失败传播和清理条件。helper 回归构建固定 PG 18.4，在取消和超时模式运行真实私有 cluster，核活动 SQL、INT/TERM、部分失败、模式与身份拒绝及失败收尾；测试终态核进程消失和原私有范围清理。固定 actionlint 1.7.12 核两份工作流，额外 runner 标签由 `.github/actionlint.yaml` 声明。产品代码、镜像及 fixture 输入未变时按下文复用原证据；当前 required CI 仍须通过，回归不启动 VM 或 registry 操作。
-
-#### 专用 JIT 启动模板
-
-[bootstrap.tmpl](../../.github/runner-probe/bootstrap.tmpl) 是现有单 job 消费者的启动源，适用 GARM v0.2.1 和 LXD provider v0.1.5。模板改编自 provider 所带的 garm-provider-common v0.1.9，保留[来源及修改说明](../../.github/runner-probe/bootstrap.NOTICE)和 [Apache-2.0 许可证](../../.github/runner-probe/bootstrap.LICENSE)。原真实 run `40985793966` 已验证相同模板、原生 job-token 拉取、完整 platform 包及 GARM 自动回收；模板 SHA256 为 `4ad03706a17eb260be188834aae901d222b685e1b8345c72d52c904243136bf2`。该结果只覆盖原版本、模板字节及已核输入，不证明任意池或故障矩阵可用。
-
-原现场负责人从已审提交读取模板，按 provider 的 `runner_install_template` 字节字段填入既有 extra specs，由原 GARM/provider 渲染及交付。使用 JSON 表示该字节字段时按其原生契约进行 base64 编码；不要把已填 JWT 的脚本作为源码或手动部署入口。仓库不保存现场 extra specs、root 操作包、凭据、JWT、数据库或运行 receipts。源码合并本身不更新现场配置，也不派发 job。
-
-模板只接受 JIT，拒绝 boot debug，固定 `runner` 账号，以及 `https://10.203.64.1:9444/api/v1/metadata` 和 `/api/v1/callbacks`。它依赖现有镜像的 Runner 安装、可信 CA、固定 `10.203.64.1:3128` 代理和 Docker client/server 29.1.3；同时核对代理文件及 Docker 配置。回调 JWT 只由受控 GARM 实例签发，属于可信模板输入，不接受外部用户提供的模板参数。关闭 trace 后经 stdin header 传递 JWT，不放入 curl argv。认证过的 metadata 提供 JIT 身份、服务名及 systemd 单元；这不是跨控制器的通用启动接口。
-
-请求 JIT 身份前先拒绝已有或符号链接身份文件，并确认默认 Unix Docker 上下文、镜像及容器均为空；不通过清空已有内容获得冷环境。身份文件以独占创建和私有权限写入。安装服务时拒绝现有单元和 drop-in，不读 `.runner` 推断登记 ID；system-info 和 status 的 `agent_id` 始终为 null，由 GARM 保留已登记身份。失败只回报具体阶段，不输出凭据；部分身份文件或已启动服务的清理由原 VM 生命周期负责，不能重跑脚本覆盖它们。
-
-[行为回归](../../.github/runner-probe/bootstrap.test.ts)由 Bun 驱动，使用固定 Go 1.27.3 的 `text/template` 真实渲染，执行 Bash 语法和控制流程。测试只将文件根映射到私有临时目录，替换 curl、Docker、sudo；真实 jq、重定向、文件权限和 ERR trap 仍执行。覆盖非 JIT/debug/绑定拒绝、已有及竞态身份保护、Docker 冷环境拒绝、null ID 回调和失败脱敏。Go 小程序仅为测试适配器，不是新的部署入口。回归不证明真实 systemd、Docker 网络或 GARM 回收，仍按前述实际运行证据验收。模板行为或消费者输入变化时，由领域判断受影响覆盖，再由原现场负责人补验；字节和输入未变时复用原证据。
+OCI 构建、恢复后验收、独立下载及首次私有包发布的冷拉取也使用托管 runner。镜像仍服务这些消费者和本地 Halo 验收，输入、权限及产物合同见 [CI 依赖镜像](../../halo/README.md#ci-依赖镜像)。
 
 ## CI 触发与选检
 
@@ -151,9 +113,9 @@ Rust checks 已消费现有档位，执行边界见[原生 Rust 检查](#原生-
 
 ## 检查范围
 
-[OCI 产物工作流](../../.github/workflows/halo-image.yml)按[镜像输入与产物验收](../../halo/README.md#ci-依赖镜像)运行原生构建、恢复后消费者验收和独立下载校验。它只有源码读取权限，不提供包发布、消费者迁移或 VM 接入证据。
+[OCI 产物工作流](../../.github/workflows/halo-image.yml)按[镜像输入与产物验收](../../halo/README.md#ci-依赖镜像)运行原生构建、恢复后消费者验收和独立下载校验。它只有源码读取权限，包发布和消费者迁移分别验收。
 
-[首次私有包发布](../../.github/workflows/halo-publish.yml)独立消费固定已验产物，权限、未知写入读回和冷拉取边界见 [Halo 合同](../../halo/README.md#首次私有包发布与冷拉取)。[专用 PR 检查](../../.github/workflows/halo-publish-checks.yml)负责 `.github/halo-publish/` 的类型、发布回归及两份工作流的 Actions 语法，不改变 producer 的源码及扫描输入。实际发布和全新 hosted runner 的 job-token 冷消费另取真实原件；单元绿灯不替代这些验收，也不证明 VM 已接入。
+[首次私有包发布](../../.github/workflows/halo-publish.yml)独立消费固定已验产物，权限、未知写入读回和冷拉取边界见 [Halo 合同](../../halo/README.md#首次私有包发布与冷拉取)。[专用 PR 检查](../../.github/workflows/halo-publish-checks.yml)负责 `.github/halo-publish/` 的类型、发布回归及两份工作流的 Actions 语法，不改变 producer 的源码及扫描输入。实际发布和全新 hosted runner 的 job-token 冷消费另取真实原件；单元绿灯不替代这些验收。
 
 旧 GitHub Actions CI、审查关卡和镜像发布入口已停用。dev/main 旧自动准入入口也已停用。两条长期分支采用[普通分支保护](delivery.md#普通分支保护)，强制四项当前原生 CI 通过；其他分支保留原签名规则。适用本地检查、业务验收及当前候选审查仍由交付负责人验收。历史绿灯不提供新候选的验收结论。Dependabot 与独立托管审查不随旧工作流删除。
 
