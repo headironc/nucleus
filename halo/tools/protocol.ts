@@ -130,6 +130,13 @@ export function compile(
         throw new Error("Unsupported binary media reference");
       let schema = entry.schema as SchemaObject | undefined;
       if (schema && "$ref" in schema) {
+        // OpenAPI 3.1 applies sibling constraints alongside the referenced schema.
+        if (
+          Object.keys(schema).some(
+            (key) => !["$ref", "description"].includes(key),
+          )
+        )
+          throw new Error("Unsupported binary schema");
         const name = String(schema.$ref).replace("#/components/schemas/", "");
         schema = document.components.schemas[name];
       }
