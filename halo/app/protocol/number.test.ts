@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { currentNumber } from "./number";
+import { currentNumber, allocateNumber } from "./number";
 
 const id = "00000000-0000-4000-8000-000000000001";
 const value = { id, subtype: 902, year: 2026, serial: 5 };
@@ -9,19 +9,78 @@ function respond(
   type = "application/json",
   headers = {},
 ) {
-  const fetch = vi
-    .fn()
-    .mockResolvedValue(
-      new Response(JSON.stringify(body), {
-        status,
-        headers: { "content-type": type, ...headers },
-      }),
-    );
+  const fetch = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify(body), {
+      status,
+      headers: { "content-type": type, ...headers },
+    }),
+  );
   vi.stubGlobal("fetch", fetch);
   return fetch;
 }
 const read = () => currentNumber(id, new AbortController().signal);
 afterEach(() => vi.unstubAllGlobals());
+describe("self allocation protocol", () => {
+  it("sends only subtype and returns the complete fixed revision on 201", async () => {
+    const fetch = respond({ code: "ok", number: value }, 201);
+    expect(
+      await allocateNumber(
+        id,
+        id,
+        { subtype: 902 },
+        new AbortController().signal,
+      ),
+    ).toEqual({ kind: "allocated", number: value });
+    expect(fetch).toHaveBeenCalledWith(
+      "/api/v1/workforce/numbers",
+      expect.objectContaining({
+        method: "POST",
+        body: '{"subtype":902}',
+        credentials: "same-origin",
+        cache: "no-store",
+        redirect: "error",
+        headers: expect.objectContaining({
+          "Operation-Id": id,
+          "Session-Id": id,
+        }),
+      }),
+    );
+  });
+  it.each(["number_present", "number_pool_exhausted", "request_mismatch"])(
+    "keeps %s distinct",
+    async (code) => {
+      respond({ code }, 409);
+      expect(
+        await allocateNumber(
+          id,
+          id,
+          { subtype: 902 },
+          new AbortController().signal,
+        ),
+      ).toMatchObject({ kind: "failure", status: 409, code });
+    },
+  );
+  it("does not accept a different subtype or a GET-shaped receipt", async () => {
+    respond({ code: "ok", number: { ...value, subtype: 100 } }, 201);
+    expect(
+      await allocateNumber(
+        id,
+        id,
+        { subtype: 902 },
+        new AbortController().signal,
+      ),
+    ).toEqual({ kind: "untrusted" });
+    respond({ code: "ok", number: value }, 200);
+    expect(
+      await allocateNumber(
+        id,
+        id,
+        { subtype: 902 },
+        new AbortController().signal,
+      ),
+    ).toEqual({ kind: "untrusted" });
+  });
+});
 describe("current workforce number protocol", () => {
   it.each([
     [100, "临床"],
