@@ -21,6 +21,7 @@ import {
   type QuotaEvidence,
 } from "./quota.ts";
 import { verifyReviewCompletion, type ReviewStarts } from "./review-start.ts";
+import { reviewPublication } from "./reviews.ts";
 
 export type Record = { [key: string]: any };
 export type ProviderEvidence = {
@@ -30,6 +31,7 @@ export type ProviderEvidence = {
   results: number[];
   findings: number[];
   checkReports: Record[];
+  reviewReports: ReturnType<typeof reviewPublication>[];
 };
 function time(value: unknown) {
   requireThat(
@@ -52,17 +54,18 @@ function bot(
         value.performed_via_github_app === undefined))
   );
 }
-function latest(values: Record[], label: string) {
+function latest(
+  values: Record[],
+  label: string,
+  timestamp = (r: Record) => r.updated_at ?? r.submitted_at,
+) {
   requireThat(values.length > 0, `Missing ${label}`);
   const ordered = [...values].sort(
-    (a, b) =>
-      time(b.updated_at ?? b.submitted_at) -
-      time(a.updated_at ?? a.submitted_at),
+    (a, b) => time(timestamp(b)) - time(timestamp(a)),
   );
   requireThat(
     ordered.length === 1 ||
-      time(ordered[0].updated_at ?? ordered[0].submitted_at) !==
-        time(ordered[1].updated_at ?? ordered[1].submitted_at),
+      time(timestamp(ordered[0])) !== time(timestamp(ordered[1])),
     `Ambiguous ${label}`,
   );
   return ordered[0];
@@ -179,6 +182,11 @@ export function verifyProviders(
     "Missing unedited owner Codex request for current H/B",
   );
   const securityRequest = boundRequests!.security;
+  for (const review of reviews.filter((r) => r.user?.id === cubic.bot))
+    requireThat(
+      reviewPublication(review).pr === b.pr,
+      "Cubic review belongs to another PR",
+    );
   const cubicChecks = checks.filter(
     (c) => c.app?.id === cubic.app || c.name === "cubic · AI code reviewer",
   );
@@ -214,8 +222,8 @@ export function verifyProviders(
   const disposedByCubic = (report: Record) =>
     cubicDisposition !== undefined &&
     (report === cubicDisposition ||
-      time(report.updated_at ?? report.submitted_at) <
-        time(cubicDisposition.updated_at ?? cubicDisposition.submitted_at));
+      time(reviewPublication(report).at) <
+        time(reviewPublication(cubicDisposition).at));
   if (!quota) {
     requireThat(cubicRequest, "Missing Cubic request");
     const check = latest(
@@ -245,13 +253,18 @@ export function verifyProviders(
         bot(r, cubic, true) &&
         r.commit_id === b.head &&
         time(r.submitted_at) >= time(check.started_at) &&
-        time(r.submitted_at) <= time(check.completed_at),
+        time(r.submitted_at) <= time(check.completed_at) &&
+        time(reviewPublication(r).at) <= time(check.completed_at),
     );
     requireThat(
       cubicResults.length === 1,
       "Cubic execution does not identify one unique head report",
     );
-    const review = latest(cubicResults, "Cubic head review");
+    const review = latest(
+      cubicResults,
+      "Cubic head review",
+      (r) => reviewPublication(r).at,
+    );
     requireThat(
       review.state === "COMMENTED" && typeof review.body === "string",
       "Cubic review is not a completed report",
@@ -315,7 +328,11 @@ export function verifyProviders(
         !/\*\*No issues found\*\* across \d+ files/.test(r.body),
     );
     if (priorFindings) {
-      const last = latest(reports, "Cubic finding disposition");
+      const last = latest(
+        reports,
+        "Cubic finding disposition",
+        (r) => reviewPublication(r).at,
+      );
       requireThat(
         cubicReport(last.body, { ...b, head: last.commit_id }) &&
           last.body.includes("**All reported issues addressed**"),
@@ -326,7 +343,7 @@ export function verifyProviders(
   }
   for (const report of reviews.filter((r) => r.user?.id === cubic.bot)) {
     requireThat(bot(report, cubic, true), "Cubic report identity changed");
-    time(report.updated_at ?? report.submitted_at);
+    reviewPublication(report);
     const clean =
       report.state === "COMMENTED" &&
       cubicReport(report.body, { ...b, head: report.commit_id }) &&
@@ -515,5 +532,9 @@ export function verifyProviders(
             .map((key) => [key, c.output[key]]),
         ),
       })),
+    reviewReports: reviews
+      .filter((r) => r.user?.id === cubic.bot)
+      .sort((a, b) => a.id - b.id)
+      .map(reviewPublication),
   };
 }

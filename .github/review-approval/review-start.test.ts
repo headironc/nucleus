@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { EvidenceApi } from "./evidence.test.ts";
-import { b, providerFixture } from "./fixtures.ts";
+import { b, providerFixture, boundFixtureReviews } from "./fixtures.ts";
 import { requestBodies } from "./identity.ts";
 import { snapshot } from "./evidence.ts";
 import { verifyProviders, type Record as Data } from "./providers.ts";
@@ -478,7 +478,7 @@ test("explicit proof selection changes the digest; local claimed trust never rep
     verifyProviders(
       b,
       f.api.f.comments,
-      f.api.f.reviews,
+      boundFixtureReviews(f.api.f.reviews),
       f.api.f.checks,
       undefined,
       {

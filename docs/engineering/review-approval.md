@@ -42,6 +42,14 @@ Codex 可能持续更新同一条 summary。容器创建时间早于本轮请求
 
 [适配器](../../.github/review-approval/providers.ts)只解析已识别的供应商结构，不做通用自然语言裁判。Cubic 使用 App `1082092`、bot `191113872` 的真实 check 和 review。核对请求后的开始和完成时间、完整 `H`、唯一 review 及 delivery marker。单独的 `SUCCESS` 无效；merge-only、quota、`NEUTRAL`、未知完成形状和缺失报告都不能证明 Cubic 审查通过。Quota 只按下节的已验证输入选择适用提供方，审计状态保留 `quota-unavailable`。
 
+[Cubic review 读取器](../../.github/review-approval/reviews.ts)同时服务 snapshot 与额度准备。完整分页 REST reviews 后，批量读取同一 review 的 GraphQL 元数据。逐一绑定 node ID、完整数字 ID、仓库和 PR。再核作者数字与 Node 身份、正文、状态、完整 commit 和提交时间。显式 App 身份必须一致，REST 原合同允许的缺省保持。GraphQL 缺失、部分响应、重复或不匹配均拒绝，不回退原提交时间。
+
+当前正文的发表边界取提交、公开发表及非空最后编辑时间的最大值。对象 `updatedAt` 只作一致性上界，不代替正文时间。所有时间须有效、非未来且不矛盾；草稿阶段先编辑后提交可以成立。未编辑必须明确报告空编辑时间和空编辑者。有编辑时，编辑者须为同一可信 Cubic Bot。分别核数字与 Node 身份，不以 login 拼写判断。`includesCreatedEdit` 参与一致性核对，不能凭 false 推断没有编辑。
+
+受核对象、身份和时间结果均不可变，复制对象不能沿用原证明。Cubic 当前与历史报告的处置、quota 最新报告及恢复反证共用这一正文时间口径。normal 当前报告仍须在对应 check 执行区间内提交。正文发表边界也不得晚于该 check 完成。完成后改写的正文不能借旧执行证明当前覆盖。后续 addressed 只能处置严格早于它的正文，同刻或晚到正文仍拒绝。选择后的编辑不能倒推选择前已有恢复反证，原选择后恢复规则保持。
+
+`ProviderEvidence.reviewReports` 保存受核 review 身份、作者和编辑者、原始时间及正文发表边界。这些元数据和完整正文一起进入 snapshot digest。只改编辑身份或时间也须漂移或拒绝，不增加 QuotaSelection 或 intent 字段。真实未编辑样本已验证接口读取与绑定。编辑场景的正例依据公开 schema 构造，不代表已观察到真实提供方编辑运行或真实 App 批准。
+
 Codex 使用 App `1144995`、bot `199175422` 的完整状态 marker，分别核对代码和安全审查的完整 `H` 及 completed 状态。两类发现均须有 Boolean 类型的 `has_any_findings` 和明确的 `has_unresolved_findings=false`。安全标志为 `null` 时保持阻塞。
 
 已观察到的独立无发现回执只展示 10 位提交 SHA。两个不同完整提交可有相同前缀；可信 bot、时间顺序、独立 task 链接和另一个完整 `H` 摘要不能把回执绑定到该完整提交。此类回执只作为已识别的说明正文，不进入通过结果，也不消除未知终态。只有取得完整 SHA 或可核实地绑定完整 `H` 的不可变提供方操作身份，并接纳其真实合同后，才可扩展这一路径；目前不推定该能力存在。不要求不存在公开入口的私有完整报告，也不把 P0 报告阈值当作其余发现均已处理。

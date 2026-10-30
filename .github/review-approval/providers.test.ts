@@ -1,8 +1,24 @@
 import { expect, test } from "bun:test";
-import { verifyProviders } from "./providers.ts";
-import { b, providerFixture } from "./fixtures.ts";
+import { verifyProviders as verifyBoundProviders } from "./providers.ts";
+import { b, providerFixture, boundFixtureReviews } from "./fixtures.ts";
 import { requestBodies } from "./identity.ts";
 import type { QuotaEvidence } from "./quota.ts";
+const verifyProviders: typeof verifyBoundProviders = (
+  binding,
+  comments,
+  reviews,
+  checks,
+  quota,
+  starts,
+) =>
+  verifyBoundProviders(
+    binding,
+    comments,
+    boundFixtureReviews(reviews, binding),
+    checks,
+    quota,
+    starts,
+  );
 
 function laneFlags(body: string, lane: string, value: boolean | null) {
   return body.replace(
@@ -123,6 +139,52 @@ test("a later addressed review cannot dispose an unknown check with no immutable
   expect(() => verifyProviders(b, f.comments, f.reviews, f.checks)).toThrow(
     "unparsed report",
   );
+});
+for (const quota of [false, true])
+  for (const edited of ["10:30:00", "10:35:04", "10:40:00"])
+    test(`Cubic edited-body disposition uses publication ${edited}, quota=${quota}`, () => {
+      const f = providerFixture();
+      const old = providerFixture({ ...b, head: "f".repeat(40) }).reviews[0];
+      old.id = 999;
+      old.submitted_at = "2026-10-30T10:00:00Z";
+      old.lastEditedAt = `2026-10-30T${edited}Z`;
+      old.body = "P1: finding added by a later body edit";
+      f.reviews.push(old);
+      f.reviews[0].body = f.reviews[0].body.replace(
+        "**No issues found** across 41 files",
+        "**All reported issues addressed**",
+      );
+      f.checks[0].output.summary =
+        "AI review completed with 1 review. All reported issues addressed.";
+      const selection = quota
+        ? ({ request: 101, head: b.head, base: b.base } as QuotaEvidence)
+        : undefined;
+      const run = () =>
+        verifyProviders(b, f.comments, f.reviews, f.checks, selection);
+      if (edited === "10:30:00") expect(run().findings).toContain(999);
+      else expect(run).toThrow();
+    });
+for (const field of ["lastEditedAt", "published_at"])
+  test(`a current Cubic review ${field} after check completion cannot borrow the old execution`, () => {
+    const f = providerFixture();
+    f.reviews[0][field] = "2026-10-30T10:36:00Z";
+    expect(() => verifyProviders(b, f.comments, f.reviews, f.checks)).toThrow(
+      "one unique head report",
+    );
+  });
+test("raw or another-PR publication cannot be used as provider evidence", () => {
+  const f = providerFixture();
+  expect(() =>
+    verifyBoundProviders(b, f.comments, f.reviews, f.checks),
+  ).toThrow("not verified");
+  expect(() =>
+    verifyBoundProviders(
+      b,
+      f.comments,
+      boundFixtureReviews(f.reviews, { ...b, pr: 2 }),
+      f.checks,
+    ),
+  ).toThrow("another PR");
 });
 test("current-head Cubic report identity, time and state must be explicit", () => {
   for (const change of [

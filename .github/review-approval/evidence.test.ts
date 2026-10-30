@@ -1,7 +1,12 @@
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { binding, snapshot, threads } from "./evidence.ts";
-import { b, providerFixture } from "./fixtures.ts";
+import {
+  b,
+  providerFixture,
+  fixtureReview,
+  cubicReviewNode,
+} from "./fixtures.ts";
 import { stableWorkflows } from "./ci.ts";
 import type { Api } from "./github.ts";
 import type { Record } from "./providers.ts";
@@ -9,6 +14,7 @@ import { trustedCandidate } from "./main.ts";
 
 export class EvidenceApi implements Api {
   f = providerFixture();
+  reviewNodes = new Map<number, any>();
   state: any = {
     number: b.pr,
     state: "open",
@@ -143,7 +149,7 @@ export class EvidenceApi implements Api {
   async pages(path: string, key?: string): Promise<any[]> {
     this.calls.push(path);
     if (path.includes("/issues/")) return this.f.comments;
-    if (path.endsWith("/reviews")) return this.f.reviews;
+    if (path.endsWith("/reviews")) return this.f.reviews.map(fixtureReview);
     if (path.endsWith("/comments")) return this.afterPage ? [{ id: 999 }] : [];
     if (path.endsWith("/files")) return this.files;
     if (path.includes("/commits/")) return this.f.checks;
@@ -200,6 +206,16 @@ export class EvidenceApi implements Api {
     throw new Error(`Unexpected pages ${path}`);
   }
   async graphql(_query: string, variables: Record): Promise<any> {
+    if (variables.ids && _query.includes("PullRequestReview"))
+      return {
+        nodes: variables.ids.map((id: string) => {
+          const r = this.f.reviews.find((r) => fixtureReview(r).node_id === id);
+          return r
+            ? (this.reviewNodes.get(r.id) ??
+                cubicReviewNode(r, this.state.number))
+            : null;
+        }),
+      };
     if (variables.ids)
       return {
         nodes: variables.ids.map((id: string) => {

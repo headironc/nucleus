@@ -1,15 +1,36 @@
 import { expect, test } from "bun:test";
 import { EvidenceApi } from "./evidence.test.ts";
-import { b, providerFixture } from "./fixtures.ts";
+import {
+  b,
+  providerFixture,
+  boundFixtureReviews,
+  cubicReviewNode,
+} from "./fixtures.ts";
 import {
   prepareQuota,
   quotaRequest,
-  readQuota,
+  readQuota as readBoundQuota,
   quotaWithdrawal,
   quotaDeclaration,
 } from "./quota.ts";
 import { snapshot } from "./evidence.ts";
 import { requestBodies } from "./identity.ts";
+const readQuota: typeof readBoundQuota = (
+  api,
+  binding,
+  comments,
+  checks,
+  now = Date.now(),
+  reviews = [],
+) =>
+  readBoundQuota(
+    api,
+    binding,
+    comments,
+    checks,
+    now,
+    boundFixtureReviews(reviews, binding, now),
+  );
 
 const now = Date.parse("2026-10-30T14:00:00Z");
 // Deidentified full observed layout; only public provider guidance is literal.
@@ -201,6 +222,72 @@ test("current-head complete Cubic report bodies and added reports enter the quot
   report.output.title = "AI review completed";
   const changed = await snapshot(f.api, b.pr, f.now);
   expect(changed.digest).not.toBe(added.digest);
+});
+for (const edited of ["10:30:00", "10:35:04", "10:40:00"])
+  test(`verified quota disposition uses independently read edited-body time ${edited}`, async () => {
+    const f = await fixture();
+    const disposition = providerFixture().reviews[0];
+    disposition.body = disposition.body.replace(
+      "**No issues found** across 41 files",
+      "**All reported issues addressed**",
+    );
+    const old = providerFixture({ ...b, head: "e".repeat(40) }).reviews[0];
+    old.id = 999;
+    old.submitted_at = "2026-10-30T10:00:00Z";
+    old.body = "P1: threadless finding in an edited older review";
+    const node = cubicReviewNode(old);
+    node.lastEditedAt = node.updatedAt = `2026-10-30T${edited}Z`;
+    node.editor = { ...node.author };
+    f.api.f.reviews.push(old, disposition);
+    f.api.reviewNodes.set(old.id, node);
+    if (edited === "10:30:00")
+      expect(
+        (await snapshot(f.api, b.pr, f.now)).evidence.providers.cubic,
+      ).toBe("quota-unavailable");
+    else await expect(snapshot(f.api, b.pr, f.now)).rejects.toThrow();
+  });
+for (const edited of ["10:30:00", "10:40:00"])
+  test(`quota recovery never dates the edited current body before its ${edited} publication`, async () => {
+    const f = await fixture();
+    const report = providerFixture().reviews[0];
+    report.submitted_at = "2026-10-30T10:00:00Z";
+    const node = cubicReviewNode(report);
+    node.lastEditedAt = node.updatedAt = `2026-10-30T${edited}Z`;
+    node.editor = { ...node.author };
+    f.api.f.reviews.push(report);
+    f.api.reviewNodes.set(report.id, node);
+    if (edited === "10:30:00")
+      await expect(snapshot(f.api, b.pr, f.now)).rejects.toThrow(
+        "contradicts quota selection",
+      );
+    else
+      expect(
+        (await snapshot(f.api, b.pr, f.now)).evidence.providers.cubic,
+      ).toBe("quota-unavailable");
+    await expect(prepareQuota(f.api, b, 601, f.now)).rejects.toThrow(
+      "contradicts quota selection",
+    );
+  });
+test("review edit metadata alone participates in the quota snapshot digest", async () => {
+  const f = await fixture(),
+    report = providerFixture().reviews[0];
+  f.api.f.reviews.push(report);
+  const node = cubicReviewNode(report);
+  f.api.reviewNodes.set(report.id, node);
+  const before = await snapshot(f.api, b.pr, f.now);
+  node.updatedAt = "2026-10-30T11:00:00Z";
+  const updated = await snapshot(f.api, b.pr, f.now);
+  expect(updated.digest).not.toBe(before.digest);
+  expect(updated.evidence.providers.reviewReports[0].at).toBe(
+    before.evidence.providers.reviewReports[0].at,
+  );
+  node.lastEditedAt = "2026-10-30T10:36:00Z";
+  node.editor = { ...node.author };
+  const edited = await snapshot(f.api, b.pr, f.now);
+  expect(edited.digest).not.toBe(updated.digest);
+  expect(edited.evidence.providers.reviewReports[0].edited).toBe(
+    node.lastEditedAt,
+  );
 });
 test("unparseable period is limited to the actual current-head refusal", async () => {
   const f = await fixture(true, true);

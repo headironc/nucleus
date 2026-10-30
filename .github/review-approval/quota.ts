@@ -17,6 +17,7 @@ import {
   cubicCheckReport,
 } from "./provider-text.ts";
 import { requestMarker } from "./identity.ts";
+import { readCubicReviews, reviewPublication } from "./reviews.ts";
 
 export type QuotaSelection = {
   repository: string;
@@ -304,6 +305,11 @@ function requireNoRecovery(
   reviews: Record[],
   selectedAt: number,
 ) {
+  for (const review of reviews.filter((r) => r.user?.id === cubic.bot))
+    requireThat(
+      reviewPublication(review).pr === b.pr,
+      "Cubic recovery review belongs to another PR",
+    );
   const beforeSelection = (completed: unknown) =>
     typeof completed === "string" &&
     Date.parse(completed) > Date.parse(original.completed_at) &&
@@ -328,7 +334,7 @@ function requireNoRecovery(
         r.performed_via_github_app?.id === cubic.app) &&
       sha(r.commit_id) &&
       r.state === "COMMENTED" &&
-      beforeSelection(r.submitted_at) &&
+      beforeSelection(reviewPublication(r).at) &&
       cubicReport(r.body, { ...b, head: r.commit_id }),
   );
   requireThat(
@@ -351,7 +357,7 @@ export async function prepareQuota(
   const selection = source(check, now, b);
   const [checks, reviews] = await Promise.all([
     recoveryChecks(api, b, check.head_sha),
-    api.pages(`/repos/${repository}/pulls/${b.pr}/reviews`),
+    readCubicReviews(api, b.pr, now),
   ]);
   requireNoRecovery(b, check, checks, reviews, now);
   return selection;

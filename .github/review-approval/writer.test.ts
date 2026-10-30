@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import { EvidenceApi } from "./evidence.test.ts";
-import { b, providerFixture } from "./fixtures.ts";
+import { b, providerFixture, cubicReviewNode } from "./fixtures.ts";
 import { snapshot } from "./evidence.ts";
 import { approvalBody } from "./approve.ts";
 import {
@@ -235,6 +235,90 @@ for (const change of ["new", "body"])
       approveCandidate(f.api, f.planned, b.base, {}, f.controls),
     ).rejects.toThrow("Evidence differs");
     expect(snapshots).toBe(4);
+    expect(f.api.posts).toBe(1);
+    expect(f.api.puts).toEqual([1000]);
+    expect(f.api.f.reviews.find((r) => r.id === 1000)!.state).toBe("DISMISSED");
+    expect(f.api.f.reviews.find((r) => r.id === 902)!.state).toBe("APPROVED");
+    expect(f.counts()).toEqual({
+      invalidation: false,
+      minted: 1,
+      revoked: 1,
+      persisted: 1,
+    });
+  });
+for (const operation of ["prepare", "approve"])
+  test(`a late edit to an older review blocks ${operation} before credentials`, async () => {
+    const f = await fixture();
+    await selectQuota(f);
+    const disposition = providerFixture().reviews[0];
+    disposition.body = disposition.body.replace(
+      "**No issues found** across 41 files",
+      "**All reported issues addressed**",
+    );
+    const old = providerFixture({ ...b, head: "f".repeat(40) }).reviews[0];
+    old.id = 999;
+    old.submitted_at = "2026-10-30T10:00:00Z";
+    old.body = "P1: edited old threadless report";
+    const node = cubicReviewNode(old);
+    node.lastEditedAt = node.updatedAt = "2026-10-30T10:30:00Z";
+    node.editor = { ...node.author };
+    f.api.f.reviews.push(old, disposition);
+    f.api.reviewNodes.set(old.id, node);
+    const valid = await snapshot(f.api, b.pr);
+    f.planned.digest = valid.digest;
+    f.api.f.reviews.find((r) => r.id === 901)!.body = approvalBody(
+      valid,
+      "run-699-attempt-1",
+    );
+    node.lastEditedAt = node.updatedAt = "2026-10-30T10:40:00Z";
+    const result =
+      operation === "prepare"
+        ? prepareIntent(f.api, b.pr, b.base, {}, 700, 1, f.controls.invalidate)
+        : approveCandidate(f.api, f.planned, b.base, {}, f.controls);
+    await expect(result).rejects.toThrow();
+    expect(f.counts().invalidation).toBe(true);
+    expect(f.counts().minted).toBe(0);
+    expect(f.api.posts).toBe(0);
+    expect(f.api.puts).toEqual([]);
+  });
+for (const change of ["body", "metadata", "editor"])
+  test(`a review ${change} change after POST withdraws only the exact new self review`, async () => {
+    const f = await fixture();
+    await selectQuota(f);
+    const report = providerFixture().reviews[0],
+      node = cubicReviewNode(report);
+    f.api.f.reviews.push(report);
+    f.api.reviewNodes.set(report.id, node);
+    f.planned.digest = (await snapshot(f.api, b.pr)).digest;
+    f.api.f.reviews = f.api.f.reviews.filter((r) => r.id !== 901);
+    f.api.post = async (_path, body) => {
+      f.api.posts++;
+      const created = {
+        id: 1000,
+        user: bot,
+        performed_via_github_app: { id: 3104501 },
+        state: "APPROVED",
+        submitted_at: "2026-10-30T14:00:00Z",
+        commit_id: body.commit_id,
+        body: body.body,
+      };
+      f.api.f.reviews.push(created);
+      node.updatedAt = "2026-10-30T11:00:00Z";
+      if (change !== "metadata") {
+        node.lastEditedAt = node.updatedAt;
+        node.editor = { ...node.author };
+        if (change === "body")
+          node.body = report.body = report.body.replace(
+            "**No issues found** across 41 files",
+            "**All reported issues addressed**",
+          );
+        else node.editor.__typename = "User";
+      }
+      return created;
+    };
+    await expect(
+      approveCandidate(f.api, f.planned, b.base, {}, f.controls),
+    ).rejects.toThrow();
     expect(f.api.posts).toBe(1);
     expect(f.api.puts).toEqual([1000]);
     expect(f.api.f.reviews.find((r) => r.id === 1000)!.state).toBe("DISMISSED");

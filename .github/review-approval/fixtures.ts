@@ -1,5 +1,7 @@
 import { requestBodies, type Binding } from "./identity.ts";
 import { readFileSync } from "node:fs";
+import { bindCubicReview } from "./reviews.ts";
+import { cubic, repository } from "./identity.ts";
 const bodies: {
   summary: string;
   code: string;
@@ -17,6 +19,66 @@ export const b: Binding = {
   base: "2".repeat(40),
   merge: "a".repeat(40),
 };
+export function fixtureReview(review: any) {
+  return {
+    ...review,
+    node_id: review.node_id ?? `review-${review.id}`,
+    user: {
+      ...review.user,
+      node_id: review.user.node_id ?? `bot-${review.user.id}`,
+    },
+  };
+}
+export function cubicReviewNode(review: any, pr = b.pr) {
+  const r = fixtureReview(review),
+    edited = review.lastEditedAt ?? null;
+  const times = [
+    r.submitted_at,
+    r.published_at ?? r.submitted_at,
+    ...(edited === null ? [] : [edited]),
+  ];
+  const latest = times.reduce((a, b) =>
+    Date.parse(b) > Date.parse(a) ? b : a,
+  );
+  const author = {
+    __typename: r.user.type,
+    id: r.user.node_id,
+    databaseId: r.user.id,
+  };
+  return {
+    id: r.node_id,
+    fullDatabaseId: String(r.id),
+    repository: { nameWithOwner: repository },
+    pullRequest: { number: pr },
+    author,
+    body: r.body,
+    state: r.state,
+    commit: { oid: r.commit_id },
+    submittedAt: r.submitted_at,
+    createdAt: r.created_at ?? r.submitted_at,
+    publishedAt: r.published_at ?? r.submitted_at,
+    updatedAt: r.updated_at ?? latest,
+    lastEditedAt: edited,
+    editor: edited === null ? null : { ...author },
+    includesCreatedEdit: r.includesCreatedEdit ?? false,
+  };
+}
+export function boundFixtureReviews(
+  reviews: any[],
+  binding = b,
+  now = Date.now(),
+) {
+  return reviews.map((r) =>
+    r.user?.id === cubic.bot
+      ? bindCubicReview(
+          fixtureReview(r),
+          cubicReviewNode(r, binding.pr),
+          binding.pr,
+          now,
+        )
+      : r,
+  );
+}
 export function providerFixture(binding = b) {
   const owner = { id: 19648989, login: "headironc", type: "User" };
   const codex = {

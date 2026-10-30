@@ -18,6 +18,7 @@ import {
   quotaStatement,
 } from "./quota.ts";
 import { readReviewStarts, type StartSelection } from "./review-start.ts";
+import { readCubicReviews } from "./reviews.ts";
 
 const prefix = `/repos/${repository}`;
 export async function binding(api: Api, pr: number): Promise<Binding> {
@@ -540,7 +541,7 @@ export async function snapshot(
 ) {
   const b = await binding(api, pr);
   const comments = await requestComments(api, b);
-  const reviews = await api.pages(`${prefix}/pulls/${pr}/reviews`);
+  const reviews = await readCubicReviews(api, pr, now);
   const inline = await api.pages(`${prefix}/pulls/${pr}/comments`);
   const allThreads = await threads(api, pr);
   requireThat(
