@@ -2,6 +2,77 @@ import { expect, test } from "bun:test";
 import { verifyProviders } from "./providers.ts";
 import { b, providerFixture } from "./fixtures.ts";
 import { requestBodies } from "./identity.ts";
+import type { QuotaEvidence } from "./quota.ts";
+
+function laneFlags(body: string, lane: string, value: boolean | null) {
+  return body.replace(
+    /<!-- codex-review-state:v1 (\{[^\n]*\}) -->/,
+    (_all, raw) => {
+      const state = JSON.parse(raw);
+      state[lane].has_any_findings = value;
+      state[lane].has_unresolved_findings = value;
+      return `<!-- codex-review-state:v1 ${JSON.stringify(state)} -->`;
+    },
+  );
+}
+for (const quota of [false, true])
+  for (const lane of ["code_review", "security_review"]) {
+    const selectedAt = lane === "code_review" ? "13:07:40" : "13:09:08";
+    function fixture(published: string, findings: boolean | null = true) {
+      const f = providerFixture();
+      f.comments[2].body = laneFlags(
+        f.comments[2].body,
+        "security_review",
+        false,
+      );
+      const old = providerFixture({ ...b, head: "f".repeat(40) }).comments[2];
+      old.id = 999;
+      old.created_at = "2026-10-30T09:00:00Z";
+      old.updated_at =
+        published === "invalid" ? published : `2026-10-30T${published}Z`;
+      old.body = old.body.replace(
+        /datetime="[^"]+">[^<]+<\/relative-time>/g,
+        'datetime="2026-10-30T10:20:00Z">2026-10-30T10:20:00Z</relative-time>',
+      );
+      old.body = laneFlags(
+        laneFlags(old.body, "security_review", false),
+        lane,
+        findings,
+      );
+      f.comments.push(old);
+      const selection = quota
+        ? ({ request: 101, head: b.head, base: b.base } as QuotaEvidence)
+        : undefined;
+      return {
+        f,
+        run: () =>
+          verifyProviders(b, f.comments, f.reviews, f.checks, selection),
+      };
+    }
+    test(`${lane} earlier findings and unknown state require a later explicit disposition, quota=${quota}`, () => {
+      for (const value of [true, null]) {
+        const { run } = fixture("10:30:00", value);
+        expect(run().findings).toContain(999);
+      }
+    });
+    for (const published of [selectedAt, "14:00:00", "invalid"])
+      test(`${lane} cannot borrow an earlier or ambiguous disposition at ${published}, quota=${quota}`, () => {
+        expect(() => fixture(published).run()).toThrow();
+      });
+    test(`${lane} completion cannot exceed its own visible report boundary, quota=${quota}`, () => {
+      const { f, run } = fixture("10:30:00");
+      f.comments.at(-1).body = f.comments
+        .at(-1)
+        .body.replaceAll("2026-10-30T10:20:00Z", "2026-10-30T14:00:00Z");
+      expect(run).toThrow("report boundary");
+    });
+    if (lane === "security_review")
+      test(`null security plus receipt cannot dispose earlier findings, quota=${quota}`, () => {
+        const { f, run } = fixture("10:30:00");
+        f.comments[2].body = laneFlags(f.comments[2].body, lane, null);
+        expect(run).toThrow("later explicit disposition");
+      });
+  }
 
 test("observed completed shapes plus synthetic bound requests accept null security only with explicit receipt", () => {
   const f = providerFixture();

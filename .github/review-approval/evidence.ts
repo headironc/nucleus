@@ -274,17 +274,18 @@ export async function verifyExecutor(api: Api, b: Binding) {
   freeze(
     github[0],
     github[1],
-    (name) => config(name) || name === "review-approval",
+    (name) =>
+      config(name) || name === "review-approval" || name === "workflows",
   );
   for (const entries of github) {
-    const capability = entries.find((e) => e.path === "review-approval");
-    requireThat(
-      capability?.type === "tree" && capability.mode === "040000",
-      "Missing approval capability tree",
-    );
+    for (const name of ["review-approval", "workflows"]) {
+      const entry = entries.find((e) => e.path === name);
+      requireThat(
+        entry?.type === "tree" && entry.mode === "040000",
+        `Missing approval executor tree ${name}`,
+      );
+    }
   }
-  const workflows = await Promise.all(github.map((g) => child(g, "workflows")));
-  freeze(workflows[0], workflows[1], (name) => name === "review-approval.yml");
   const tools = await Promise.all(roots.map((root) => child(root, "tools")));
   freeze(tools[0], tools[1], (name) => config(name) || name === "check-bun.ts");
 }

@@ -88,6 +88,7 @@ jobs:
           if-no-files-found: error
           retention-days: 30
       - name: Verify evidence and perform selected operation
+        id: writer
         if: ${{ inputs.mode == 'approve' }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
@@ -104,7 +105,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 30
       - name: Withdraw this App's prior approvals after failed evidence
-        if: ${{ failure() && inputs.mode == 'approve' && steps.intent.outputs.invalidate == 'true' }}
+        if: ${{ failure() && inputs.mode == 'approve' && (steps.intent.outputs.invalidate == 'true' || steps.writer.outputs.invalidate == 'true') }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
           CLADIRON_TRIGGERING_ACTOR_ID: ${{ github.triggering_actor == github.repository_owner && github.repository_owner_id || '0' }}

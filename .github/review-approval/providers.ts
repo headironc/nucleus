@@ -367,25 +367,48 @@ export function verifyProviders(
   );
   // A provider's configured P0 threshold is not evidence that lower findings were disposed.
   const securityState = state.security_review;
-  const previousStates = comments
+  const previous = comments
     .filter(
       (c) =>
         bot(c, codex) &&
         c.id !== summary.id &&
         c.body?.includes("<!-- codex-review-state:v1 "),
     )
-    .map((c) => summaryParts(c.body).state);
+    .map((report) => ({ report, ...summaryParts(report.body) }));
+  for (const prior of previous) {
+    const published = time(prior.report.updated_at);
+    requireThat(
+      time(prior.report.created_at) <= published,
+      "Historical Codex summary timestamps contradict",
+    );
+    for (const [kind, completed] of [
+      ["code_review", "codeAt"],
+      ["security_review", "securityAt"],
+    ] as const) {
+      const old = prior.state[kind];
+      requireThat(
+        time(prior.layout[completed]) >= time(prior.report.created_at) &&
+          time(prior.layout[completed]) <= published,
+        "Historical Codex completion is outside its report boundary",
+      );
+      if (
+        old.has_unresolved_findings === false &&
+        typeof old.has_any_findings === "boolean"
+      )
+        continue;
+      requireThat(
+        state[kind].has_unresolved_findings === false &&
+          typeof state[kind].has_any_findings === "boolean" &&
+          time(layout[completed]) > published,
+        `Codex ${kind} report lacks a later explicit disposition`,
+      );
+    }
+  }
   let securityReceipt: Record | undefined;
   if (
     securityState.has_any_findings === null &&
     securityState.has_unresolved_findings === null
   ) {
-    requireThat(
-      !previousStates.some(
-        (s) => s.security_review?.has_unresolved_findings === true,
-      ),
-      "Earlier Codex security findings require explicit disposition",
-    );
     securityReceipt = latest(
       comments.filter(
         (c) =>

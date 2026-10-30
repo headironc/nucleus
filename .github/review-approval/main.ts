@@ -25,7 +25,11 @@ import {
   uneditedOwner,
 } from "./quota.ts";
 import { appendFileSync, writeFileSync } from "node:fs";
-import { captureReviewStart, startSelection } from "./review-start.ts";
+import {
+  captureReviewStart,
+  startSelection,
+  type StartSelection,
+} from "./review-start.ts";
 
 export function context(env = process.env) {
   requireThat(
@@ -51,6 +55,86 @@ export async function trustedCandidate(
   await verifyExecutor(api, candidate);
   return candidate;
 }
+type Credential = { client: Api; revoke: () => Promise<void> };
+export async function invalidateCandidate(
+  api: Api,
+  pr: number,
+  revision: string | undefined,
+  mint: () => Promise<Credential>,
+) {
+  await trustedCandidate(api, pr, revision);
+  const credential = await mint();
+  try {
+    return await withdraw(credential.client, pr);
+  } finally {
+    await credential.revoke();
+  }
+}
+export async function approveCandidate(
+  api: Api,
+  planned: Intent,
+  revision: string | undefined,
+  startArtifacts: StartSelection,
+  controls: {
+    invalidate: () => void;
+    persist: (outcome: OperationOutcome) => Promise<unknown>;
+    mint: () => Promise<Credential>;
+  },
+) {
+  const pr = planned.b.pr;
+  const outcome: OperationOutcome = {
+    attempted: false,
+    resolved: false,
+    reviews: [],
+  };
+  let credential: Awaited<ReturnType<typeof controls.mint>> | undefined;
+  try {
+    const uncertain = await uncertainIntents(
+      api,
+      pr,
+      planned.run,
+      planned.attempt,
+    );
+    const candidate = await trustedCandidate(api, pr, revision);
+    requireThat(
+      JSON.stringify(candidate) === JSON.stringify(planned.b),
+      "Candidate changed before credential creation",
+    );
+    const load = async (client: Api, number: number) => {
+      const s = await snapshot(client, number, Date.now(), startArtifacts);
+      requireThat(
+        s.b.base === revision &&
+          s.digest === planned.digest &&
+          JSON.stringify(s.b) === JSON.stringify(planned.b),
+        "Evidence differs from persisted operation intent",
+      );
+      return s;
+    };
+    try {
+      await load(api, pr);
+    } catch (error) {
+      // Only this pre-mint window delegates cleanup; approve owns later failures.
+      await trustedCandidate(api, pr, revision);
+      controls.invalidate();
+      throw error;
+    }
+    credential = await controls.mint();
+    return await approve(
+      credential.client,
+      pr,
+      `run-${planned.run}-attempt-${planned.attempt}`,
+      load,
+      uncertain,
+      outcome,
+    );
+  } finally {
+    try {
+      await controls.persist(outcome);
+    } finally {
+      if (credential) await credential.revoke();
+    }
+  }
+}
 if (import.meta.main) {
   let invalidate = false;
   try {
@@ -62,6 +146,13 @@ if (import.meta.main) {
       "PR must be a positive integer",
     );
     const api = new Github(process.env.GITHUB_TOKEN!);
+    const mint = async () => {
+      const credential = await installationToken();
+      return {
+        client: new Github(process.env.GITHUB_TOKEN!, credential.token),
+        revoke: credential.revoke,
+      };
+    };
     const startArtifacts = startSelection(event.inputs ?? {});
     const current = await api.get(`/repos/${repository}/git/ref/heads/dev`);
     requireThat(
@@ -73,20 +164,16 @@ if (import.meta.main) {
         event.inputs?.mode === "approve" && Number.isSafeInteger(pr) && pr > 0,
         "Invalid withdrawal context",
       );
-      await trustedCandidate(api, pr, process.env.GITHUB_WORKFLOW_SHA);
-      const credential = await installationToken();
-      try {
-        console.log(
-          JSON.stringify({
-            withdrawn: await withdraw(
-              new Github(process.env.GITHUB_TOKEN!, credential.token),
-              pr,
-            ),
-          }),
-        );
-      } finally {
-        await credential.revoke();
-      }
+      console.log(
+        JSON.stringify({
+          withdrawn: await invalidateCandidate(
+            api,
+            pr,
+            process.env.GITHUB_WORKFLOW_SHA,
+            mint,
+          ),
+        }),
+      );
       process.exit(0);
     }
     if (process.argv[2] === "intent") {
@@ -224,62 +311,27 @@ if (import.meta.main) {
             JSON.stringify(startArtifacts),
         "Approval lacks this run's persisted intent",
       );
-      const outcome: OperationOutcome = {
-        attempted: false,
-        resolved: false,
-        reviews: [],
-      };
-      let credential: Awaited<ReturnType<typeof installationToken>> | undefined;
-      try {
-        const uncertain = await uncertainIntents(
-          api,
-          pr,
-          planned.run,
-          planned.attempt,
-        );
-        const candidate = await trustedCandidate(
-          api,
-          pr,
-          process.env.GITHUB_WORKFLOW_SHA,
-        );
-        requireThat(
-          JSON.stringify(candidate) === JSON.stringify(planned.b),
-          "Candidate changed before credential creation",
-        );
-        const load = async (client: Api, number: number) => {
-          const s = await snapshot(client, number, Date.now(), startArtifacts);
-          requireThat(
-            s.b.base === process.env.GITHUB_WORKFLOW_SHA &&
-              s.digest === planned.digest &&
-              JSON.stringify(s.b) === JSON.stringify(planned.b),
-            "Evidence differs from persisted operation intent",
-          );
-          return s;
-        };
-        await load(api, pr);
-        credential = await installationToken();
-        console.log(
-          JSON.stringify(
-            await approve(
-              new Github(process.env.GITHUB_TOKEN!, credential.token),
-              pr,
-              `run-${planned.run}-attempt-${planned.attempt}`,
-              load,
-              uncertain,
-              outcome,
-            ),
+      console.log(
+        JSON.stringify(
+          await approveCandidate(
+            api,
+            planned,
+            process.env.GITHUB_WORKFLOW_SHA,
+            startArtifacts,
+            {
+              invalidate: () => {
+                invalidate = true;
+              },
+              persist: (outcome) =>
+                Bun.write(
+                  process.env.APPROVAL_INTENT_PATH!,
+                  JSON.stringify({ ...planned, outcome }) + "\n",
+                ),
+              mint,
+            },
           ),
-        );
-      } finally {
-        try {
-          await Bun.write(
-            process.env.APPROVAL_INTENT_PATH!,
-            JSON.stringify({ ...planned, outcome }) + "\n",
-          );
-        } finally {
-          if (credential) await credential.revoke();
-        }
-      }
+        ),
+      );
     }
   } catch (error) {
     if (invalidate && process.env.GITHUB_OUTPUT)

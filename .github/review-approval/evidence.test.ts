@@ -309,7 +309,6 @@ function candidateExecutor(api: EvidenceApi) {
   root.find((e) => e.path === ".github").sha = "8".repeat(40);
   api.trees["8".repeat(40)] = github;
   const workflows = structuredClone(api.trees["a".repeat(40)]);
-  github.find((e) => e.path === "workflows").sha = "7".repeat(40);
   api.trees["7".repeat(40)] = workflows;
   const tools = structuredClone(api.trees["f".repeat(40)]);
   root.find((e) => e.path === "tools").sha = "6".repeat(40);
@@ -372,7 +371,13 @@ for (const [label, change] of Object.entries({
 }))
   test(`executor refuses ${label} before any credential or approval write`, async () => {
     const api = new EvidenceApi();
-    change(candidateExecutor(api));
+    const candidate = candidateExecutor(api);
+    change(candidate);
+    if (
+      JSON.stringify(candidate.workflows) !==
+      JSON.stringify(api.trees["a".repeat(40)])
+    )
+      candidate.github.find((e) => e.path === "workflows").sha = "7".repeat(40);
     let external = 0,
       writes = 0;
     const originalFetch = globalThis.fetch;
