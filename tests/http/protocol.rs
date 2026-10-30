@@ -456,7 +456,11 @@ fn http_validates_requests_before_business_work_and_describes_actual_routes() {
                     assert_eq!(value["components"]["schemas"][schema]["properties"]["code"]["pattern"], "^[0-9]{6}$");
                 }
                 let paths = value["paths"].as_object().expect("paths");
-                assert_eq!(paths.len(), 94);
+                assert_eq!(paths.len(), 96);
+                assert_eq!(paths["/api/v1/workforce/applications"]["get"]["operationId"],"workforceApplications");
+                assert_eq!(paths["/api/v1/workforce/applications/{id}"]["get"]["operationId"],"workforceApplication");
+                assert_eq!(paths["/api/v1/workforce/applications/{id}/reviews"]["post"]["operationId"],"workforceApplicationReview");
+                assert_eq!(paths["/api/v1/workforce/applications/{id}/reviews"]["post"]["responses"]["409"]["description"],"state_changed or applicant_unavailable");
                 assert_eq!(paths["/api/v1/sessions"]["get"]["operationId"], "listOwnSessions");
                 assert_eq!(paths["/api/v1/sessions/{id}"]["delete"]["operationId"], "revokeOtherSession");
                 let active = &value["components"]["schemas"]["session.Active"];

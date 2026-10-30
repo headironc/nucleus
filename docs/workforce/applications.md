@@ -47,7 +47,7 @@ snapshot 是整体保存的 JSON 对象，至少包含下列实际内容：
 
 取消只接受 submitted、approved、ready 三种状态；rejected、issued、cancelled 都是终态。本人在账户正常时可取消自己的申请。有当前审批权及对象范围的管理者也可取消，包含对象已失去参与资格的情况；管理取消保留安全说明。取消采用状态条件更新并同事务写审计，不另建 Cancellation 或 Termination 表。取消不删除已有成品、快照或审批结果。
 
-申请人的账户或参与资格失效后，禁止新提交、批准、生成和发放，管理者仍可按权限查看并取消。资料文字变化只提示差异。恢复资格后按当前状态办理，不沿旧 Grant、持有期或版本链判断来源；已取消、驳回或发放的申请不重开。
+申请人的账户或参与资格失效后，禁止新提交、批准、生成和发放。管理者仍可按当前权限查看、附理由驳回或取消。资料文字变化、目录停用或当前工号暂缺只提示差异，不阻止审批。恢复资格后按当前状态办理，不沿旧 Grant、持有期或版本链判断来源；已取消、驳回或发放的申请不重开。
 
 ## 数据结构
 
@@ -85,6 +85,14 @@ JSON 中的科室、职务、职称、照片、背景和字体引用使用数据
 `snapshot` 包含 `name`、完整 `number`、`printedNumber`、`department: {id, name, printed}`、可空的 `position: {rosterId, name}` 与 `title: {id, name}`、`printedTitle`、`photoId`、`template`、`pickup` 和实际文字行 `text`。布局和行的单位及完整文字定位见[媒体规则](media.md#文字排版)。`photo` 是不可变照片元数据，含 `photoId`、`resourceId`、`width`、`height` 和 `mediaType`，供预览和历史详情定位字节及保持原比例；不把照片尺寸另存为可变牌面事实。
 
 本人列表使用[共同分页](../http/lists.md)，按 `submittedAt DESC, id DESC` 排序。正常账户及活跃 Grant 返回 `{code: "ok", access: "full", count, applications}`；每项含 `id`、`kind`、`status`、`submittedAt`、`snapshot` 和 `photo`。当前没有工号仍可读完整历史。Grant 暂停或结束时返回 `access: "restricted"`，只列未发放可取消申请，每项恰为 `{id, kind, status, submittedAt}`，没有快照和照片。详情采用同一 `access` 区分，单项位于 `application`。他人或不可披露目标统一为 `404 target_unavailable`；失效会话或账户为 `401 authentication_invalid`。
+
+完整申请的 `approved` 状态另含稳定 `reviewerId` 和数据库时间 `reviewedAt`；`rejected` 再含非空 `rejectionReason`。`submitted` 不含审核字段。受限列表的条目、详情和 `count` 使用同一可取消状态范围，不计入或披露驳回记录及审核字段。
+
+管理入口要求当前正常账户、活跃参与资格和 `workforce.approval`，按全单位范围读取。当前角色的数字等级不参与工牌对象判断，也不从自选科室推导范围。管理列表使用相同分页与排序，`status` 可选 `submitted`、`approved` 或 `rejected`，省略为 `submitted`。返回 `{code: "ok", count, applications}`，每项为四字段摘要加固定 `name`、`printedNumber`、`department`；不提供手机号或证件号搜索。
+
+管理详情返回 `{code: "ok", application, current}`。`application` 为完整固定申请；`current` 含当前 `name`、可空 `number`、`accountActive`、`participationActive`，以及所选 `department`、可空 `position` 和 `title` 的当前 `{name, enabled}`。页面对比当前值与快照提示差异；这些当前值不改写原牌面。申请人无当前工号时 `number` 为 `null`，仍可批准。详情不返回手机号或完整证件号。
+
+审核正文为 `{decision: "approve"}` 或 `{decision: "reject", reason}`，上限 8 KiB。理由去首尾空白后必须非空，不接受 NUL。成功返回 `200` 和 `{code: "ok", application}`。已经决定为 `409 state_changed`；申请人账户或资格失效时批准为 `409 applicant_unavailable`，有权者仍可驳回。未知提交为 `503 outcome_unknown`，只刷新管理详情，不自动重发。批准仅保存 `approved`，不生成成品。
 
 | 路由                                                   | 结果                   |
 | ------------------------------------------------------ | ---------------------- |

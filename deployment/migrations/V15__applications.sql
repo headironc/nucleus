@@ -26,8 +26,18 @@ CREATE TABLE workforce.applications (
     id uuid PRIMARY KEY,
     person_id uuid NOT NULL REFERENCES identity.persons (id),
     kind text NOT NULL CHECK (kind IN ('issuance', 'duplication', 'replacement')),
-    status text NOT NULL DEFAULT 'submitted' CHECK (status = 'submitted'),
+    status text NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted', 'approved', 'rejected')),
     submitted_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
+    reviewer_id uuid REFERENCES identity.persons (id),
+    reviewed_at timestamptz,
+    rejection_reason text,
+    CONSTRAINT applications_review_check CHECK (
+        (status = 'submitted' AND reviewer_id IS NULL AND reviewed_at IS NULL AND rejection_reason IS NULL)
+        OR (status IN ('approved', 'rejected') AND reviewer_id IS NOT NULL
+            AND reviewed_at IS NOT NULL AND reviewed_at >= submitted_at
+            AND ((status = 'approved' AND rejection_reason IS NULL)
+                OR (status = 'rejected' AND rejection_reason IS NOT NULL
+                    AND length(btrim(rejection_reason, U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000')) > 0)))),
     snapshot jsonb NOT NULL,
     -- Projection columns give the JSON's one owned reference real database protection.
     department_id uuid GENERATED ALWAYS AS ((snapshot->'department'->>'id')::uuid) STORED NOT NULL
@@ -79,6 +89,8 @@ CREATE TABLE workforce.applications (
 );
 CREATE INDEX applications_person_id_submitted_at_id_idx
     ON workforce.applications (person_id, submitted_at DESC, id DESC);
+CREATE INDEX applications_status_submitted_at_id_idx
+    ON workforce.applications (status, submitted_at DESC, id DESC);
 
 CREATE SCHEMA audit;
 CREATE TABLE audit.events (
@@ -91,7 +103,34 @@ CREATE TABLE audit.events (
     details jsonb NOT NULL CHECK (jsonb_typeof(details) = 'object')
 );
 
--- Runtime grants are append-only; these triggers also protect retained facts from accidental
+-- Retained facts also remain protected against accidental maintenance writes.
+CREATE FUNCTION workforce.protect_application() RETURNS trigger
+LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.status <> 'submitted' THEN
+            RAISE EXCEPTION 'applications start awaiting review'
+                USING ERRCODE = '23514', CONSTRAINT = 'applications_transition_check';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'applications must be retained'
+            USING ERRCODE = '23514', CONSTRAINT = 'applications_immutable_check';
+    END IF;
+    IF OLD.status <> 'submitted' OR NEW.status NOT IN ('approved', 'rejected')
+        OR ROW(NEW.id, NEW.person_id, NEW.kind, NEW.submitted_at, NEW.snapshot)
+            IS DISTINCT FROM ROW(OLD.id, OLD.person_id, OLD.kind, OLD.submitted_at, OLD.snapshot) THEN
+        RAISE EXCEPTION 'only one review may change an application'
+            USING ERRCODE = '23514', CONSTRAINT = 'applications_transition_check';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER applications_immutable BEFORE INSERT OR UPDATE OR DELETE ON workforce.applications
+    FOR EACH ROW EXECUTE FUNCTION workforce.protect_application();
+
+-- These triggers also protect retained facts from accidental
 -- writes through a maintenance identity. They do not claim to detect database tampering.
 CREATE FUNCTION workforce.reject_application_mutation() RETURNS trigger
 LANGUAGE plpgsql SET search_path = '' AS $$
@@ -100,8 +139,6 @@ BEGIN
         USING ERRCODE = '23514', CONSTRAINT = 'applications_immutable_check';
 END
 $$;
-CREATE TRIGGER applications_immutable BEFORE UPDATE OR DELETE ON workforce.applications
-    FOR EACH ROW EXECUTE FUNCTION workforce.reject_application_mutation();
 CREATE TRIGGER photos_immutable BEFORE UPDATE OR DELETE ON workforce.photos
     FOR EACH ROW EXECUTE FUNCTION workforce.reject_application_mutation();
 CREATE TRIGGER resources_immutable BEFORE UPDATE OR DELETE ON workforce.resources

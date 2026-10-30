@@ -142,6 +142,57 @@ fn fixed_badges_use_trusted_preview_and_private_resources_without_request_dedupl
             assert_eq!(listed["access"],"full");assert_eq!(listed["count"],4);
             let detail=get(&format!("/api/v1/workforce/current/applications/{}",ids[0]),&manager).send().await.expect("detail").json::<Value>().await.expect("detail");
             assert_eq!(detail["application"]["snapshot"],preview["snapshot"]);
+            let management = get("/api/v1/workforce/applications", &manager).send().await.expect("management list");
+            assert_eq!(management.status(),200);
+            let management = management.json::<Value>().await.expect("management JSON");
+            assert_eq!(management["count"],4);
+            assert_eq!(management["applications"][0].as_object().expect("fixed management summary").len(),7);
+            for query in ["page=0","size=101","page=1&page=2","status=ready","mobile=13800138000"] {
+                assert_eq!(get(&format!("/api/v1/workforce/applications?{query}"),&manager).send().await.expect("invalid management query").status(),400);
+            }
+            for path in ["/api/v1/workforce/applications".to_owned(),format!("/api/v1/workforce/applications/{}",ids[0])] {
+                let denied=get(&path,&other).send().await.expect("approval permission required");
+                assert_eq!(denied.status(),403);
+                assert_eq!(denied.json::<Value>().await.expect("safe denial"),json!({"code":"permission_denied"}));
+            }
+            let management_detail=get(&format!("/api/v1/workforce/applications/{}",ids[0]),&manager).send().await.expect("management detail").json::<Value>().await.expect("management detail JSON");
+            assert_eq!(management_detail["application"]["snapshot"],preview["snapshot"]);
+            assert_eq!(management_detail["current"]["accountActive"],true);
+            assert!(management_detail["current"].get("mobile").is_none());
+            assert!(management_detail["current"].get("idNumber").is_none());
+            let review_path=format!("/api/v1/workforce/applications/{}/reviews",ids[0]);
+            for input in [json!({"decision":"reject","reason":"  "}),json!({"decision":"reject"}),json!({"decision":"approve","reason":"unexpected"}),json!({"decision":"approved"})] {
+                cadence.tick().await;
+                assert_eq!(post(&review_path,&manager).json(&input).send().await.expect("invalid decision").status(),422);
+            }
+            assert_eq!(post(&review_path,&manager).header("content-type","application/json").body(" ".repeat(8193)).send().await.expect("review body budget").status(),413);
+            let denied=post(&review_path,&other).json(&json!({"decision":"approve"})).send().await.expect("ordinary member cannot review");
+            assert_eq!(denied.status(),403);
+            cadence.tick().await;
+            let approved=post(&review_path,&manager).json(&json!({"decision":"approve"})).send().await.expect("approval");
+            assert_eq!(approved.status(),200);
+            assert_eq!(approved.headers()["cache-control"],"no-store");
+            assert!(!approved.headers().contains_key("set-cookie"));
+            let approved=approved.json::<Value>().await.expect("approved application");
+            assert_eq!(approved["application"]["status"],"approved");
+            assert!(approved["application"]["reviewerId"].is_string());
+            assert!(approved["application"]["reviewedAt"].is_string());
+            assert!(approved["application"].get("rejectionReason").is_none());
+            assert_eq!(approved["application"]["snapshot"],preview["snapshot"]);
+            cadence.tick().await;
+            let repeated=post(&review_path,&manager).json(&json!({"decision":"reject","reason":"Late change"})).send().await.expect("conditional decision");
+            assert_eq!(repeated.status(),409);
+            assert_eq!(repeated.json::<Value>().await.expect("state conflict"),json!({"code":"state_changed"}));
+            cadence.tick().await;
+            let rejected=post(&format!("/api/v1/workforce/applications/{}/reviews",ids[1]),&manager).json(&json!({"decision":"reject","reason":"  Please correct the photograph  "})).send().await.expect("reasoned rejection");
+            assert_eq!(rejected.status(),200);
+            let rejected=rejected.json::<Value>().await.expect("rejected application");
+            assert_eq!(rejected["application"]["rejectionReason"],"Please correct the photograph");
+            let own=get(&format!("/api/v1/workforce/current/applications/{}",ids[1]),&manager).send().await.expect("own rejection").json::<Value>().await.expect("own JSON");
+            assert_eq!(own["application"],rejected["application"]);
+            let filtered=get("/api/v1/workforce/applications?status=submitted",&manager).send().await.expect("filtered list").json::<Value>().await.expect("filtered JSON");
+            assert_eq!(filtered["count"],2);
+            assert!(filtered["applications"].as_array().expect("filtered rows").iter().all(|row|row["status"]=="submitted"));
             assert_eq!(get(&format!("/api/v1/workforce/current/applications/{}",ids[0]),&institution).send().await.expect("concealed").status(),404);
             assert_eq!(get(&format!("/api/v1/workforce/current/applications/{}",ids[0]),&other).send().await.expect("active other participant is concealed").status(),404);
             let resource_path=format!("/api/v1/workforce/application-resources/{}",photo["resourceId"].as_str().expect("resource id"));
@@ -168,7 +219,7 @@ fn fixed_badges_use_trusted_preview_and_private_resources_without_request_dedupl
             for path in ["/api/v1/workforce/applications/preview","/api/v1/workforce/applications"] {
                 assert_eq!(schema["paths"][path]["post"]["responses"]["404"]["description"],"target_unavailable");
             }
-            for path in ["/api/v1/workforce/application-template","/api/v1/workforce/application-photos","/api/v1/workforce/applications/preview","/api/v1/workforce/applications","/api/v1/workforce/current/applications","/api/v1/workforce/current/applications/{id}","/api/v1/workforce/application-resources/{id}"] {
+            for path in ["/api/v1/workforce/application-template","/api/v1/workforce/application-photos","/api/v1/workforce/applications/preview","/api/v1/workforce/applications","/api/v1/workforce/current/applications","/api/v1/workforce/current/applications/{id}","/api/v1/workforce/application-resources/{id}","/api/v1/workforce/applications/{id}","/api/v1/workforce/applications/{id}/reviews"] {
                 let route=&schema["paths"][path];
                 let operation=if route.get("post").is_some() {&route["post"]} else {&route["get"]};
                 for (status,code) in [("400","invalid_input"),("403","permission_denied"),("413","invalid_input"),("415","invalid_input"),("429","rate_limited"),("500","internal_error")] {

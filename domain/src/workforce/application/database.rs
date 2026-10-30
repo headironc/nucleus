@@ -6,8 +6,9 @@ use crate::{
     identity::person,
     pagination::Pagination,
     workforce::application::{
-        Application, Detail, Error, Id, Kind, List, Photo, PhotoId, ResourceId, Snapshot, Status,
-        Summary, Template,
+        Application, Decision, Detail, DirectoryValue, Error, Id, Kind, List, ManagedList,
+        ManagedSummary, ManagementQuery, Photo, PhotoId, ResourceId, Snapshot, Status, Summary,
+        Template,
     },
 };
 
@@ -89,13 +90,16 @@ impl TryFrom<Row> for Summary {
             "replacement" => Kind::Replacement,
             _ => return Err(Error::Configuration),
         };
-        if row.try_get::<_, &str>("status")? != "submitted" {
-            return Err(Error::Configuration);
-        }
+        let status = match row.try_get::<_, &str>("status")? {
+            "submitted" => Status::Submitted,
+            "approved" => Status::Approved,
+            "rejected" => Status::Rejected,
+            _ => return Err(Error::Configuration),
+        };
         Ok(Self {
             id: row.try_get("id")?,
             kind,
-            status: Status::Submitted,
+            status,
             submitted_at: row.try_get("submitted_at")?,
         })
     }
@@ -106,8 +110,36 @@ impl TryFrom<Row> for Application {
     fn try_from(row: Row) -> Result<Self, Error> {
         let snapshot = serde_json::from_str(row.try_get::<_, &str>("snapshot")?)?;
         let photo = Photo::try_from(&row)?;
+        let reviewer = row.try_get("reviewer_id")?;
+        let reviewed = row.try_get("reviewed_at")?;
+        let reason: Option<String> = row.try_get("rejection_reason")?;
+        let summary = Summary::try_from(row)?;
+        let decision = match (summary.status, reviewer, reviewed, reason) {
+            (Status::Submitted, None, None, None) => Decision::Submitted,
+            (Status::Approved, Some(reviewer_id), Some(reviewed_at), None)
+                if reviewed_at >= summary.submitted_at =>
+            {
+                Decision::Approved {
+                    reviewer_id,
+                    reviewed_at,
+                }
+            }
+            (Status::Rejected, Some(reviewer_id), Some(reviewed_at), Some(reason))
+                if reviewed_at >= summary.submitted_at =>
+            {
+                Decision::Rejected {
+                    reviewer_id,
+                    reviewed_at,
+                    rejection_reason: reason.try_into().map_err(|_| Error::Configuration)?,
+                }
+            }
+            _ => return Err(Error::Configuration),
+        };
         Ok(Self {
-            summary: row.try_into()?,
+            id: summary.id,
+            kind: summary.kind,
+            submitted_at: summary.submitted_at,
+            decision,
             snapshot,
             photo,
         })
@@ -138,13 +170,13 @@ pub(super) async fn list(
 ) -> Result<List, Error> {
     let count = client
         .query_one(
-            "SELECT count(*) FROM workforce.applications WHERE person_id=$1",
-            &[&person],
+            "SELECT count(*) FROM workforce.applications WHERE person_id=$1 AND ($2 OR status IN ('submitted','approved'))",
+            &[&person, &active],
         )
         .await?
         .try_get(0)?;
     if active {
-        let rows = client.query("SELECT application.id,application.kind,application.status,application.submitted_at,application.snapshot::text,photo.id AS photo_id,photo.resource_id,photo.width,photo.height FROM workforce.applications application JOIN workforce.photos photo ON photo.id=application.photo_id WHERE application.person_id=$1 ORDER BY application.submitted_at DESC,application.id DESC LIMIT $2 OFFSET $3", &[&person,&pagination.size(),&pagination.offset()]).await?;
+        let rows = client.query("SELECT application.id,application.kind,application.status,application.submitted_at,application.reviewer_id,application.reviewed_at,application.rejection_reason,application.snapshot::text,photo.id AS photo_id,photo.resource_id,photo.width,photo.height FROM workforce.applications application JOIN workforce.photos photo ON photo.id=application.photo_id WHERE application.person_id=$1 ORDER BY application.submitted_at DESC,application.id DESC LIMIT $2 OFFSET $3", &[&person,&pagination.size(),&pagination.offset()]).await?;
         Ok(List::Full {
             count,
             applications: rows
@@ -153,7 +185,7 @@ pub(super) async fn list(
                 .collect::<Result<_, _>>()?,
         })
     } else {
-        let rows = client.query("SELECT id,kind,status,submitted_at FROM workforce.applications WHERE person_id=$1 AND status='submitted' ORDER BY submitted_at DESC,id DESC LIMIT $2 OFFSET $3", &[&person,&pagination.size(),&pagination.offset()]).await?;
+        let rows = client.query("SELECT id,kind,status,submitted_at FROM workforce.applications WHERE person_id=$1 AND status IN ('submitted','approved') ORDER BY submitted_at DESC,id DESC LIMIT $2 OFFSET $3", &[&person,&pagination.size(),&pagination.offset()]).await?;
         Ok(List::Restricted {
             count,
             applications: rows
@@ -171,12 +203,12 @@ pub(super) async fn detail(
     id: Id,
 ) -> Result<Detail, Error> {
     if active {
-        let row = client.query_opt("SELECT application.id,application.kind,application.status,application.submitted_at,application.snapshot::text,photo.id AS photo_id,photo.resource_id,photo.width,photo.height FROM workforce.applications application JOIN workforce.photos photo ON photo.id=application.photo_id WHERE application.person_id=$1 AND application.id=$2", &[&person,&id]).await?.ok_or(Error::TargetUnavailable)?;
+        let row = client.query_opt("SELECT application.id,application.kind,application.status,application.submitted_at,application.reviewer_id,application.reviewed_at,application.rejection_reason,application.snapshot::text,photo.id AS photo_id,photo.resource_id,photo.width,photo.height FROM workforce.applications application JOIN workforce.photos photo ON photo.id=application.photo_id WHERE application.person_id=$1 AND application.id=$2", &[&person,&id]).await?.ok_or(Error::TargetUnavailable)?;
         Ok(Detail::Full {
             application: Box::new(row.try_into()?),
         })
     } else {
-        let row = client.query_opt("SELECT id,kind,status,submitted_at FROM workforce.applications WHERE person_id=$1 AND id=$2 AND status='submitted'", &[&person,&id]).await?.ok_or(Error::TargetUnavailable)?;
+        let row = client.query_opt("SELECT id,kind,status,submitted_at FROM workforce.applications WHERE person_id=$1 AND id=$2 AND status IN ('submitted','approved')", &[&person,&id]).await?.ok_or(Error::TargetUnavailable)?;
         Ok(Detail::Restricted {
             application: row.try_into()?,
         })
@@ -188,11 +220,145 @@ pub(super) async fn readable_resource(
     person: person::Id,
     id: ResourceId,
     template: &Template,
+    manager: bool,
 ) -> Result<(u64, String, Option<person::Id>), Error> {
-    let row = client.query_opt("SELECT resource.size,resource.media_type,CASE WHEN resource.kind='photo' THEN $2::uuid END FROM workforce.resources resource WHERE resource.id=$1 AND (EXISTS (SELECT 1 FROM workforce.photos photo WHERE photo.resource_id=resource.id AND photo.person_id=$2) OR (resource.kind IN ('background','font') AND (resource.id=$3 OR resource.id=$4 OR EXISTS (SELECT 1 FROM workforce.applications application WHERE application.person_id=$2 AND (application.background_id=resource.id OR application.font_id=resource.id)))))", &[&id,&person,&template.background_id,&template.font_id]).await?.ok_or(Error::TargetUnavailable)?;
+    let row = client.query_opt("SELECT resource.size,resource.media_type,(SELECT photo.person_id FROM workforce.photos photo WHERE photo.resource_id=resource.id) FROM workforce.resources resource WHERE resource.id=$1 AND (EXISTS (SELECT 1 FROM workforce.photos photo WHERE photo.resource_id=resource.id AND photo.person_id=$2) OR (resource.kind IN ('background','font') AND (resource.id=$3 OR resource.id=$4 OR EXISTS (SELECT 1 FROM workforce.applications application WHERE application.person_id=$2 AND (application.background_id=resource.id OR application.font_id=resource.id)))) OR ($5 AND EXISTS (SELECT 1 FROM workforce.applications application WHERE application.photo_id IN (SELECT photo.id FROM workforce.photos photo WHERE photo.resource_id=resource.id) OR application.background_id=resource.id OR application.font_id=resource.id)))", &[&id,&person,&template.background_id,&template.font_id,&manager]).await?.ok_or(Error::TargetUnavailable)?;
     Ok((
         u64::try_from(row.try_get::<_, i64>(0)?).map_err(|_| Error::Configuration)?,
         row.try_get(1)?,
         row.try_get(2)?,
     ))
+}
+
+pub(super) async fn managed_list(
+    client: &Client,
+    query: ManagementQuery,
+) -> Result<ManagedList, Error> {
+    let status = match query.status {
+        Status::Submitted => "submitted",
+        Status::Approved => "approved",
+        Status::Rejected => "rejected",
+    };
+    let count = client
+        .query_one(
+            "SELECT count(*) FROM workforce.applications WHERE status=$1",
+            &[&status],
+        )
+        .await?
+        .try_get(0)?;
+    let rows = client.query("SELECT id,kind,status,submitted_at,snapshot::text FROM workforce.applications WHERE status=$1 ORDER BY submitted_at DESC,id DESC LIMIT $2 OFFSET $3", &[&status,&query.pagination.size(),&query.pagination.offset()]).await?;
+    let applications = rows
+        .into_iter()
+        .map(|row| {
+            let snapshot: Snapshot = serde_json::from_str(row.try_get::<_, &str>("snapshot")?)?;
+            Ok(ManagedSummary {
+                summary: row.try_into()?,
+                name: snapshot.name,
+                printed_number: snapshot.printed_number,
+                department: snapshot.department,
+            })
+        })
+        .collect::<Result<_, Error>>()?;
+    Ok(ManagedList {
+        count,
+        applications,
+    })
+}
+
+pub(super) async fn owner(client: &Client, id: Id) -> Result<person::Id, Error> {
+    client
+        .query_opt(
+            "SELECT person_id FROM workforce.applications WHERE id=$1",
+            &[&id],
+        )
+        .await?
+        .ok_or(Error::TargetUnavailable)?
+        .try_get(0)
+        .map_err(Error::from)
+}
+
+pub(super) async fn managed_application(client: &Client, id: Id) -> Result<Application, Error> {
+    let row = client.query_opt("SELECT application.id,application.kind,application.status,application.submitted_at,application.reviewer_id,application.reviewed_at,application.rejection_reason,application.snapshot::text,photo.id AS photo_id,photo.resource_id,photo.width,photo.height FROM workforce.applications application JOIN workforce.photos photo ON photo.id=application.photo_id WHERE application.id=$1", &[&id]).await?.ok_or(Error::TargetUnavailable)?;
+    row.try_into()
+}
+
+pub(super) async fn current_directory(
+    client: &Client,
+    snapshot: &Snapshot,
+) -> Result<
+    (
+        DirectoryValue,
+        Option<DirectoryValue>,
+        Option<DirectoryValue>,
+    ),
+    Error,
+> {
+    let choices = crate::workforce::directory::Service::selectable(client).await?;
+    let row = client
+        .query_one(
+            "SELECT name FROM workforce.departments WHERE id=$1",
+            &[&snapshot.department.id],
+        )
+        .await?;
+    let department = DirectoryValue {
+        name: row
+            .try_get::<_, crate::workforce::directory::Name>(0)?
+            .as_str()
+            .to_owned(),
+        enabled: choices
+            .departments()
+            .iter()
+            .any(|department| department.id() == snapshot.department.id),
+    };
+    let position = if let Some(position) = &snapshot.position {
+        let row = client.query_one("SELECT position.name FROM workforce.rosters roster JOIN workforce.positions position ON position.id=roster.position_id WHERE roster.id=$1", &[&position.roster_id]).await?;
+        Some(DirectoryValue {
+            name: row
+                .try_get::<_, crate::workforce::directory::Name>(0)?
+                .as_str()
+                .to_owned(),
+            enabled: choices
+                .positions()
+                .iter()
+                .any(|entry| entry.entry_id() == position.roster_id),
+        })
+    } else {
+        None
+    };
+    let title = if let Some(title) = &snapshot.title {
+        let row = client
+            .query_one(
+                "SELECT name FROM workforce.titles WHERE id=$1",
+                &[&title.id],
+            )
+            .await?;
+        Some(DirectoryValue {
+            name: row
+                .try_get::<_, crate::workforce::directory::Name>(0)?
+                .as_str()
+                .to_owned(),
+            enabled: choices.titles().iter().any(|entry| entry.id() == title.id),
+        })
+    } else {
+        None
+    };
+    Ok((department, position, title))
+}
+
+pub(super) async fn review(
+    client: &Client,
+    id: Id,
+    reviewer: person::Id,
+    input: super::ReviewInput,
+) -> Result<Application, Error> {
+    let (status, reason) = match input {
+        super::ReviewInput::Approve => ("approved", None),
+        super::ReviewInput::Reject { reason } => ("rejected", Some(reason)),
+    };
+    let changed = client.execute("UPDATE workforce.applications SET status=$2,reviewer_id=$3,reviewed_at=statement_timestamp(),rejection_reason=$4 WHERE id=$1 AND status='submitted'", &[&id,&status,&reviewer,&reason]).await?;
+    if changed != 1 {
+        return Err(Error::StateChanged);
+    }
+    client.execute("INSERT INTO audit.events (actor_id,occurred_at,action,target_type,target_id,details) SELECT reviewer_id,reviewed_at,'workforce.application.' || status,'workforce.application',id,jsonb_build_object('previousStatus','submitted','status',status,'rejectionReason',rejection_reason) FROM workforce.applications WHERE id=$1", &[&id]).await?;
+    managed_application(client, id).await
 }
