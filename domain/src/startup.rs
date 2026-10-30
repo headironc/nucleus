@@ -20,7 +20,7 @@ use crate::{
     registration,
     runtime::{Context, registry::Registry, work::Work},
     suspension,
-    workforce::{directory, number},
+    workforce::{application, directory, number},
 };
 
 #[derive(Clone)]
@@ -43,6 +43,7 @@ pub struct Services {
     column: column::Service,
     directory: directory::Service,
     number: number::Service,
+    application: Box<application::Service>,
     context: Context,
     registry: Arc<Registry>,
     work: Arc<Work>,
@@ -58,6 +59,7 @@ pub struct Settings {
     avatar_retention: avatar::retention::Settings,
     avatar_storage: Option<avatar::storage::Settings>,
     avatar_limits: avatar::upload::Limits,
+    application: Option<Arc<application::Settings>>,
 }
 
 impl Settings {
@@ -76,11 +78,17 @@ impl Settings {
             avatar_retention: avatar::retention::Settings::default(),
             avatar_storage: None,
             avatar_limits: avatar::upload::Limits::default(),
+            application: None,
         })
     }
 
     pub fn with_avatar_retention(mut self, settings: avatar::retention::Settings) -> Self {
         self.avatar_retention = settings;
+        self
+    }
+
+    pub fn with_application(mut self, settings: application::Settings) -> Self {
+        self.application = Some(Arc::new(settings));
         self
     }
 
@@ -344,6 +352,9 @@ impl Services {
                 .await
                 .map_err(Error::AvatarFacts)?;
             registration::ready(barrier.client(), &app, now).await?;
+            if let Some(settings) = &settings.application {
+                application::Service::register(barrier.client(), settings).await?;
+            }
             verification::Stage::BarrierConfirmation
                 .query(Duration::from_secs(10), barrier.confirm())
                 .await??;
@@ -382,6 +393,12 @@ impl Services {
             let directory = directory::Service::prepare(app.clone(), current.clone());
             let column = column::Service::prepare(app.clone(), current.clone());
             let number = number::Service::prepare(app.clone(), current.clone(), Arc::clone(&keys));
+            let application = Box::new(application::Service::prepare(
+                app.clone(),
+                current.clone(),
+                number.clone(),
+                settings.application,
+            ));
             let appointment =
                 appointment::Service::prepare(app.clone(), current.clone(), Arc::clone(&keys));
             let account = account::Service::prepare(
@@ -422,6 +439,7 @@ impl Services {
                 column,
                 directory,
                 number,
+                application,
             ))
         }
         .await;
@@ -445,6 +463,7 @@ impl Services {
                 column,
                 directory,
                 number,
+                application,
             )) => {
                 ended?;
                 Ok(Self {
@@ -466,6 +485,7 @@ impl Services {
                     column,
                     directory,
                     number,
+                    application,
                     context,
                     registry,
                     work,
@@ -549,6 +569,10 @@ impl Services {
         &self.number
     }
 
+    pub fn application(&self) -> &application::Service {
+        &self.application
+    }
+
     pub fn close(&self) {
         self.registry.close();
     }
@@ -590,6 +614,8 @@ impl Services {
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    #[error("badge application preparation failed")]
+    Application(#[from] application::Error),
     #[error("{0}")]
     Initialization(#[from] initialize::Error),
     #[error("{0}")]

@@ -111,7 +111,8 @@ CREATE TABLE workforce.rosters (
     position_id uuid NOT NULL REFERENCES workforce.positions (id),
     enabled boolean NOT NULL,
     index integer NOT NULL CHECK (index >= 0),
-    UNIQUE (department_id, position_id)
+    UNIQUE (department_id, position_id),
+    UNIQUE (id, department_id)
 );
 CREATE INDEX rosters_position_id_idx ON workforce.rosters (position_id);
 

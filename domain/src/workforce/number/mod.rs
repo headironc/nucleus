@@ -297,6 +297,25 @@ pub(crate) async fn verify(
 }
 
 impl Service {
+    pub(crate) async fn current_in(
+        &self,
+        client: &Client,
+        person: person::Id,
+        now: DateTime<Utc>,
+        read: crate::history::Read,
+    ) -> Result<Option<Number>, Error> {
+        Ok(crate::history::find::<state::State>(
+            client,
+            self.app.keys(),
+            self.app.anchors(),
+            read,
+            person,
+            now,
+        )
+        .await?
+        .and_then(|state| state.current())
+        .map(|revision| revision.number()))
+    }
     pub(crate) fn prepare(app: App, current: current::Service, keys: Arc<keys::Keys>) -> Self {
         Self {
             roles: role::Reader::new(app.clone()),

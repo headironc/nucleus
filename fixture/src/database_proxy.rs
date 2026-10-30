@@ -796,6 +796,12 @@ async fn relay(
                         .windows(b"INSERT INTO workforce.allocations".len())
                         .any(|bytes| bytes == b"INSERT INTO workforce.allocations")
                     || message
+                        .windows(b"INSERT INTO workforce.applications".len())
+                        .any(|bytes| bytes == b"INSERT INTO workforce.applications")
+                    || message
+                        .windows(b"INSERT INTO workforce.photos".len())
+                        .any(|bytes| bytes == b"INSERT INTO workforce.photos")
+                    || message
                         .windows(b"INSERT INTO workforce.corrections".len())
                         .any(|bytes| bytes == b"INSERT INTO workforce.corrections")
                     || message

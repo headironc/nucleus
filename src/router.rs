@@ -116,6 +116,13 @@ async fn openapi(extract::State(document): extract::State<Bytes>) -> Response {
 async fn identify(request: extract::Request, next: Next) -> Response {
     if matches!(*request.method(), Method::GET | Method::HEAD)
         && (request.uri().path() == DOCUMENT
+            || request
+                .extensions()
+                .get::<extract::MatchedPath>()
+                .is_some_and(|path| {
+                    path.as_str().strip_prefix(PREFIX)
+                        == Some(crate::workforce::application::RESOURCE_ROUTE)
+                })
             || (request
                 .extensions()
                 .get::<extract::MatchedPath>()

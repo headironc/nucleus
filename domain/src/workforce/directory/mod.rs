@@ -113,6 +113,10 @@ impl From<tokio_postgres::Error> for Error {
             && matches!(
                 database.constraint(),
                 Some("departments_group_id_fkey")
+                    | Some("applications_department_id_fkey")
+                    | Some("applications_roster_id_fkey")
+                    | Some("applications_roster_department_fkey")
+                    | Some("applications_title_id_fkey")
                     | Some("departments_parent_id_group_id_fkey")
                     | Some("rules_department_id_fkey")
                     | Some("disciplines_category_id_fkey")
@@ -181,6 +185,11 @@ pub(crate) async fn verify(
 }
 
 impl Service {
+    /// A caller-owned transaction supplies the already authenticated participation decision.
+    pub(crate) async fn selectable(client: &Client) -> Result<selection::Selection, Error> {
+        database::fetch_selection(client).await
+    }
+
     pub(crate) fn prepare(app: App, current: current::Service) -> Self {
         Self {
             roles: role::Reader::new(app.clone()),

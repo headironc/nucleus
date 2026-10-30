@@ -48,6 +48,10 @@ impl Transport {
                 services.directory().clone(),
                 authentication.clone(),
             ))
+            .merge(workforce::application::router(
+                services.application().clone(),
+                authentication.clone(),
+            ))
             .merge(access::router(
                 services.role().clone(),
                 services.appointment().clone(),

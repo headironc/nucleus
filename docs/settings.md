@@ -89,6 +89,12 @@ C1 设置接收已校验的 `domain::identity::message::Limits`。该类型拥�
 
 只接受绝对 HTTPS URL 的 scheme、host 和可选端口，允许单个根斜杠。拒绝凭据、业务路径、query、fragment、空白与控制字符。依赖 URL 解析器自动修补才能成立的输入同样拒绝。
 
+### 3.3 固定工牌输入
+
+在线入口必填 `NUCLEUS_WORKFORCE__APPLICATION__BACKGROUND_PATH`、`BACKGROUND_MEDIA_TYPE`、`FONT_PATH`、`TEMPLATE` 和 `PICKUPS`，后四项使用同一 `NUCLEUS_WORKFORCE__APPLICATION__` 前缀。两个路径必须为绝对常规文件；背景声明 `image/jpeg`、`image/png` 或 `image/webp`，最多 8 MiB，字体最多 32 MiB。`TEMPLATE` 是[媒体合同](workforce/media.md#模板与固定资源)定义的 JSON 对象，`PICKUPS` 是非空 JSON 字符串数组，逐项非空且不含控制字符。每项按 JSON 序列化后最多 4 KiB，为预览输入的其他字段保留空间；引号和反斜杠的转义计入预算。字段未知、输入缺失或显式无效均拒绝，没有示例生产默认值。
+
+设置加载只解析值和来源路径。入口随后读取文件，工牌能力净化图片与字体、验证布局，并完整写入私有目录；共同启动在开放 HTTP 前接纳对应不可变资源。文件失败或配置缺失使在线启动失败。重复启动复用同资源 ID 的相同净化后字节；相同 ID 对应不同字节或媒体类型时拒绝，更换字节使用新 ID。单纯改变布局或领取地点不创建模板版本，后续快照保存当时值。生产材料和打印许可仍由部署者提供。
+
 ## 4. 可调项
 
 未提供时在反序列化阶段取所属模块的默认值，不保留可选字段。显式提供的越界值照常拒绝。时间以秒为单位，供应商超时以毫秒为单位。
