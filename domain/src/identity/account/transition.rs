@@ -123,6 +123,18 @@ pub(crate) fn logout(
     let only = match scope {
         Scope::All => None,
         Scope::Current => Some(initiator_id),
+        Scope::Other(id) => {
+            if id == initiator_id
+                || !sessions
+                    .iter()
+                    .any(|session| session.id() == id && session.available(now))
+            {
+                return Err(Error::Integrity(
+                    "other logout selects one effective other session",
+                ));
+            }
+            Some(id)
+        }
     };
     let sessions = revocations(
         original,

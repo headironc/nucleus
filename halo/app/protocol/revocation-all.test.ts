@@ -23,6 +23,49 @@ function respond(body: unknown, status = 200, type = `application/json`) {
 }
 
 vitest.describe(`the all-session logout protocol consumer`, () => {
+  vitest.it(
+    "validates an other-session original without treating it as an all-session completion",
+    async () => {
+      const collection = {
+        code: "ok",
+        original: { scope: "other" as const, initiatorId: original },
+        count: 1,
+        revocations: [{ id: second, revokedAt }],
+      };
+      respond(collection);
+      vitest
+        .expect(
+          await revocation.readAllRevocations(
+            operation,
+            original,
+            third,
+            signal,
+          ),
+        )
+        .toEqual({ kind: "collection", collection });
+      vitest
+        .expect(revocation.matchesOriginal(collection, "all", original))
+        .toBe(false);
+      respond({
+        ...collection,
+        count: 2,
+        revocations: [
+          { id: second, revokedAt },
+          { id: third, revokedAt },
+        ],
+      });
+      vitest
+        .expect(
+          await revocation.readAllRevocations(
+            operation,
+            original,
+            third,
+            signal,
+          ),
+        )
+        .toEqual({ kind: "untrusted" });
+    },
+  );
   vitest.it.each([
     undefined,
     null,
