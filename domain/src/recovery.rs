@@ -179,10 +179,10 @@ mod tests {
                 observer.client().batch_execute("BEGIN; SELECT pg_catalog.pg_advisory_xact_lock(2147483647, 2147483647)").await.expect("unrelated idle transaction owns an exclusive lock");
                 let operation_id = Uuid::new_v4().to_string().parse().expect("operation");
                 after_revocation(&database, &proxy, services.revocation(), &actor,
-                    services.affiliation().create(actor.clone(), operation_id, serde_json::from_value(serde_json::json!({"affiliation":"01"})).expect("first-fill input")))
+                    services.role().create(actor.clone(), operation_id, serde_json::from_value(serde_json::json!({"name":"Recovered Role", "level":20, "permissions":[]})).expect("legacy role input")))
                     .await.expect("accepted work recovers after actual revocation");
                 observer.client().batch_execute("ROLLBACK").await.expect("unrelated transaction ends");
-                let row = observer.client().query_one("SELECT (SELECT count(*) FROM center.affiliations WHERE operation_id=$1), EXISTS(SELECT 1 FROM identity.revocations WHERE id=$2 AND account_id=$3)", &[&operation_id, &actor.session_id(), &actor.account_id()]).await.expect("independent facts before replay or drain");
+                let row = observer.client().query_one("SELECT (SELECT count(*) FROM access.changes WHERE operation_id=$1), EXISTS(SELECT 1 FROM identity.revocations WHERE id=$2 AND account_id=$3)", &[&operation_id, &actor.session_id(), &actor.account_id()]).await.expect("independent legacy facts before replay or drain");
                 assert_eq!(row.get::<_, i64>(0), 1);
                 assert!(row.get::<_, bool>(1));
                 observer.terminate().await.expect("observer ended");

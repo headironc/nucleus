@@ -9,14 +9,11 @@ import type { Account } from "../protocol/session";
 import {
   AFFILIATION_CODES,
   type AffiliationCode,
-  type AffiliationValue,
   type AffiliationValuesResult,
   type AffiliationWriteResult,
   type CurrentAffiliationResult,
-  type NamedAffiliation,
 } from "../protocol/affiliation";
 import { Affiliation } from "./controller";
-import type { MarkerState } from "./marker";
 
 const id = "00000000-0000-4000-8000-000000000001";
 const other = "00000000-0000-4000-8000-000000000002";
@@ -45,16 +42,15 @@ const names = [
   "无党派民主人士",
   "群众",
 ];
-const options: NamedAffiliation[] = AFFILIATION_CODES.map((value, index) => ({
+const options = AFFILIATION_CODES.map((value, index) => ({
   value,
   name: names[index],
 }));
-const record: AffiliationValue = {
-  value: "04",
-  createdAt: "2026-10-25T03:04:05+08:00",
+const record = { value: "04" as const, createdAt: "2026-10-25T03:04:05+08:00" };
+const values: AffiliationValuesResult = {
+  kind: "values",
+  affiliations: options,
 };
-const values: AffiliationValuesResult = { kind: "values", affiliations: options };
-
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason?: unknown) => void;
@@ -64,7 +60,6 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
-
 function fixture() {
   let selected: BrowserSession | null = {
     version: 1,
@@ -73,23 +68,22 @@ function fixture() {
     attempt: null,
   };
   let now = 10_000;
-  let markerState: MarkerState = "absent";
-  let markerWritable = true;
-  let operationIndex = 0;
+  let operations = 0;
   const clear = vi.fn(async (expected: Selection) => {
     if (!sameSelection(selected, expected)) return false;
     selected = null;
     return true;
   });
-  const identity = vi.fn(async () => ({ kind: "account" as const, account }));
   const current = new Current({
     sessions: { read: async () => selected, clear },
-    current: identity,
+    current: async () => ({ kind: "account", account }),
     build: async () => true,
     now: () => now,
   });
   const read = vi
-    .fn<(id: string, signal: AbortSignal) => Promise<CurrentAffiliationResult>>()
+    .fn<
+      (id: string, signal: AbortSignal) => Promise<CurrentAffiliationResult>
+    >()
     .mockResolvedValue({ kind: "unset" });
   const readValues = vi
     .fn<(id: string, signal: AbortSignal) => Promise<AffiliationValuesResult>>()
@@ -104,26 +98,14 @@ function fixture() {
       ) => Promise<AffiliationWriteResult>
     >()
     .mockResolvedValue({ kind: "ok" });
-  const marker = {
-    read: vi.fn(() => markerState),
-    mark: vi.fn(() => {
-      if (!markerWritable) return false;
-      markerState = "present";
-      return true;
-    }),
-    clear: vi.fn(() => {
-      markerState = "absent";
-    }),
-  };
   const affiliation = new Affiliation({
     current,
     read,
     values: readValues,
     create,
-    marker,
     build: async () => true,
     now: () => now,
-    operation: () => [operation, laterOperation][operationIndex++] ?? laterOperation,
+    operation: () => (operations++ === 0 ? operation : laterOperation),
   });
   return {
     current,
@@ -131,33 +113,21 @@ function fixture() {
     read,
     readValues,
     create,
-    marker,
-    identity,
     clear,
-    selected: () => selected,
-    select: (session = other, revision = other) => {
-      selected = {
-        ...selected!,
-        revision,
-        session: { id: session, expiresAt: "2035-01-01T00:00:00Z" },
-      };
-    },
     advance: (ms: number) => {
       now += ms;
     },
-    markerState: (state: MarkerState) => {
-      markerState = state;
-    },
-    markerAvailable: (available: boolean) => {
-      markerWritable = available;
+    select: () => {
+      selected = {
+        ...selected!,
+        revision: other,
+        session: { id: other, expiresAt: "2035-01-01T00:00:00Z" },
+      };
     },
     ready: async () => {
       await current.verify();
-      await vi.waitFor(() =>
-        expect(affiliation.snapshot().kind).toBe("ready"),
-      );
     },
-    choose: async (code: AffiliationCode = "04") => {
+    choose: (code: AffiliationCode = "04") => {
       affiliation.startForm();
       affiliation.choose(code);
       affiliation.continueToConfirm();
@@ -168,116 +138,116 @@ function fixture() {
     },
   };
 }
-
+async function unset(f: ReturnType<typeof fixture>) {
+  await f.ready();
+  await vi.waitFor(() =>
+    expect(f.affiliation.snapshot()).toMatchObject({
+      panel: { kind: "unset" },
+    }),
+  );
+}
 afterEach(() => vi.useRealTimers());
 
-describe("first affiliation initial state", () => {
-  it.each(["present", "corrupt"] as const)(
-    "never reopens a fill from a %s marker, even when the record reads unset",
-    async (state) => {
-      const f = fixture();
-      f.markerState(state);
-      await f.ready();
-      await vi.waitFor(() =>
-        expect(f.affiliation.snapshot()).toMatchObject({
-          kind: "ready",
-          panel: { kind: "unknown", canRetry: false },
-        }),
-      );
-      expect(f.read).not.toHaveBeenCalled();
-      expect(f.readValues).not.toHaveBeenCalled();
-      f.affiliation.startForm();
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "unknown", canRetry: false },
-      });
-      f.close();
-    },
-  );
-
-  it("offers only an independent read when the marker is unavailable", async () => {
+describe("first affiliation reads", () => {
+  it("opens all thirteen options only after trusted unset and complete names", async () => {
     const f = fixture();
-    f.markerState("denied");
-    await f.ready();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        kind: "ready",
-        panel: { kind: "marker-unavailable" },
-      }),
-    );
-    expect(f.read).not.toHaveBeenCalled();
-    f.affiliation.viewCurrent();
-    expect(f.affiliation.snapshot()).toMatchObject({
-      current: { kind: "loading" },
-    });
-    f.close();
-  });
-
-  it("opens a 13-item form only after a trusted unset and complete vocabulary", async () => {
-    const f = fixture();
-    await f.ready();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        kind: "ready",
-        panel: { kind: "unset" },
-        current: { kind: "idle" },
-      }),
-    );
-    expect(f.marker.read).toHaveBeenCalledWith(id);
-    expect(f.read).toHaveBeenCalledWith(id, expect.any(AbortSignal));
+    await unset(f);
     f.affiliation.startForm();
-    const snapshot = f.affiliation.snapshot();
-    expect(snapshot.kind).toBe("ready");
-    if (snapshot.kind !== "ready") throw new Error("unreachable");
-    expect(snapshot.panel).toEqual({ kind: "form", choice: null });
-    expect(snapshot.options.map((entry) => entry.value)).toEqual(AFFILIATION_CODES);
-    expect(snapshot.options).toHaveLength(13);
+    f.affiliation.continueToConfirm();
+    expect(f.affiliation.snapshot()).toMatchObject({
+      panel: { kind: "form", choice: null },
+      options,
+    });
     expect(f.create).not.toHaveBeenCalled();
     f.close();
   });
-
-  it("requires reload when the protocol rejects the vocabulary", async () => {
+  it("requires reload when the vocabulary is untrusted", async () => {
     const f = fixture();
     f.readValues.mockResolvedValue({ kind: "untrusted" });
     await f.ready();
-    await vi.waitFor(() =>
-      expect(f.current.snapshot().kind).toBe("reload"),
-    );
+    await vi.waitFor(() => expect(f.current.snapshot().kind).toBe("reload"));
     expect(f.affiliation.snapshot().kind).not.toBe("ready");
     f.close();
   });
-
-  it.each([
-    { result: { kind: "disconnected" } as AffiliationValuesResult, retryAt: 15_000 },
-    { result: { kind: "failure", status: 503, code: "dependency_unavailable", retryAfter: 12_000 } as AffiliationValuesResult, retryAt: 22_000 },
-  ])("preserves an existing record when vocabulary fails: $result.kind", async ({ result, retryAt }) => {
-    const f = fixture();
-    f.read.mockResolvedValue({ kind: "affiliation", affiliation: record });
-    f.readValues.mockResolvedValue(result);
-    await f.ready();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "value-dictionary-error", retryAt, limited: false },
-      }),
-    );
-    f.affiliation.startForm();
-    f.affiliation.retryRead();
-    expect(f.read).toHaveBeenCalledTimes(1);
-    expect(f.readValues).toHaveBeenCalledTimes(1);
-    expect(f.create).not.toHaveBeenCalled();
-    f.advance(retryAt - 10_000);
-    f.readValues.mockResolvedValue(values);
-    f.affiliation.retryRead();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "record", value: record, name: "民革会员" },
-      }),
-    );
-    f.close();
-  });
-
-  it("does not treat read failure as unset", async () => {
+  it.each(["unset", "record"] as const)(
+    "does not open a form when names fail for %s",
+    async (kind) => {
+      const f = fixture();
+      if (kind === "record")
+        f.read.mockResolvedValue({ kind: "affiliation", affiliation: record });
+      f.readValues.mockResolvedValue({ kind: "disconnected" });
+      await f.ready();
+      await vi.waitFor(() =>
+        expect(f.affiliation.snapshot()).toMatchObject({
+          panel: {
+            kind:
+              kind === "unset" ? "dictionary-error" : "value-dictionary-error",
+          },
+        }),
+      );
+      f.affiliation.startForm();
+      expect(f.create).not.toHaveBeenCalled();
+      f.readValues.mockResolvedValue(values);
+      f.advance(5_000);
+      f.affiliation.retryRead();
+      await vi.waitFor(() =>
+        expect(f.affiliation.snapshot()).toMatchObject({ panel: { kind } }),
+      );
+      f.close();
+    },
+  );
+  it.each(["failure", "disconnected"] as const)(
+    "preserves the dictionary cooldown alongside a %s current read",
+    async (kind) => {
+      const f = fixture();
+      f.read.mockResolvedValue(
+        kind === "disconnected"
+          ? { kind }
+          : {
+              kind,
+              status: 503,
+              code: "dependency_unavailable",
+              retryAfter: 0,
+            },
+      );
+      f.readValues.mockResolvedValue({
+        kind: "failure",
+        status: 429,
+        code: "rate_limited",
+        retryAfter: 60_000,
+      });
+      await f.ready();
+      await vi.waitFor(() =>
+        expect(f.affiliation.snapshot()).toMatchObject({
+          panel: { kind: "read-error", retryAt: 70_000, limited: true },
+        }),
+      );
+      f.affiliation.startForm();
+      f.advance(59_999);
+      f.affiliation.retryRead();
+      expect(f.read).toHaveBeenCalledTimes(1);
+      f.advance(1);
+      f.read.mockResolvedValue({ kind: "unset" });
+      f.readValues.mockResolvedValue(values);
+      f.affiliation.retryRead();
+      await vi.waitFor(() =>
+        expect(f.affiliation.snapshot()).toMatchObject({
+          panel: { kind: "unset" },
+        }),
+      );
+      expect(f.create).not.toHaveBeenCalled();
+      f.close();
+    },
+  );
+  it("preserves the longer current cooldown when both initial reads fail", async () => {
     const f = fixture();
     f.read.mockResolvedValue({
+      kind: "failure",
+      status: 429,
+      code: "rate_limited",
+      retryAfter: 60_000,
+    });
+    f.readValues.mockResolvedValue({
       kind: "failure",
       status: 503,
       code: "dependency_unavailable",
@@ -286,244 +256,227 @@ describe("first affiliation initial state", () => {
     await f.ready();
     await vi.waitFor(() =>
       expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "read-error", retryAt: 15_000 },
+        panel: { kind: "read-error", retryAt: 70_000, limited: true },
       }),
     );
-    f.affiliation.startForm();
-    expect(f.affiliation.snapshot()).toMatchObject({
-      panel: { kind: "read-error" },
-    });
-    f.close();
-  });
-
-  it.each(["failure", "disconnected"] as const)("preserves the dictionary cooldown when the current read is %s", async (kind) => {
-    const f = fixture();
-    f.read.mockResolvedValue(kind === "disconnected"
-      ? { kind }
-      : { kind, status: 503, code: "dependency_unavailable", retryAfter: 0 });
-    f.readValues.mockResolvedValue({ kind: "failure", status: 429, code: "rate_limited", retryAfter: 60_000 });
-    await f.ready();
-    await vi.waitFor(() => expect(f.affiliation.snapshot()).toMatchObject({
-      panel: { kind: "read-error", retryAt: 70_000, limited: true },
-    }));
-    f.advance(5_000);
-    f.affiliation.retryRead();
-    f.advance(54_999);
-    f.affiliation.retryRead();
-    expect(f.read).toHaveBeenCalledTimes(1);
-    expect(f.readValues).toHaveBeenCalledTimes(1);
-    f.read.mockResolvedValue({ kind: "unset" });
-    f.readValues.mockResolvedValue(values);
-    f.advance(1);
-    f.affiliation.retryRead();
-    await vi.waitFor(() => expect(f.affiliation.snapshot()).toMatchObject({ panel: { kind: "unset" } }));
-    expect(f.read).toHaveBeenCalledTimes(2);
-    expect(f.readValues).toHaveBeenCalledTimes(2);
-    expect(f.create).not.toHaveBeenCalled();
-    f.close();
-  });
-
-  it("preserves the longer current cooldown when both initial reads fail", async () => {
-    const f = fixture();
-    f.read.mockResolvedValue({ kind: "failure", status: 429, code: "rate_limited", retryAfter: 60_000 });
-    f.readValues.mockResolvedValue({ kind: "failure", status: 503, code: "dependency_unavailable", retryAfter: 0 });
-    await f.ready();
-    await vi.waitFor(() => expect(f.affiliation.snapshot()).toMatchObject({
-      panel: { kind: "read-error", retryAt: 70_000, limited: true },
-    }));
     f.advance(5_000);
     f.affiliation.retryRead();
     expect(f.read).toHaveBeenCalledTimes(1);
-    expect(f.readValues).toHaveBeenCalledTimes(1);
     f.close();
   });
-
-  it.each(["rejection", "timeout"] as const)("retains an observed dictionary cooldown after the other read's %s", async (ending) => {
-    vi.useFakeTimers();
-    const f = fixture();
-    const pending = deferred<CurrentAffiliationResult>();
-    f.read.mockImplementationOnce(() => pending.promise);
-    f.readValues.mockResolvedValue({ kind: "failure", status: 429, code: "rate_limited", retryAfter: 60_000 });
-    await f.ready();
-    await vi.waitFor(() => expect(f.readValues).toHaveBeenCalledTimes(1));
-    if (ending === "rejection") pending.reject(new Error("read failed"));
-    else {
-      f.advance(35_000);
-      await vi.advanceTimersByTimeAsync(35_000);
-    }
-    await vi.waitFor(() => expect(f.affiliation.snapshot()).toMatchObject({
-      panel: { kind: "read-error", retryAt: 70_000, limited: true },
-    }));
-    f.affiliation.retryRead();
-    expect(f.readValues).toHaveBeenCalledTimes(1);
-    f.close();
-    pending.resolve({ kind: "unset" });
-  });
+  it.each(["rejection", "timeout"] as const)(
+    "retains an observed dictionary wait after the other read's %s",
+    async (ending) => {
+      vi.useFakeTimers();
+      const f = fixture();
+      const pending = deferred<CurrentAffiliationResult>();
+      f.read.mockImplementationOnce(() => pending.promise);
+      f.readValues.mockResolvedValue({
+        kind: "failure",
+        status: 429,
+        code: "rate_limited",
+        retryAfter: 60_000,
+      });
+      await f.ready();
+      await vi.waitFor(() => expect(f.readValues).toHaveBeenCalledTimes(1));
+      if (ending === "rejection") pending.reject(Error("read failed"));
+      else {
+        f.advance(35_000);
+        await vi.advanceTimersByTimeAsync(35_000);
+      }
+      await vi.waitFor(() =>
+        expect(f.affiliation.snapshot()).toMatchObject({
+          panel: { kind: "read-error", retryAt: 70_000, limited: true },
+        }),
+      );
+      f.affiliation.retryRead();
+      expect(f.readValues).toHaveBeenCalledTimes(1);
+      f.close();
+      pending.resolve({ kind: "unset" });
+    },
+  );
 });
 
-describe("first affiliation write", () => {
-  it("submits the exact original operation after marker save and confirms success", async () => {
+describe("explicit writes and state refresh", () => {
+  it("submits once after explicit confirmation and retains known success across failed reads", async () => {
     const f = fixture();
-    await f.ready();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "unset" },
-      }),
-    );
-    await f.choose("04");
-    expect(f.affiliation.snapshot()).toMatchObject({
-      panel: { kind: "confirm", choice: "04" },
-    });
+    await unset(f);
+    f.choose();
     await f.affiliation.submit();
-    expect(f.affiliation.snapshot()).toMatchObject({
-      kind: "ready",
-      panel: { kind: "success" },
-    });
-    expect(f.create).toHaveBeenCalledWith(
+    expect(f.create).toHaveBeenCalledExactlyOnceWith(
       operation,
       id,
       "04",
       expect.any(AbortSignal),
     );
-    expect(f.marker.mark).toHaveBeenCalledWith(id);
-    expect(f.marker.mark.mock.invocationCallOrder[0]).toBeLessThan(
-      f.create.mock.invocationCallOrder[0],
+    expect(f.affiliation.snapshot()).toMatchObject({
+      panel: { kind: "success" },
+    });
+    f.read.mockResolvedValueOnce({ kind: "affiliation", affiliation: record });
+    f.affiliation.viewCurrent();
+    await vi.waitFor(() =>
+      expect(f.affiliation.snapshot()).toMatchObject({
+        panel: { kind: "success" },
+        current: { kind: "record", value: record },
+      }),
     );
-    expect(f.marker.clear).toHaveBeenCalledTimes(1);
+    f.read.mockResolvedValueOnce({ kind: "disconnected" });
+    f.affiliation.viewCurrent();
+    await vi.waitFor(() =>
+      expect(f.affiliation.snapshot()).toMatchObject({
+        panel: { kind: "success" },
+        current: { kind: "error", retryAt: 15_000 },
+      }),
+    );
+    expect(f.create).toHaveBeenCalledTimes(1);
     f.close();
   });
-
-  it("has no default selection and cannot continue without one", async () => {
+  it.each([
+    { kind: "disconnected" },
+    { kind: "untrusted" },
+    {
+      kind: "failure",
+      status: 503,
+      code: "outcome_unknown",
+      retryAfter: 12_000,
+    },
+  ] as AffiliationWriteResult[])(
+    "clears unknown input and only refreshes after $kind",
+    async (result) => {
+      const f = fixture();
+      await unset(f);
+      f.choose();
+      f.create.mockResolvedValueOnce(result);
+      await f.affiliation.submit();
+      const retryAt = result.kind === "failure" ? 22_000 : 10_000;
+      expect(f.affiliation.snapshot()).toMatchObject({
+        panel: { kind: "unknown", retryAt },
+      });
+      const snapshot = f.affiliation.snapshot();
+      if (snapshot.kind !== "ready") throw Error("expected ready");
+      expect(snapshot.panel).not.toHaveProperty("choice");
+      if (retryAt > 10_000) {
+        f.affiliation.viewCurrent();
+        expect(f.read).toHaveBeenCalledTimes(1);
+        f.advance(retryAt - 10_000);
+      }
+      f.read.mockResolvedValueOnce({
+        kind: "affiliation",
+        affiliation: record,
+      });
+      f.affiliation.viewCurrent();
+      await vi.waitFor(() =>
+        expect(f.affiliation.snapshot()).toMatchObject({
+          panel: { kind: "record", value: record },
+          current: { kind: "idle" },
+        }),
+      );
+      f.affiliation.startForm();
+      await f.affiliation.submit();
+      expect(f.create).toHaveBeenCalledTimes(1);
+      f.close();
+    },
+  );
+  it("returns to the ordinary unset page and requires a new explicit confirmation", async () => {
     const f = fixture();
-    await f.ready();
+    await unset(f);
+    f.choose();
+    f.create.mockResolvedValueOnce({ kind: "disconnected" });
+    await f.affiliation.submit();
+    f.affiliation.viewCurrent();
     await vi.waitFor(() =>
       expect(f.affiliation.snapshot()).toMatchObject({
         panel: { kind: "unset" },
+        current: { kind: "idle" },
       }),
     );
+    expect(f.create).toHaveBeenCalledTimes(1);
     f.affiliation.startForm();
-    f.affiliation.continueToConfirm();
     expect(f.affiliation.snapshot()).toMatchObject({
       panel: { kind: "form", choice: null },
     });
-    expect(f.create).not.toHaveBeenCalled();
-    f.close();
-  });
-
-  it.each([
-    {
-      result: {
-        kind: "failure" as const,
-        status: 429,
-        code: "rate_limited",
-        retryAfter: 0,
-      },
-      panel: { kind: "submit-limited", choice: "04", retryAt: 15_000 },
-      retry: true,
-    },
-    {
-      result: {
-        kind: "failure" as const,
-        status: 400,
-        code: "invalid_input",
-        retryAfter: 0,
-      },
-      panel: { kind: "submit-invalid", choice: "04" },
-      retry: false,
-    },
-    {
-      result: {
-        kind: "failure" as const,
-        status: 409,
-        code: "state_conflict",
-        retryAfter: 0,
-      },
-      panel: { kind: "submit-conflict", choice: "04" },
-      retry: false,
-    },
-    {
-      result: {
-        kind: "failure" as const,
-        status: 409,
-        code: "request_mismatch",
-        retryAfter: 0,
-      },
-      panel: { kind: "submit-mismatch", choice: "04" },
-      retry: false,
-    },
-    {
-      result: {
-        kind: "failure" as const,
-        status: 503,
-        code: "dependency_unavailable",
-        retryAfter: 0,
-      },
-      panel: { kind: "submit-failed", choice: "04", retryAt: 15_000 },
-      retry: true,
-    },
-    {
-      result: {
-        kind: "failure" as const,
-        status: 500,
-        code: "outcome_unknown",
-        retryAfter: 0,
-      },
-      panel: { kind: "unknown", choice: "04", canRetry: true },
-      retry: true,
-    },
-    {
-      result: { kind: "untrusted" as const },
-      panel: { kind: "unknown", choice: "04", canRetry: true },
-      retry: true,
-    },
-    {
-      result: { kind: "disconnected" as const },
-      panel: { kind: "unknown", choice: "04", canRetry: true },
-      retry: true,
-    },
-  ])("classifies a first send as $panel.kind", async ({ result, panel, retry }) => {
-    const f = fixture();
-    await f.ready();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "unset" },
-      }),
-    );
-    await f.choose("04");
-    f.create.mockResolvedValueOnce(result);
+    f.affiliation.continueToConfirm();
     await f.affiliation.submit();
-    expect(f.affiliation.snapshot()).toMatchObject({ panel });
-    if (retry) {
-      f.advance(5_000);
-      f.create.mockResolvedValueOnce({ kind: "ok" });
-      await f.affiliation.retrySubmit();
-      expect(f.create).toHaveBeenLastCalledWith(
-        operation,
-        id,
-        "04",
-        expect.any(AbortSignal),
-      );
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "success" },
-      });
-    } else {
-      await f.affiliation.retrySubmit();
-      expect(f.create).toHaveBeenCalledTimes(1);
-    }
+    expect(f.create).toHaveBeenCalledTimes(1);
+    f.affiliation.choose("05");
+    f.affiliation.continueToConfirm();
+    await f.affiliation.submit();
+    expect(f.create).toHaveBeenLastCalledWith(
+      laterOperation,
+      id,
+      "05",
+      expect.any(AbortSignal),
+    );
+    expect(f.affiliation.snapshot()).toMatchObject({
+      panel: { kind: "success" },
+    });
     f.close();
   });
-
-  it.each([401, 403] as const)(
-    "conceals on first %i without showing an application code",
-    async (status) => {
+  it.each([
+    [429, "rate_limited", "submit-limited"],
+    [503, "dependency_unavailable", "submit-failed"],
+    [409, "state_conflict", "submit-conflict"],
+  ] as const)(
+    "refreshes rather than replaying a %i %s response",
+    async (status, code, kind) => {
       const f = fixture();
-      await f.ready();
+      await unset(f);
+      f.choose();
+      f.create.mockResolvedValueOnce({
+        kind: "failure",
+        status,
+        code,
+        retryAfter: 60_000,
+      });
+      await f.affiliation.submit();
+      expect(f.affiliation.snapshot()).toMatchObject({ panel: { kind } });
+      f.affiliation.startForm();
+      await f.affiliation.submit();
+      f.affiliation.viewCurrent();
+      if (status !== 409) {
+        expect(f.read).toHaveBeenCalledTimes(1);
+        f.advance(60_000);
+        f.affiliation.viewCurrent();
+      }
       await vi.waitFor(() =>
         expect(f.affiliation.snapshot()).toMatchObject({
           panel: { kind: "unset" },
         }),
       );
-      await f.choose("04");
+      expect(f.create).toHaveBeenCalledTimes(1);
+      f.close();
+    },
+  );
+  it("requires another confirmation after trusted input refusal", async () => {
+    const f = fixture();
+    await unset(f);
+    f.choose();
+    f.create.mockResolvedValueOnce({
+      kind: "failure",
+      status: 422,
+      code: "invalid_input",
+      retryAfter: 0,
+    });
+    await f.affiliation.submit();
+    f.affiliation.backToForm();
+    await f.affiliation.submit();
+    expect(f.create).toHaveBeenCalledTimes(1);
+    f.affiliation.continueToConfirm();
+    await f.affiliation.submit();
+    expect(f.create).toHaveBeenLastCalledWith(
+      laterOperation,
+      id,
+      "04",
+      expect.any(AbortSignal),
+    );
+    f.close();
+  });
+  it.each([401, 403] as const)(
+    "conceals the page after write status %i",
+    async (status) => {
+      const f = fixture();
+      await unset(f);
+      f.choose();
       f.create.mockResolvedValueOnce({
         kind: "failure",
         status,
@@ -534,387 +487,57 @@ describe("first affiliation write", () => {
       expect(f.affiliation.snapshot()).toEqual({
         kind: status === 401 ? "identity-expired" : "identity-denied",
       });
+      expect(f.clear).toHaveBeenCalledTimes(status === 401 ? 1 : 0);
       f.close();
     },
   );
-
-  it("does not send when the marker cannot be saved", async () => {
+  it("shows a normal read failure and respects its cooldown without another write", async () => {
     const f = fixture();
-    f.markerAvailable(false);
-    await f.ready();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "unset" },
-      }),
-    );
-    await f.choose("04");
-    await f.affiliation.submit();
-    expect(f.create).not.toHaveBeenCalled();
-    expect(f.affiliation.snapshot()).toMatchObject({
-      panel: { kind: "submit-storage", choice: "04", retry: false },
-    });
-    await f.affiliation.retrySubmit();
-    expect(f.create).not.toHaveBeenCalled();
-    f.affiliation.reconfirm();
-    expect(f.affiliation.snapshot()).toMatchObject({
-      panel: { kind: "confirm", choice: "04" },
-    });
-    f.markerAvailable(true);
-    await f.affiliation.submit();
-    expect(f.create).toHaveBeenCalledWith(
-      laterOperation,
-      id,
-      "04",
-      expect.any(AbortSignal),
-    );
-    f.close();
-  });
-
-  it("retains the original operation for an exact retry and stops after a mismatch", async () => {
-    const f = fixture();
-    await f.ready();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "unset" },
-      }),
-    );
-    await f.choose("04");
+    await unset(f);
+    f.choose();
     f.create.mockResolvedValueOnce({ kind: "disconnected" });
     await f.affiliation.submit();
-    expect(f.affiliation.snapshot()).toMatchObject({
-      panel: { kind: "unknown", choice: "04", canRetry: true },
-    });
-    await f.affiliation.retrySubmit();
-    expect(f.create).toHaveBeenCalledTimes(1);
-    f.advance(5_000);
-    f.create.mockResolvedValueOnce({
-      kind: "failure",
-      status: 409,
-      code: "request_mismatch",
-      retryAfter: 0,
-    });
-    await f.affiliation.retrySubmit();
-    expect(f.create).toHaveBeenLastCalledWith(
-      operation,
-      id,
-      "04",
-      expect.any(AbortSignal),
-    );
-    expect(f.affiliation.snapshot()).toMatchObject({
-      panel: { kind: "retry-mismatch", choice: "04" },
-    });
-    await f.affiliation.retrySubmit();
-    expect(f.create).toHaveBeenCalledTimes(2);
-    f.close();
-  });
-
-  it("retains an unknown original across a marker failure and can retry it", async () => {
-    const f = fixture();
-    await f.ready();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "unset" },
-      }),
-    );
-    await f.choose("04");
-    f.create.mockResolvedValueOnce({ kind: "disconnected" });
-    await f.affiliation.submit();
-    f.advance(5_000);
-    f.markerAvailable(false);
-    await f.affiliation.retrySubmit();
-    expect(f.affiliation.snapshot()).toMatchObject({
-      panel: { kind: "submit-storage", choice: "04", retry: true, uncertain: true },
-    });
-    expect(f.create).toHaveBeenCalledTimes(1);
-    f.markerAvailable(true);
-    f.create.mockResolvedValueOnce({ kind: "ok" });
-    await f.affiliation.retrySubmit();
-    expect(f.create).toHaveBeenLastCalledWith(
-      operation,
-      id,
-      "04",
-      expect.any(AbortSignal),
-    );
-    expect(f.affiliation.snapshot()).toMatchObject({
-      panel: { kind: "success" },
-    });
-    f.close();
-  });
-
-  it("keeps the original retry warning state after a retry rate limit", async () => {
-    const f = fixture();
-    await f.ready();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "unset" },
-      }),
-    );
-    await f.choose("04");
-    f.create.mockResolvedValueOnce({ kind: "disconnected" });
-    await f.affiliation.submit();
-    f.advance(5_000);
-    f.create.mockResolvedValueOnce({
-      kind: "failure",
-      status: 429,
-      code: "rate_limited",
-      retryAfter: 9_000,
-    });
-    await f.affiliation.retrySubmit();
-    expect(f.affiliation.snapshot()).toMatchObject({
-      panel: { kind: "retry-wait", choice: "04", retryAt: 24_000 },
-    });
-    await f.affiliation.retrySubmit();
-    expect(f.create).toHaveBeenCalledTimes(2);
-    f.advance(9_000);
-    f.create.mockResolvedValueOnce({ kind: "ok" });
-    await f.affiliation.retrySubmit();
-    expect(f.create).toHaveBeenLastCalledWith(
-      operation,
-      id,
-      "04",
-      expect.any(AbortSignal),
-    );
-    f.close();
-  });
-});
-
-describe("known rejection retries", () => {
-  it("keeps repeated definite refusals definite and preserves the original request", async () => {
-    const f = fixture();
-    await f.ready();
-    await vi.waitFor(() => expect(f.affiliation.snapshot()).toMatchObject({ panel: { kind: "unset" } }));
-    await f.choose("04");
-    f.create.mockResolvedValueOnce({ kind: "failure", status: 429, code: "rate_limited", retryAfter: 0 });
-    await f.affiliation.submit();
-    f.advance(5_000);
-    f.create.mockResolvedValueOnce({ kind: "failure", status: 503, code: "dependency_unavailable", retryAfter: 8_000 });
-    await f.affiliation.retrySubmit();
-    expect(f.affiliation.snapshot()).toMatchObject({ panel: { kind: "submit-failed", retryAt: 23_000 } });
-    await f.affiliation.retrySubmit();
-    expect(f.create).toHaveBeenCalledTimes(2);
-    f.advance(8_000);
-    f.create.mockResolvedValueOnce({ kind: "failure", status: 429, code: "rate_limited", retryAfter: 0 });
-    await f.affiliation.retrySubmit();
-    expect(f.affiliation.snapshot()).toMatchObject({ panel: { kind: "submit-limited", retryAt: 28_000 } });
-    expect(f.create.mock.calls.map(([key, session, value]) => [key, session, value])).toEqual([
-      [operation, id, "04"], [operation, id, "04"], [operation, id, "04"],
-    ]);
-    f.close();
-  });
-});
-
-describe("independent current reads", () => {
-  it.each(["present", "denied"] as const)(
-    "keeps an active read and honors its cooldown with a %s marker",
-    async (marker) => {
-      const f = fixture();
-      f.markerState(marker);
-      await f.ready();
-      const pending = deferred<CurrentAffiliationResult>();
-      f.read.mockImplementationOnce(() => pending.promise);
-      f.affiliation.viewCurrent();
-      await vi.waitFor(() => expect(f.read).toHaveBeenCalledTimes(1));
-      f.affiliation.viewCurrent();
-      f.affiliation.retryRead();
-      expect(f.read).toHaveBeenCalledTimes(1);
-      expect(f.read.mock.calls[0][1].aborted).toBe(false);
-      pending.resolve({ kind: "failure", status: 429, code: "rate_limited", retryAfter: 60_000 });
-      await vi.waitFor(() => expect(f.affiliation.snapshot()).toMatchObject({
-        current: { kind: "error", retryAt: 70_000, limited: true },
-      }));
-      f.affiliation.viewCurrent();
-      f.advance(59_999);
-      f.affiliation.viewCurrent();
-      f.affiliation.retryRead();
-      expect(f.read).toHaveBeenCalledTimes(1);
-      f.advance(1);
-      f.affiliation.viewCurrent();
-      await vi.waitFor(() => expect(f.read).toHaveBeenCalledTimes(2));
-      expect(f.create).not.toHaveBeenCalled();
-      f.close();
-    },
-  );
-
-  it("never downgrades a known success when a later read fails", async () => {
-    const f = fixture();
-    await f.ready();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "unset" },
-      }),
-    );
-    await f.choose("04");
-    await f.affiliation.submit();
-    expect(f.affiliation.snapshot()).toMatchObject({
-      panel: { kind: "success" },
-    });
-    f.read.mockResolvedValueOnce({
-      kind: "affiliation",
-      affiliation: record,
-    });
-    f.affiliation.viewCurrent();
-    expect(f.affiliation.snapshot()).toMatchObject({
-      panel: { kind: "success" },
-      current: { kind: "loading" },
-    });
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "success" },
-        current: { kind: "record", value: record, name: "民革会员" },
-      }),
-    );
-    f.read.mockResolvedValueOnce({
-      kind: "failure",
-      status: 503,
-      code: "dependency_unavailable",
-      retryAfter: 0,
-    });
-    f.affiliation.viewCurrent();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "success" },
-        current: { kind: "error", retryAt: 15_000 },
-      }),
-    );
-    f.close();
-  });
-
-  it("keeps unknown unknown when the independent read finds unset", async () => {
-    const f = fixture();
-    await f.ready();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "unset" },
-      }),
-    );
-    await f.choose("04");
-    f.create.mockResolvedValueOnce({ kind: "disconnected" });
-    await f.affiliation.submit();
-    f.read.mockResolvedValueOnce({ kind: "unset" });
-    f.affiliation.viewCurrent();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "unknown", choice: "04", canRetry: true },
-        current: { kind: "unset" },
-      }),
-    );
-    f.affiliation.startForm();
-    expect(f.affiliation.snapshot()).toMatchObject({
-      panel: { kind: "unknown" },
-    });
-    expect(f.create).toHaveBeenCalledTimes(1);
-    f.close();
-  });
-
-  it.each([
-    ["state_conflict", 409, "retry-conflict"],
-    ["request_mismatch", 409, "retry-mismatch"],
-    ["invalid_input", 400, "retry-stopped"],
-  ] as const)("keeps %s retry outcomes unknown when an independent read finds a record", async (code, status, kind) => {
-    const f = fixture();
-    await f.ready();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "unset" },
-      }),
-    );
-    await f.choose("04");
-    f.create.mockResolvedValueOnce({ kind: "disconnected" });
-    await f.affiliation.submit();
-    f.advance(5_000);
-    f.create.mockResolvedValueOnce({
-      kind: "failure",
-      status,
-      code,
-      retryAfter: 0,
-    });
-    await f.affiliation.retrySubmit();
-    expect(f.affiliation.snapshot()).toMatchObject({
-      panel: { kind, choice: "04" },
-    });
-    f.read.mockResolvedValueOnce({
-      kind: "affiliation",
-      affiliation: record,
-    });
-    f.affiliation.viewCurrent();
-    expect(f.affiliation.snapshot()).toMatchObject({
-      panel: { kind, choice: "04" },
-      current: { kind: "loading" },
-    });
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind, choice: "04" },
-        current: { kind: "record", value: record, name: "民革会员" },
-      }),
-    );
-    f.close();
-  });
-
-  it("uses an independent read instead of a fresh form after a conflict", async () => {
-    const f = fixture();
-    await f.ready();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "unset" },
-      }),
-    );
-    await f.choose("04");
-    f.create.mockResolvedValueOnce({
-      kind: "failure",
-      status: 409,
-      code: "state_conflict",
-      retryAfter: 0,
-    });
-    await f.affiliation.submit();
-    f.read.mockResolvedValueOnce({
-      kind: "affiliation",
-      affiliation: record,
-    });
-    f.affiliation.viewCurrent();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "record", value: record, name: "民革会员" },
-      }),
-    );
-    f.close();
-  });
-});
-
-describe("identity and late-result races", () => {
-  it("clears the private projection when the page controller closes", async () => {
-    const f = fixture();
-    f.read.mockResolvedValue({ kind: "affiliation", affiliation: record });
-    await f.ready();
-    await vi.waitFor(() => expect(f.affiliation.snapshot()).toMatchObject({ panel: { kind: "record" } }));
-    f.affiliation.close();
-    expect(f.affiliation.snapshot()).toEqual({ kind: "identity-loading" });
-    f.close();
-  });
-
-  it("checks a silent selection change before publishing an independent unset read", async () => {
-    const f = fixture();
-    f.markerState("present");
-    await f.ready();
     const pending = deferred<CurrentAffiliationResult>();
     f.read.mockImplementationOnce(() => pending.promise);
     f.affiliation.viewCurrent();
-    await vi.waitFor(() => expect(f.read).toHaveBeenCalledTimes(1));
-    f.select();
-    pending.resolve({ kind: "unset" });
-    await vi.waitFor(() => expect(f.current.binding()?.selection.id).toBe(other));
-    expect(f.affiliation.snapshot()).not.toMatchObject({ current: { kind: "unset" } });
-    f.close();
-  });
-
-  it("masks immediately and rejects a late write result", async () => {
-    const f = fixture();
-    await f.ready();
+    await vi.waitFor(() => expect(f.read).toHaveBeenCalledTimes(2));
+    f.affiliation.viewCurrent();
+    f.affiliation.retryRead();
+    expect(f.read).toHaveBeenCalledTimes(2);
+    expect(f.read.mock.calls[1][1].aborted).toBe(false);
+    pending.resolve({
+      kind: "failure",
+      status: 429,
+      code: "rate_limited",
+      retryAfter: 60_000,
+    });
+    await vi.waitFor(() =>
+      expect(f.affiliation.snapshot()).toMatchObject({
+        panel: { kind: "read-error", retryAt: 70_000, limited: true },
+        current: { kind: "idle" },
+      }),
+    );
+    f.advance(59_999);
+    f.affiliation.retryRead();
+    expect(f.read).toHaveBeenCalledTimes(2);
+    f.advance(1);
+    f.affiliation.retryRead();
     await vi.waitFor(() =>
       expect(f.affiliation.snapshot()).toMatchObject({
         panel: { kind: "unset" },
+        current: { kind: "idle" },
       }),
     );
-    await f.choose("04");
+    expect(f.create).toHaveBeenCalledTimes(1);
+    f.close();
+  });
+});
+
+describe("identity and late-response isolation", () => {
+  it("masks immediately and ignores a late successful write", async () => {
+    const f = fixture();
+    await unset(f);
+    f.choose();
     const pending = deferred<AffiliationWriteResult>();
     f.create.mockImplementationOnce(() => pending.promise);
     const sent = f.affiliation.submit();
@@ -925,86 +548,99 @@ describe("identity and late-result races", () => {
     pending.resolve({ kind: "ok" });
     await sent;
     expect(f.affiliation.snapshot()).toEqual({ kind: "identity-loading" });
-    f.close();
-  });
-
-  it("does not reopen a form after refresh when the request may have been sent", async () => {
-    const f = fixture();
-    await f.ready();
+    await f.current.verify();
     await vi.waitFor(() =>
       expect(f.affiliation.snapshot()).toMatchObject({
         panel: { kind: "unset" },
       }),
     );
-    await f.choose("04");
+    expect(f.create).toHaveBeenCalledTimes(1);
+    f.close();
+  });
+  it("ignores a timed-out write after refresh and a new explicit submission", async () => {
+    vi.useFakeTimers();
+    const f = fixture();
+    await unset(f);
+    f.choose();
     const pending = deferred<AffiliationWriteResult>();
     f.create.mockImplementationOnce(() => pending.promise);
     const sent = f.affiliation.submit();
     await vi.waitFor(() => expect(f.create).toHaveBeenCalledTimes(1));
-    f.current.suspend();
-    pending.resolve({ kind: "ok" });
-    await sent;
-    await f.current.verify();
+    f.advance(35_000);
+    await vi.advanceTimersByTimeAsync(35_000);
+    expect(f.affiliation.snapshot()).toMatchObject({
+      panel: { kind: "unknown" },
+    });
+    f.affiliation.viewCurrent();
     await vi.waitFor(() =>
       expect(f.affiliation.snapshot()).toMatchObject({
-        kind: "ready",
-        panel: { kind: "unknown", canRetry: false },
+        panel: { kind: "unset" },
       }),
     );
-    f.affiliation.startForm();
+    f.choose("05");
+    await f.affiliation.submit();
     expect(f.affiliation.snapshot()).toMatchObject({
-      panel: { kind: "unknown", canRetry: false },
+      panel: { kind: "success" },
     });
+    pending.resolve({
+      kind: "failure",
+      status: 409,
+      code: "state_conflict",
+      retryAfter: 0,
+    });
+    await sent;
+    expect(f.affiliation.snapshot()).toMatchObject({
+      panel: { kind: "success" },
+    });
+    expect(f.create).toHaveBeenCalledTimes(2);
     f.close();
   });
-
-  it("abandons a read when the account selection changes", async () => {
+  it("checks silent selection changes before publishing a refreshed unset", async () => {
+    const f = fixture();
+    await unset(f);
+    f.choose();
+    f.create.mockResolvedValueOnce({ kind: "disconnected" });
+    await f.affiliation.submit();
+    const pending = deferred<CurrentAffiliationResult>();
+    f.read.mockImplementationOnce(() => pending.promise);
+    f.affiliation.viewCurrent();
+    await vi.waitFor(() => expect(f.read).toHaveBeenCalledTimes(2));
+    f.read.mockResolvedValue({
+      kind: "affiliation",
+      affiliation: { ...record, value: "05" },
+    });
+    f.select();
+    pending.resolve({ kind: "unset" });
+    await vi.waitFor(() =>
+      expect(f.current.binding()?.selection.id).toBe(other),
+    );
+    await vi.waitFor(() =>
+      expect(f.affiliation.snapshot()).toMatchObject({
+        panel: { kind: "record", value: { value: "05" } },
+      }),
+    );
+    f.close();
+  });
+  it("abandons initial reads from an older account binding", async () => {
     const f = fixture();
     const old = deferred<CurrentAffiliationResult>();
-    f.read
-      .mockImplementationOnce(() => old.promise)
-      .mockResolvedValueOnce({ kind: "unset" });
-    const first = f.current.verify();
+    f.read.mockImplementationOnce(() => old.promise);
+    await f.ready();
     await vi.waitFor(() => expect(f.read).toHaveBeenCalledTimes(1));
     f.select();
     await f.current.verify();
     await vi.waitFor(() =>
       expect(f.affiliation.snapshot()).toMatchObject({
-        kind: "ready",
         panel: { kind: "unset" },
       }),
     );
     old.resolve({ kind: "affiliation", affiliation: record });
-    await first;
+    await vi.waitFor(() => expect(f.read.mock.calls[0][1].aborted).toBe(true));
     expect(f.affiliation.snapshot()).toMatchObject({
       panel: { kind: "unset" },
     });
-    expect(f.read.mock.calls[0][1].aborted).toBe(true);
-    f.close();
-  });
-
-  it("clears the original retry when the current binding no longer matches", async () => {
-    const f = fixture();
-    await f.ready();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        panel: { kind: "unset" },
-      }),
-    );
-    await f.choose("04");
-    f.create.mockResolvedValueOnce({ kind: "disconnected" });
-    await f.affiliation.submit();
-    f.current.suspend();
-    await f.current.verify();
-    await vi.waitFor(() =>
-      expect(f.affiliation.snapshot()).toMatchObject({
-        kind: "ready",
-        panel: { kind: "unknown", canRetry: false },
-      }),
-    );
-    f.create.mockClear();
-    await f.affiliation.retrySubmit();
-    expect(f.create).not.toHaveBeenCalled();
+    f.affiliation.close();
+    expect(f.affiliation.snapshot()).toEqual({ kind: "identity-loading" });
     f.close();
   });
 });

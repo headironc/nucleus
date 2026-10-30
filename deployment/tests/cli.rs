@@ -245,7 +245,7 @@ async fn snapshot(client: &tokio_postgres::Client) -> Vec<String> {
     let tables = client.query(
         "SELECT format('%I.%I', namespace.nspname, relation.relname) FROM pg_catalog.pg_class relation
          JOIN pg_catalog.pg_namespace namespace ON namespace.oid=relation.relnamespace
-         WHERE namespace.nspname IN ('identity','access','center','workforce') AND relation.relkind='r'
+         WHERE namespace.nspname IN ('identity','access','center','workforce','audit') AND relation.relkind='r'
          ORDER BY namespace.nspname,relation.relname", &[],
     ).await.expect("catalog business tables");
     let mut result = Vec::new();
@@ -396,17 +396,12 @@ async fn seed(database: &Database) -> (String, String, String, String) {
         .batch_execute("BEGIN")
         .await
         .expect("fixture transaction");
-    let operation = Uuid::new_v4()
-        .to_string()
-        .parse()
-        .expect("fixture operation");
     affiliation::seed(
         writer.client(),
         &root_keys(),
         person.parse().expect("fixture person"),
         revision.parse().expect("fixture revision"),
         Code::CommunistParty,
-        operation,
     )
     .await
     .expect("seeded first value");
@@ -418,18 +413,18 @@ async fn seed(database: &Database) -> (String, String, String, String) {
     let affiliation: String = writer
         .client()
         .query_one(
-            "SELECT affiliation_id::text FROM center.profiles WHERE id::text=$1",
+            "SELECT id::text FROM center.affiliations WHERE person_id::text=$1 ORDER BY created_at DESC LIMIT 1",
             &[&person],
         )
         .await
-        .expect("seeded profile")
+        .expect("seeded current record")
         .get(0);
     writer.terminate().await.expect("fixture writer ended");
     (account, person, revision, affiliation)
 }
 
 #[test]
-fn correct_affiliation_commits_and_replays_through_the_actual_binary() {
+fn correct_affiliation_commits_with_current_confirmation_through_the_actual_binary() {
     let database = Database {
         server: fixture::Server::start(),
         name: format!("test_{}", Uuid::new_v4().simple()),
@@ -503,37 +498,32 @@ fn correct_affiliation_commits_and_replays_through_the_actual_binary() {
         let facts = observer
             .client()
             .query_one(
-                "SELECT person.revision_id=affiliation.operator_id, profile.affiliation_id=affiliation.id,
-                        completion.subject, completion.action, completion.expires_at IS NULL,
-                        completion.target=affiliation.person_id::text,
-                        completion.created_at=affiliation.created_at,
+                "SELECT person.revision_id=affiliation.operator_id, event.actor_id=person.id,
+                        event.action, event.target_type, event.details::text,
                         (SELECT count(*) FROM center.affiliations),
-                        (SELECT count(*) FROM center.completions WHERE action='system_correct')
+                        (SELECT count(*) FROM audit.events WHERE action='system_correct')
                  FROM center.affiliations affiliation
-                 JOIN center.profiles profile ON profile.id=affiliation.person_id
-                 JOIN center.completions completion ON completion.operation_id=affiliation.operation_id
+                 JOIN audit.events event ON event.target_id=affiliation.id AND event.target_type='center.affiliation'
                  JOIN identity.persons person ON person.id=affiliation.person_id
-                 WHERE affiliation.operation_id::text=$1",
-                &[&operation],
+                 WHERE event.action='system_correct'",
+                &[],
             )
             .await
-            .expect("one paired committed affiliation and permanent completion");
+            .expect("one committed affiliation and its atomic audit event");
         assert!(facts.get::<_, bool>(0));
         assert!(facts.get::<_, bool>(1));
-        assert_eq!(facts.get::<_, String>(2), "system");
-        assert_eq!(facts.get::<_, String>(3), "system_correct");
-        assert!(facts.get::<_, bool>(4));
-        assert!(facts.get::<_, bool>(5));
-        assert!(facts.get::<_, bool>(6));
-        assert_eq!(facts.get::<_, i64>(7), 2);
-        assert_eq!(facts.get::<_, i64>(8), 1);
+        assert_eq!(facts.get::<_, String>(2), "system_correct");
+        assert_eq!(facts.get::<_, String>(3), "center.affiliation");
+        assert_eq!(facts.get::<_, String>(4), "{}");
+        assert_eq!(facts.get::<_, i64>(5), 2);
+        assert_eq!(facts.get::<_, i64>(6), 1);
 
         for dry_run in [false, true] {
             database
                 .run(database.admin("correct-affiliation", &path, &operation, dry_run))
                 .await
-                .succeeds(Some("result=completed"));
-            assert_eq!(snapshot(observer.client()).await, committed, "original replay is read-only");
+                .fails();
+            assert_eq!(snapshot(observer.client()).await, committed, "stale expected record writes no fact or audit");
         }
         let mut changed = input;
         changed["affiliation"] = json!("02");
@@ -542,13 +532,13 @@ fn correct_affiliation_commits_and_replays_through_the_actual_binary() {
             .run(database.admin("correct-affiliation", &changed, &operation, false))
             .await
             .fails();
-        assert_eq!(snapshot(observer.client()).await, committed, "mismatch writes no facts");
+        assert_eq!(snapshot(observer.client()).await, committed, "stale expected record rejects even a new value");
 
-        // A committed result survives a failed stdout write; the same operation then replays.
+        // A failed stdout write leaves the committed fact; stale input cannot apply it again.
         let current: String = observer
             .client()
             .query_one(
-                "SELECT affiliation_id::text FROM center.profiles WHERE id::text=$1",
+                "SELECT id::text FROM center.affiliations WHERE person_id::text=$1 ORDER BY created_at DESC LIMIT 1",
                 &[&person],
             )
             .await
@@ -586,14 +576,14 @@ fn correct_affiliation_commits_and_replays_through_the_actual_binary() {
         database
             .run(database.admin("correct-affiliation", &second, &failed_operation, false))
             .await
-            .succeeds(Some("result=completed"));
+            .fails();
         let after = snapshot(observer.client()).await;
         assert_eq!(
             observer
                 .client()
                 .query_one(
                     "SELECT (SELECT count(*) FROM center.affiliations),
-                            (SELECT count(*) FROM center.completions WHERE action='system_correct')",
+                            (SELECT count(*) FROM audit.events WHERE target_type='center.affiliation' AND action='system_correct')",
                     &[],
                 )
                 .await
@@ -604,8 +594,8 @@ fn correct_affiliation_commits_and_replays_through_the_actual_binary() {
         database
             .run(database.admin("correct-affiliation", &second, &failed_operation, false))
             .await
-            .succeeds(Some("result=completed"));
-        assert_eq!(snapshot(observer.client()).await, after, "replay after failed output is read-only");
+            .fails();
+        assert_eq!(snapshot(observer.client()).await, after, "repeated stale input after failed output writes nothing");
         observer.terminate().await.expect("end independent observer");
     });
 }

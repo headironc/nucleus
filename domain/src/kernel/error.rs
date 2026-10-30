@@ -521,6 +521,7 @@ pub enum FaultKind {
     Connection(platform::database::Error),
     Timeout(tokio::time::error::Elapsed),
     Crypto(platform::cryptography::Error),
+    Encryption(crate::kernel::keys::Error),
     File(platform::files::Error),
     Avatar(crate::identity::avatar::Error),
     Encoding(serde_json::Error),
