@@ -54,23 +54,23 @@ pub(crate) fn router(
     OpenApiRouter::new()
         .routes(routes!(photo))
         .routes(routes!(preview).map(|router| router.layer(DefaultBodyLimit::max(8192))))
-        .routes(routes!(submit).map(|router| router.layer(DefaultBodyLimit::max(8192))))
+        .routes(routes!(submit).map(|router| router.layer(DefaultBodyLimit::max(128 * 1024))))
         .routes(routes!(list))
         .routes(routes!(template))
-        .route_layer(middleware::from_fn(wait))
         .route_layer(middleware::from_fn_with_state(
             authentication.clone(),
             identity::current::authenticate,
         ))
+        .route_layer(middleware::from_fn(wait))
         .merge(
             OpenApiRouter::new()
                 .routes(routes!(detail))
                 .routes(routes!(resource))
-                .route_layer(middleware::from_fn(wait))
                 .route_layer(middleware::from_fn_with_state(
                     authentication.clone(),
                     identity::current::authenticate,
                 ))
+                .route_layer(middleware::from_fn(wait))
                 .route_layer(middleware::from_fn(target)),
         )
         .layer(DefaultBodyLimit::max(application::photo::INPUT_LIMIT))
@@ -210,7 +210,7 @@ async fn photo(
 }
 
 #[utoipa::path(post, path = "/workforce/applications/preview", operation_id = "workforceApplicationPreview",
-    params(("Operation-Id" = uuid::Uuid, Header, description = "Required diagnostic correlation only"), ("Session-Id" = uuid::Uuid, Header), ("Origin" = String, Header)), request_body = PreviewInput,
+    params(("Operation-Id" = uuid::Uuid, Header, description = "Required diagnostic correlation only"), ("Session-Id" = uuid::Uuid, Header), ("Origin" = String, Header)), request_body(content = PreviewInput, description = "At most 8 KiB including every selected value"),
     responses((status = 200, body = Preview, description = "Trusted actual content to confirm"),
         (status = 400, body = Failure), (status = 413, body = Failure), (status = 415, body = Failure), (status = 429, body = Failure), (status = 500, body = Failure),
         (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"),
@@ -232,7 +232,7 @@ async fn preview(
 }
 
 #[utoipa::path(post, path = "/workforce/applications", operation_id = "workforceApplicationSubmit",
-    params(("Operation-Id" = uuid::Uuid, Header, description = "Required diagnostic correlation only; reusing this value does not deduplicate submissions"), ("Session-Id" = uuid::Uuid, Header), ("Origin" = String, Header)), request_body = Input,
+    params(("Operation-Id" = uuid::Uuid, Header, description = "Required diagnostic correlation only; reusing this value does not deduplicate submissions"), ("Session-Id" = uuid::Uuid, Header), ("Origin" = String, Header)), request_body(content = Input, description = "At most 128 KiB; includes the complete trusted snapshot and all original text lines"),
     responses((status = 201, body = Created, description = "Fixed application and audit committed together; the request is not deduplicated"),
         (status = 400, body = Failure), (status = 413, body = Failure), (status = 415, body = Failure), (status = 429, body = Failure), (status = 500, body = Failure),
         (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"),
@@ -377,7 +377,10 @@ fn respond<T>(
         application::Error::MissingGlyph => (StatusCode::UNPROCESSABLE_ENTITY, "missing_glyph"),
         application::Error::TextOverflow => (StatusCode::UNPROCESSABLE_ENTITY, "text_overflow"),
         application::Error::Photo(_) => (StatusCode::UNPROCESSABLE_ENTITY, "invalid_input"),
-        application::Error::Unknown(_) => (StatusCode::SERVICE_UNAVAILABLE, "outcome_unknown"),
+        application::Error::Unknown(cause) => {
+            tracing::error!(stage = "workforce_application_commit", error = ?cause);
+            (StatusCode::SERVICE_UNAVAILABLE, "outcome_unknown")
+        }
         application::Error::Busy => {
             return crate::response::limited(std::time::Duration::from_secs(1));
         }

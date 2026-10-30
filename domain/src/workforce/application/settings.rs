@@ -38,6 +38,12 @@ impl Settings {
         {
             return Err(Error::Configuration);
         }
+        for pickup in pickups {
+            // One encoded choice must leave room for the other fields in an 8 KiB preview.
+            if serde_json::to_vec(pickup)?.len() > 4096 {
+                return Err(Error::Configuration);
+            }
+        }
         validate_layout(template)
     }
     /// Entry points own source paths and file reading. All processing and durable file writes
@@ -288,6 +294,24 @@ mod tests {
             offset = line.end;
         }
         assert_eq!(offset, text.len());
+    }
+
+    #[test]
+    fn pickup_budget_counts_json_quotes_and_escaping() {
+        let template = fixture_template();
+        for (value, accepted) in [
+            ("a".repeat(4094), true),
+            ("a".repeat(4095), false),
+            ("\"".repeat(2047), true),
+            ("\"".repeat(2048), false),
+            ("\\".repeat(2047), true),
+            ("\\".repeat(2048), false),
+        ] {
+            assert_eq!(
+                Settings::validate(&template, &[value], "image/png").is_ok(),
+                accepted
+            );
+        }
     }
 
     #[test]

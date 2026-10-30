@@ -78,6 +78,8 @@ JSON 中的科室、职务、职称、照片、背景和字体引用使用数据
 
 本人提交前调用 `POST /api/v1/workforce/applications/preview`，正文为 `{kind, selections}`。`selections` 必填实际科室 `departmentId`、科室职务条目 `rosterId`、职称 `titleId`、已准备照片 `photoId` 和领取地点原文 `pickup`。不选职务或职称时显式传 `null`，服务端不补默认科室。全部 16 种分类规则齐备后才开放预览与提交；缺项是 `503 dependency_unavailable`。
 
+预览正文最多 8 KiB。提交包含完整文字行和布局，正文预算独立为 128 KiB，不能因旧输入预算截断已确认内容。两者超限均返回 `413 invalid_input`。
+
 预览响应为 `{code: "ok", kind, snapshot, photo}`。提交正文为 `{kind, selections, expected}`，`expected` 使用本人确认的完整 `snapshot`。成功返回 `201`、`{code: "ok", application}`。服务端在短事务中重读可信内容并比较全部实际字段；差异为 `409 data_changed`。当前无工号为 `409 number_required`；目录或领取地点不可选为 `422 selection_unavailable`；不可引用的照片为 `404 target_unavailable`。缺字、完整文字放不下分别为 `422 missing_glyph`、`422 text_overflow`。
 
 `snapshot` 包含 `name`、完整 `number`、`printedNumber`、`department: {id, name, printed}`、可空的 `position: {rosterId, name}` 与 `title: {id, name}`、`printedTitle`、`photoId`、`template`、`pickup` 和实际文字行 `text`。布局和行的单位及完整文字定位见[媒体规则](media.md#文字排版)。`photo` 是不可变照片元数据，含 `photoId`、`resourceId`、`width`、`height` 和 `mediaType`，供预览和历史详情定位字节及保持原比例；不把照片尺寸另存为可变牌面事实。

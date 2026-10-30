@@ -89,6 +89,8 @@ impl Service {
         transaction::shared(client, b"access/scope", b"workforce").await?;
         actor.lock_account(client).await?;
         let person = account::state::discover_owner(client, actor.account_id()).await?;
+        // Directory writers resolve Person after taking their directory lock. This consumer
+        // never changes Person, so a shared row lock avoids an opposite-order lock cycle.
         if let Some(person) = person {
             person::state::lock_shared(client, person).await?;
         }
@@ -114,11 +116,11 @@ impl Service {
             .try_acquire_owned()
             .map_err(|_| Error::Busy)?;
         let resource_id = ResourceId::allocate();
-        let photo = tokio::task::spawn_blocking(move || {
+        let (width, height, size) = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             let photo = photo::prepare(&media_type, &bytes)?;
             settings::publish(&settings.directory, resource_id, &photo.bytes)?;
-            Ok::<_, Error>(photo)
+            Ok::<_, Error>((photo.width, photo.height, photo.bytes.len()))
         })
         .await
         .map_err(|_| Error::Worker)??;
@@ -137,15 +139,15 @@ impl Service {
                 resource_id,
                 "photo",
                 "image/webp",
-                i64::try_from(photo.bytes.len()).map_err(|_| Error::Configuration)?,
+                i64::try_from(size).map_err(|_| Error::Configuration)?,
             )
             .await?;
-            database::photo(client, id, person, resource_id, photo.width, photo.height).await?;
+            database::photo(client, id, person, resource_id, width, height).await?;
             Ok(Photo {
                 photo_id: id,
                 resource_id,
-                width: photo.width,
-                height: photo.height,
+                width,
+                height,
                 media_type: "image/webp",
             })
         }
@@ -680,6 +682,64 @@ mod tests {
             .recover()
             .await
             .expect("directory observer");
+        let person: person::Id = observer
+            .client()
+            .query_one(
+                "SELECT person_id FROM identity.accounts WHERE id=$1",
+                &[&manager.account_id()],
+            )
+            .await
+            .expect("photo owner")
+            .get(0);
+        let other: person::Id = observer
+            .client()
+            .query_one(
+                "SELECT id FROM identity.persons WHERE id<>$1 LIMIT 1",
+                &[&person],
+            )
+            .await
+            .expect("different fixture person")
+            .get(0);
+        let Item::Department(other_department)=Box::pin(create(services,manager,Creation::Department(serde_json::from_value(json!({"name":"Other department","enabled":true,"index":0,"groupId":department.group_id(),"parentId":null})).expect("different actual department")))).await else {panic!("department")};
+        let original = serde_json::to_value(snapshot).expect("trusted snapshot");
+        let mut wrong_role = original.clone();
+        wrong_role["template"]["backgroundId"] = wrong_role["template"]["fontId"].clone();
+        let mut wrong_department = original.clone();
+        wrong_department["department"]["id"] = json!(other_department.id());
+        for (person, snapshot, constraint) in [
+            (
+                other,
+                original.clone(),
+                "applications_photo_id_person_id_fkey",
+            ),
+            (
+                person,
+                wrong_role,
+                "applications_background_id_background_kind_fkey",
+            ),
+            (
+                person,
+                wrong_department,
+                "applications_roster_department_fkey",
+            ),
+        ] {
+            let error=observer.client().execute("INSERT INTO workforce.applications (id,person_id,kind,snapshot) VALUES ($1,$2,'issuance',$3::text::jsonb)",&[&uuid::Uuid::new_v4(),&person,&snapshot.to_string()]).await.expect_err("runtime cannot bypass a snapshot reference");
+            assert_eq!(
+                error.code(),
+                Some(&tokio_postgres::error::SqlState::FOREIGN_KEY_VIOLATION)
+            );
+            assert_eq!(
+                error.as_db_error().expect("constraint").constraint(),
+                Some(constraint)
+            );
+        }
+        let mut invalid_number = original;
+        invalid_number["number"]["serial"] = json!(0);
+        let error=observer.client().execute("INSERT INTO workforce.applications (id,person_id,kind,snapshot) VALUES ($1,$2,'issuance',$3::text::jsonb)",&[&uuid::Uuid::new_v4(),&person,&invalid_number.to_string()]).await.expect_err("nested number rules are database protected");
+        assert_eq!(
+            error.code(),
+            Some(&tokio_postgres::error::SqlState::CHECK_VIOLATION)
+        );
         let gate: i32 = owner
             .client()
             .query_one("SELECT pg_backend_pid()", &[])
@@ -754,7 +814,7 @@ mod tests {
         );
         assert_eq!(observer.client().query_one("SELECT count(*) FROM audit.events WHERE action='workforce.application.submitted'",&[]).await.expect("rejected race has no audit").get::<_,i64>(0),5);
         Box::pin(services.directory().configure_rule(manager.clone(),operation(),number::Subtype::ALL[0],serde_json::from_value(json!({"expected":{"id":100,"departmentId":department.id(),"position":false},"replacement":{"id":100,"departmentId":department.id(),"position":true}})).expect("restore fixture rule"))).await.expect("rule restored");
-        let mut disabled = serde_json::to_value(&department).expect("directory value");
+        let mut disabled = serde_json::to_value(department).expect("directory value");
         disabled["enabled"] = json!(false);
         let replacement = serde_json::from_value::<directory::Update<directory::department::Item>>(
             json!({"expected":department,"replacement":disabled}),
@@ -773,7 +833,7 @@ mod tests {
             services
                 .application()
                 .submit(
-                    &manager,
+                    manager,
                     Input {
                         kind: Kind::Issuance,
                         selections: selections.clone(),
