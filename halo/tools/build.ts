@@ -23,6 +23,7 @@ const sources = [
   "../design/assets/tokens.css",
   "../design/assets/logo.png",
   "../design/assets/halo-botanical.svg",
+  "../client/protocol/response.ts",
 ];
 const sourceHashes = await Promise.all(
   sources
