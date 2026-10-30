@@ -102,6 +102,31 @@ mod tests {
             .env("NUCLEUS_STORAGE__ROOT", "/fictional/avatar-root")
             .env("NUCLEUS_STORAGE__MOUNT", "/")
             .env("NUCLEUS_STORAGE__DEVICE", "1")
+            .env(
+                "NUCLEUS_WORKFORCE__APPLICATION__BACKGROUND_PATH",
+                "/fictional/background.png",
+            )
+            .env(
+                "NUCLEUS_WORKFORCE__APPLICATION__BACKGROUND_MEDIA_TYPE",
+                "image/png",
+            )
+            .env(
+                "NUCLEUS_WORKFORCE__APPLICATION__FONT_PATH",
+                "/fictional/font.ttf",
+            )
+            .env(
+                "NUCLEUS_WORKFORCE__APPLICATION__PICKUPS",
+                r#"["Fixture reception"]"#,
+            )
+            .env(
+                "NUCLEUS_WORKFORCE__APPLICATION__PHOTO_LIMITS",
+                r#"{"person_files":100,"person_bytes":1073741824,"total_files":1000,"total_bytes":10737418240}"#,
+            )
+            .env(
+                "NUCLEUS_WORKFORCE__APPLICATION__TEMPLATE",
+                serde_json::to_string(&domain::workforce::application::fixture_template())
+                    .expect("fixture template"),
+            )
             .env("NUCLEUS_WECHAT__WEBSITE__APP_ID", "website-fixture")
             .env(
                 "NUCLEUS_DATABASE__AUTHORITY",
