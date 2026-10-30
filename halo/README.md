@@ -61,6 +61,22 @@ Session 协议适配器供短信登录与本人检查使用。注册适配器核
 
 将 `NUCLEUS_OPENAPI_REFERENCE` 指向已保存快照，可检查当前后端的实际导出是否逐字节一致。
 
+## 本人首次领取工号
+
+`/workforce/number` 从员工服务进入，消费现有首次分配 API。类别、资格和原结果规则分别由[工号](../docs/workforce/numbers.md)、[页面](../docs/client/pages.md#网站本人首次领取工号)和[恢复合同](../docs/client/recovery.md#本人首次工号恢复)拥有。协议生成器从现有真实快照选择 `POST /api/v1/workforce/numbers`；生成文件不手改。
+
+```bash
+cd halo
+bun run check:generated
+bun run typecheck
+bun run test -- app/workforce/allocation.test.ts app/protocol/number.test.ts tools/protocol.test.ts
+bun run test:browser -- tests/number.spec.ts
+```
+
+受控浏览器使用真实页面、会话存储、确认弹窗与协议校验，覆盖类别无预选、固定结果、失联后同原输入恢复、输入不一致关闭、账户遮蔽及暂停资格，并保留四种宽度的明暗主题截图。该检查使用受控 HTTP，不证明真实 Cookie、数据库分配、最小空号或并发唯一性。
+
+独立客户端候选按上述组件检查交付。后续集成候选负责真实准入、本人领号及原成功响应丢失恢复。该阶段由后端独立核对固定事实和号码池；组件检查不替代最终端到端证据。
+
 ## 本人换号页面
 
 本人换号从个人账户的“更换手机号”进入 `/account/mobile`。原号发码、建立、新号发码与最终确认分别使用独立 Operation-Id。两次发码的 Turnstile action 分别为 `send_mobile_change_code` 和 `send_mobile_binding_code`，验证码复用六位受控 CodeInput。协议适配器在 `app/protocol/mobile.ts`，恢复控制器与材料在 `app/mobile-change/`。
