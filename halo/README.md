@@ -47,7 +47,7 @@ bun run generate
 bun run check:generated
 ```
 
-`protocol/openapi.json` 是构建输入；`app/protocol/generated/` 全部由工具生成。工具选择 C1、公开设置、创建 Session、正式注册、当前本人账户、本人更正记录、本人员工服务状态与当前工号、本人结束员工服务、本人政治面貌当前值与固定名称、本人注销、两种退出及原结果查询，以及本人换号的原号发码、建立、新号发码、完成与原状态查询，并包含可达 schema。同一路径可选择多个方法，创建 Session 与全部退出分别消费 POST 和 DELETE，本人政治面貌消费 GET 与 PUT，本人完成换号消费 PUT。
+`protocol/openapi.json` 是构建输入；`app/protocol/generated/` 全部由工具生成。工具选择 C1、公开设置、创建 Session、正式注册、当前本人账户及机构角色、本人更正记录、本人员工服务状态与当前工号、机构准入候选及提交、本人结束员工服务、本人政治面貌当前值与固定名称、本人注销、两种退出及原结果查询，以及本人换号的原号发码、建立、新号发码、完成与原状态查询，并包含可达 schema。同一路径可选择多个方法，创建 Session 与全部退出分别消费 POST 和 DELETE，本人政治面貌消费 GET 与 PUT，本人完成换号消费 PUT。
 
 Session 协议适配器供短信登录与本人检查使用。注册适配器核对首次 `201` 和原结果重放 `200` 的网站会话形状。退出适配器核对原操作及撤销集合。本次退出只接纳原 Session；全部退出接纳正数会话结果，查询核对完整集合及原发起会话。员工服务适配器只保留当前 Grant 的 ID 与人员定位；本人结束适配器发出无正文 POST，并核对原操作、原 Grant、双方人员及 `self` 模式。
 
@@ -243,6 +243,14 @@ bun run test -- app/protocol/affiliation.test.ts app/affiliation/marker.test.ts 
 受控浏览器检查可运行 `bun run test:browser -- tests/affiliation.spec.ts`。夹具构建实际页面与样式，使用真实会话选择、真实 IndexedDB 与 BroadcastChannel，并由受控响应覆盖首次读取、13 个选项、成功与成功后的独立当前读取、各类首次拒绝、401/403、结果未知与同键原重试、标记存在或损坏、迟到响应、账户切换、离页、聚焦、四种宽度及明暗主题。受控响应不代替真实 Cookie、数据库事务或 Nginx 验收。
 
 真实组合验收在现有登录场景内使用独立虚构账户首次填写政治面貌，丢弃真实成功回包后以同一 Operation-Id 和正文重试，再分别读取当前值并以新键触发冲突。浏览器核对页面、Cookie 与固定原键；Rust 在首次提交和重放前后独立比较中心政治面貌、完成、人员档案与非中心账户、人员、会话、授权和终止事实。重放不新增第二条政治面貌事实，当前读取和冲突不改变业务事实。运行方式仍为 `HALO_NGINX=/usr/sbin/nginx bun tools/check-halo-test.ts browser`；受控浏览器检查、类型检查和单元测试都不能替代该验收。
+
+### 机构入口开通员工服务
+
+个人账户按当前机构角色开放 `/workforce/grants/new`。页面与状态设计见[开通员工服务](../docs/client/pages.md#网站机构入口开通员工服务)，准入事实与机构资格仍归[授权生命周期](../docs/access/grants.md)。候选读取固定机构来源，角色保持服务端分页；普通成员通过 `kind: default` 识别。确认后的完整输入在首次 POST 前按操作者账户保存于本标签页的 `halo.workforce-admission:` 记录。原结果未知时只提供明确的同键原输入核对，不依赖领域历史读取权限。确定结果清理输入，损坏材料阻止猜测性的重复办理。
+
+本片的协议与控制器回归可运行 `bun run test -- app/protocol/admission.test.ts app/workforce/admission.test.ts`。受控浏览器入口为 `bun run test:browser -- tests/admission.spec.ts`，核对权限、默认角色、真实分页、确认焦点、待确认重放、账户切换、依赖失败及明暗主题与四种宽度。受控响应不能证明数据库建立成功。
+
+真实端到端验收在明确的集成候选中安排。届时以真实注册的虚构同事和有权机构管理者核对页面开通、首次成功丢响应后的同键重放，以及同事刷新后的当前服务状态。客户端受控验证、真实端到端与生产部署分别验收。
 
 ## CI 依赖镜像
 
