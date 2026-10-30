@@ -35,11 +35,179 @@ export function pulledReference(local: any, diffIds: string[]) {
     !/^sha256:[0-9a-f]{64}$/.test(local.Id) ||
     local.Os !== "linux" ||
     local.Architecture !== "amd64" ||
-    !local.RepoDigests?.includes(image) ||
+    !Array.isArray(local.RepoDigests) ||
+    !local.RepoDigests.every((digest: unknown) => typeof digest === "string") ||
+    !local.RepoDigests.includes(image) ||
     JSON.stringify(local.RootFS?.Layers) !== JSON.stringify(diffIds)
   )
     throw new Error("Pulled image/config/platform mismatch");
   return local.Id as string;
+}
+
+export function pullReceipt(result: { status: number | null; stdout: Buffer }) {
+  const text = result.stdout.toString();
+  return {
+    image,
+    status: result.status,
+    digest: text.match(/^Digest: (sha256:[0-9a-f]{64})\s*$/m)?.[1] ?? null,
+    progress: text.split(/\r?\n/).flatMap((line) => {
+      const match = line.match(
+        /^([0-9a-f]{12}): (Pulling fs layer|Waiting|Verifying Checksum|Download complete|Pull complete|Already exists)$/,
+      );
+      return match ? [{ layer: match[1]!, state: match[2]! }] : [];
+    }),
+  };
+}
+
+export function prepareColdCache(
+  output: string,
+  docker = capture,
+  env = process.env,
+) {
+  assertContext(env);
+  const socket = "unix:///var/run/docker.sock";
+  if (
+    env.RUNNER_ENVIRONMENT !== "github-hosted" ||
+    env.RUNNER_OS !== "Linux" ||
+    env.GITHUB_JOB !== "cold" ||
+    env.GITHUB_WORKFLOW_REF !==
+      "headironc/nucleus/.github/workflows/halo-publish.yml@refs/heads/dev" ||
+    !/^\d+$/.test(env.GITHUB_RUN_ID ?? "") ||
+    !/^\d+$/.test(env.GITHUB_RUN_ATTEMPT ?? "") ||
+    (env.DOCKER_HOST && env.DOCKER_HOST !== socket) ||
+    (env.DOCKER_CONTEXT && env.DOCKER_CONTEXT !== "default")
+  )
+    throw new Error(
+      "Cache preparation requires this dedicated hosted cold job",
+    );
+  if (
+    docker(["context", "show"]) !== "default" ||
+    docker([
+      "context",
+      "inspect",
+      "default",
+      "--format",
+      "{{.Endpoints.docker.Host}}",
+    ]) !== socket
+  )
+    throw new Error(
+      "Cold cache Docker context is not the local default daemon",
+    );
+  const images = () => {
+    const text = docker([
+      "image",
+      "ls",
+      "--all",
+      "--no-trunc",
+      "--format",
+      "{{json .}}",
+    ]);
+    return text
+      ? text.split("\n").map((line) => {
+          const row = JSON.parse(line);
+          if (
+            typeof row.ID !== "string" ||
+            !/^sha256:[0-9a-f]{64}$/.test(row.ID) ||
+            typeof row.Repository !== "string" ||
+            typeof row.Tag !== "string"
+          )
+            throw new Error("Unverifiable initial Docker image identity");
+          return {
+            id: row.ID as string,
+            reference:
+              row.Repository === "<none>" || row.Tag === "<none>"
+                ? null
+                : `${row.Repository}:${row.Tag}`,
+          };
+        })
+      : [];
+  };
+  const containers = () => {
+    const text = docker(["container", "ls", "--all", "--quiet", "--no-trunc"]);
+    const ids = text ? text.split("\n") : [];
+    if (ids.some((id) => !/^[0-9a-f]{64}$/.test(id)))
+      throw new Error("Unverifiable initial Docker container identity");
+    return ids;
+  };
+  const before = images();
+  const receipt = {
+    run: env.GITHUB_RUN_ID,
+    attempt: env.GITHUB_RUN_ATTEMPT,
+    workflowRevision: env.GITHUB_WORKFLOW_SHA,
+    runnerEnvironment: "github-hosted",
+    context: { name: "default", host: socket },
+    imagesBefore: before,
+    containersBefore: containers(),
+    attempts: [] as { id: string; target: string; state: string }[],
+    imagesAfter: null as ReturnType<typeof images> | null,
+    containersAfter: null as string[] | null,
+    state: "observed",
+  };
+  const save = () =>
+    writeFileSync(
+      join(output, "cold-cache.json"),
+      JSON.stringify(receipt, null, 2),
+    );
+  const remove = (id: string, target: string) => {
+    const attempt = { id, target, state: "started" };
+    receipt.attempts.push(attempt);
+    save();
+    // Never force removal or prune images outside the recorded initial set.
+    docker(["image", "rm", "--no-prune", "--", target]);
+    attempt.state = "completed";
+    save();
+  };
+  save();
+  try {
+    if (receipt.containersBefore.length)
+      throw new Error(
+        "Cold runner has containers; initial images are retained",
+      );
+    const initial = new Set(before.map((row) => row.id));
+    const references = new Set<string>();
+    for (const row of before) {
+      if (row.reference && !references.has(row.reference)) {
+        references.add(row.reference);
+        if (
+          docker([
+            "image",
+            "inspect",
+            "--format",
+            "{{.Id}}",
+            "--",
+            row.reference,
+          ]) !== row.id
+        )
+          throw new Error("Initial image reference changed; cache retained");
+        remove(row.id, row.reference);
+      }
+    }
+    for (const id of new Set(images().map((row) => row.id))) {
+      if (!initial.has(id))
+        throw new Error(
+          "New unowned image appeared; cache preparation stopped",
+        );
+      remove(id, id);
+    }
+    receipt.imagesAfter = images();
+    receipt.containersAfter = containers();
+    if (receipt.imagesAfter.length || receipt.containersAfter.length)
+      throw new Error("Cold runner cache did not become empty");
+    receipt.state = "prepared";
+    save();
+    return receipt;
+  } catch (error) {
+    receipt.state = "failed";
+    try {
+      receipt.imagesAfter = images();
+      receipt.containersAfter = containers();
+    } catch {
+      receipt.imagesAfter = null;
+      receipt.containersAfter = null;
+    }
+    save();
+    throw error;
+  }
 }
 
 async function cold(producer: string, output: string) {
@@ -51,15 +219,11 @@ async function cold(producer: string, output: string) {
   if (head.status !== 0 || head.stdout.trim() !== selected.source)
     throw new Error("Cold consumer source mismatch");
   const before = platform();
-  const cache = capture(["image", "ls", "--quiet", "--no-trunc"]);
-  if (cache)
-    throw new Error(
-      "Cold acceptance requires a new runner with an empty image cache",
-    );
+  const cache = prepareColdCache(output);
   writeFileSync(
     join(output, "cold-before.json"),
     JSON.stringify({
-      cache,
+      cache: cache.imagesAfter,
       image,
       source: selected.source,
       package: before.package,
@@ -95,11 +259,21 @@ async function cold(producer: string, output: string) {
         "pull",
         image,
       ]);
+      const pull = pullReceipt(result);
+      writeFileSync(
+        join(output, "pull-transfer.json"),
+        JSON.stringify(pull, null, 2),
+      );
       if (result.status !== 0)
         throw new Error(
           "Private job-token pull failed; no anonymous or PAT fallback",
         );
       pulled = true;
+      if (
+        pull.progress.some((entry) => entry.state === "Already exists") ||
+        (pull.digest !== null && pull.digest !== selected.manifest)
+      )
+        throw new Error("Cold pull cache reuse or digest conflict detected");
       const remote = await registryIdentity(auth);
       writeFileSync(
         join(output, "registry.json"),
@@ -137,9 +311,18 @@ async function cold(producer: string, output: string) {
       'const uid=process.getuid(); if (!Number.isSafeInteger(uid)||uid<=0) throw Error("Default user must be non-root"); console.log(JSON.stringify({uid,gid:process.getgid()}));',
     ]);
     const defaultUser = JSON.parse(capture(["logs", defaultName]));
+    if (
+      !Number.isSafeInteger(defaultUser.uid) ||
+      defaultUser.uid <= 0 ||
+      !Number.isSafeInteger(defaultUser.gid) ||
+      defaultUser.gid < 0
+    )
+      throw new Error(
+        "Default user receipt must identify a non-root numeric user",
+      );
     writeFileSync(
       join(output, "default-user.json"),
-      JSON.stringify(defaultUser),
+      JSON.stringify({ uid: defaultUser.uid, gid: defaultUser.gid }),
     );
     for (const path of ["target", "root-modules", "home", "runtime-evidence"])
       mkdirSync(join(scratch, path));

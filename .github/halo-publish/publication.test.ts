@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   writeFileSync,
   rmSync,
+  chmodSync,
 } from "node:fs";
 import { resolve, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -14,6 +15,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import {
   assertContext,
   assertPlatform,
+  accountAssociation,
   hash,
   image,
   publish,
@@ -23,7 +25,7 @@ import {
   type Inspection,
 } from "./publication";
 import { withAuth, command } from "./registry";
-import { pulledReference } from "./cold";
+import { prepareColdCache, pulledReference, pullReceipt } from "./cold";
 
 const root = resolve(import.meta.dir, "../..");
 // Original accepted manifest bytes, with only this fixture's final LF removed.
@@ -275,14 +277,106 @@ test("an API omission is unknown, not permission or producer acceptance", () => 
     a[key] = null;
     expect(() => check(a)).toThrow();
   }
+  const malformed: any = accepted();
+  malformed.artifact.expires_at = ["2099-01-01T00:00:00Z"];
+  expect(() => check(malformed)).toThrow();
 });
 test("unavailable job-token association metadata remains an explicit view rather than verified association", () => {
   const a: any = accepted();
-  expect(check(a)).toBe("object");
+  expect(check(a).packageRepositoryView).toBe("object");
   a.pkg.repository = null;
-  expect(check(a)).toBe("null");
+  expect(check(a).packageRepositoryView).toBe("null");
   delete a.pkg.repository;
-  expect(check(a)).toBe("missing");
+  expect(check(a).packageRepositoryView).toBe("missing");
+});
+test("persisted platform and account receipts exclude synthetic secrets at every API nesting level", () => {
+  const secret = "inactive-synthetic-clone-token";
+  const a: any = accepted();
+  const poison = (value: any) => {
+    if (!value || typeof value !== "object") return;
+    Object.values(value).forEach(poison);
+    if (!Array.isArray(value)) {
+      value.temp_clone_token = secret;
+      value.unexpected = { nestedCredential: secret };
+    }
+  };
+  poison(a);
+  const receipt = check(a);
+  const account = accountAssociation((path) => {
+    if (path === "user") return { login: "headironc", token: secret };
+    if (path === "users/headironc/packages/container/nucleus-ci") return a.pkg;
+    throw new Error("Unexpected API read");
+  });
+  for (const value of [receipt, account]) {
+    const json = JSON.stringify(value);
+    expect(json).not.toContain(secret);
+    expect(json).not.toContain("temp_clone_token");
+    expect(json).not.toContain("unexpected");
+    expect(value.package).toEqual({
+      id: 16266672,
+      name: "nucleus-ci",
+      visibility: "private",
+      repository: { id: 1432619931, full_name: "headironc/nucleus" },
+    });
+  }
+  expect(receipt.jobs.map((job) => job.id)).toEqual([
+    123763896679, 123771833610,
+  ]);
+  expect(receipt.artifact.workflow_run.head_sha).toBe(selected.source);
+});
+test("malformed API JSON cannot leak its body through a parser diagnostic", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "nucleus-safe-api-"));
+  directories.push(directory);
+  const gh = join(directory, "gh");
+  writeFileSync(
+    gh,
+    "#!/bin/sh\nprintf '%s' '{\"temp_clone_token\":\"inactive-synthetic-api-secret\",'\n",
+  );
+  chmodSync(gh, 0o700);
+  const child = spawn(
+    process.execPath,
+    [
+      "-e",
+      `import {api} from ${JSON.stringify(resolve(import.meta.dir, "publication.ts"))};try{api("repos/headironc/nucleus");}catch(error){console.log(error.message);}`,
+    ],
+    {
+      env: {
+        ...process.env,
+        PATH: `${directory}:${process.env.PATH}`,
+        GH_TOKEN: "inactive-fixture-only",
+      },
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let output = "";
+  child.stdout.on("data", (chunk) => (output += chunk));
+  child.stderr.on("data", (chunk) => (output += chunk));
+  const status = await new Promise<number | null>((done, reject) => {
+    child.once("error", reject);
+    child.once("close", done);
+  });
+  expect(status).toBe(0);
+  expect(output).toContain(
+    "GitHub returned invalid JSON: repos/headironc/nucleus",
+  );
+  expect(output).not.toContain("inactive-synthetic-api-secret");
+});
+test("independent account receipts require a visible exact association and the verified owner", () => {
+  for (const repository of [
+    null,
+    undefined,
+    { id: 1, full_name: "other/repo" },
+  ]) {
+    const pkg = { ...accepted().pkg, repository };
+    expect(() =>
+      accountAssociation((path) =>
+        path === "user" ? { login: "headironc" } : pkg,
+      ),
+    ).toThrow();
+  }
+  expect(() => accountAssociation(() => ({ login: "another-owner" }))).toThrow(
+    "verified owner",
+  );
 });
 test("supplied package associations reject conflicts, incomplete identities and malformed structures", () => {
   for (const association of [
@@ -326,6 +420,162 @@ test("a rejected job-token package response reports only the identity fields nee
     repositoryName: null,
   });
   expect(message).not.toContain("inactive-secret-fixture");
+  a.pkg.name = { temp_clone_token: "inactive-secret-fixture" };
+  expect(() => check(a)).toThrow("association is not ready");
+  try {
+    check(a);
+  } catch (error) {
+    expect((error as Error).message).not.toContain("inactive-secret-fixture");
+  }
+});
+
+function cacheFixture(occupied = false, refused = false) {
+  const first = "sha256:" + "a".repeat(64);
+  const untagged = "sha256:" + "b".repeat(64);
+  const state = {
+    rows: [
+      { ID: first, Repository: "example/preload", Tag: "one" },
+      { ID: first, Repository: "example/preload", Tag: "two" },
+      { ID: untagged, Repository: "<none>", Tag: "<none>" },
+    ],
+    calls: [] as string[][],
+    afterRemoval: () => {},
+  };
+  const docker = (args: string[]) => {
+    state.calls.push(args);
+    if (args[0] === "context")
+      return args[1] === "show" ? "default" : "unix:///var/run/docker.sock";
+    if (args[0] === "container") return occupied ? "c".repeat(64) : "";
+    if (args[1] === "ls")
+      return state.rows.map((r) => JSON.stringify(r)).join("\n");
+    const target = args.at(-1)!;
+    if (args[1] === "inspect") {
+      const row = state.rows.find((r) => `${r.Repository}:${r.Tag}` === target);
+      if (!row) throw new Error("Image absent");
+      return row.ID;
+    }
+    if (args[1] === "rm") {
+      if (refused) throw new Error("Removal refused");
+      state.rows = state.rows.filter(
+        (r) => r.ID !== target && `${r.Repository}:${r.Tag}` !== target,
+      );
+      state.afterRemoval();
+      return "";
+    }
+    throw new Error("Unexpected Docker command");
+  };
+  const output = mkdtempSync(join(tmpdir(), "nucleus-cold-cache-"));
+  directories.push(output);
+  const env = {
+    ...context,
+    GITHUB_JOB: "cold",
+    GITHUB_WORKFLOW_REF:
+      "headironc/nucleus/.github/workflows/halo-publish.yml@refs/heads/dev",
+    GITHUB_RUN_ID: "123",
+    GITHUB_RUN_ATTEMPT: "1",
+    RUNNER_ENVIRONMENT: "github-hosted",
+    RUNNER_OS: "Linux",
+  };
+  return { state, docker, output, env };
+}
+
+test("dedicated hosted preparation removes only enumerated preloads and proves an empty cache", () => {
+  const f = cacheFixture();
+  (f.state.rows[0] as any).temp_clone_token = "inactive-cache-metadata-secret";
+  const receipt = prepareColdCache(f.output, f.docker, f.env);
+  expect(JSON.stringify(receipt)).not.toContain(
+    "inactive-cache-metadata-secret",
+  );
+  expect(receipt.state).toBe("prepared");
+  expect(receipt.imagesBefore).toHaveLength(3);
+  expect(receipt.imagesAfter).toEqual([]);
+  expect(receipt.containersAfter).toEqual([]);
+  expect(receipt.attempts.map((x) => x.target)).toEqual([
+    "example/preload:one",
+    "example/preload:two",
+    "sha256:" + "b".repeat(64),
+  ]);
+  for (const args of f.state.calls) {
+    expect(args).not.toContain("--force");
+    expect(args).not.toContain("prune");
+  }
+});
+test("cold cache preparation refuses containers and preserves all images", () => {
+  const f = cacheFixture(true);
+  expect(() => prepareColdCache(f.output, f.docker, f.env)).toThrow(
+    "has containers",
+  );
+  expect(f.state.rows).toHaveLength(3);
+  expect(f.state.calls.some((a) => a[1] === "rm")).toBe(false);
+});
+test("cache cleanup refusal preserves failure evidence without retry or force", () => {
+  const f = cacheFixture(false, true);
+  expect(() => prepareColdCache(f.output, f.docker, f.env)).toThrow(
+    "Removal refused",
+  );
+  expect(f.state.calls.filter((a) => a[1] === "rm")).toHaveLength(1);
+  const receipt = JSON.parse(
+    readFileSync(join(f.output, "cold-cache.json"), "utf8"),
+  );
+  expect(receipt.state).toBe("failed");
+  expect(receipt.attempts[0].state).toBe("started");
+  expect(receipt.imagesAfter).toHaveLength(3);
+});
+test("cache preparation refuses self-hosted, wrong jobs and remote Docker contexts", () => {
+  for (const change of [
+    { RUNNER_ENVIRONMENT: "self-hosted" },
+    { GITHUB_JOB: "publish" },
+    {
+      GITHUB_WORKFLOW_REF:
+        "headironc/nucleus/.github/workflows/other.yml@refs/heads/dev",
+    },
+    { DOCKER_HOST: "tcp://elsewhere:2375" },
+    { DOCKER_CONTEXT: "remote" },
+  ]) {
+    const f = cacheFixture();
+    expect(() =>
+      prepareColdCache(f.output, f.docker, { ...f.env, ...change }),
+    ).toThrow();
+    expect(f.state.calls).toEqual([]);
+  }
+  const f = cacheFixture();
+  expect(() => prepareColdCache(f.output, () => "remote", f.env)).toThrow(
+    "context",
+  );
+});
+test("unexpected new images stop preparation without deleting the new image", () => {
+  const f = cacheFixture();
+  const id = "sha256:" + "d".repeat(64);
+  f.state.afterRemoval = () => {
+    if (!f.state.rows.some((r) => r.ID === id))
+      f.state.rows.push({ ID: id, Repository: "unexpected/new", Tag: "one" });
+  };
+  expect(() => prepareColdCache(f.output, f.docker, f.env)).toThrow(
+    "unowned image",
+  );
+  expect(
+    f.state.calls.filter((a) => a[1] === "rm").some((a) => a.at(-1) === id),
+  ).toBe(false);
+});
+test("an already empty dedicated cache needs no removal", () => {
+  const f = cacheFixture();
+  f.state.rows = [];
+  expect(prepareColdCache(f.output, f.docker, f.env).state).toBe("prepared");
+  expect(f.state.calls.some((a) => a[1] === "rm")).toBe(false);
+});
+test("pull receipts preserve digest and layer progress without copying arbitrary subprocess output", () => {
+  const result = pullReceipt({
+    status: 0,
+    stdout: Buffer.from(
+      `aaaaaaaaaaaa: Pulling fs layer\naaaaaaaaaaaa: Pull complete\nDigest: ${selected.manifest}\ninactive-synthetic-credential\n`,
+    ),
+  });
+  expect(result.digest).toBe(selected.manifest);
+  expect(result.progress).toEqual([
+    { layer: "aaaaaaaaaaaa", state: "Pulling fs layer" },
+    { layer: "aaaaaaaaaaaa", state: "Pull complete" },
+  ]);
+  expect(JSON.stringify(result)).not.toContain("inactive-synthetic-credential");
 });
 test("registry bytes match the original manifest and all changed bytes conflict", () => {
   expect(hash(manifest)).toBe(
@@ -478,6 +728,7 @@ test("pulled daemon reference is separate from config but bound to registry dige
   expect(pulledReference(local, local.RootFS.Layers)).toBe(local.Id);
   for (const change of [
     { RepoDigests: [] },
+    { RepoDigests: [image, { temp_clone_token: "inactive-inspect-secret" }] },
     { Architecture: "arm64" },
     { Id: "latest" },
     { RootFS: { Layers: [] } },
