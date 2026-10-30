@@ -273,7 +273,7 @@ pub(crate) mod tests {
         };
         let issued = services
             .registration()
-            .register(crate::registration::Input::new(
+            .register_input_for_test(crate::registration::Input::new(
                 operation(),
                 credential.id(),
                 credential.token().text().parse().expect("proof"),
@@ -284,7 +284,7 @@ pub(crate) mod tests {
             .expect("R2");
         services
             .current()
-            .authenticate(crate::identity::current::Proof {
+            .authenticate(crate::identity::current::Proof::Cookie {
                 id: issued.id(),
                 token: issued.token().text().parse().expect("token"),
             })

@@ -50,6 +50,7 @@ pub enum Failure {
     Verification,
     CodeInvalid,
     Suspended,
+    MobileUnsupported,
     Quota {
         retry_at: chrono::DateTime<chrono::Utc>,
     },
@@ -59,6 +60,18 @@ pub enum Failure {
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("phone authorization code was explicitly rejected")]
+    MobileCodeInvalid,
+    #[error("mini-program phone authentication is not configured")]
+    MiniUnavailable,
+    #[error("trusted phone number is unsupported")]
+    MobileUnsupported,
+    #[error("mini-program phone exchange failed")]
+    Mini {
+        #[source]
+        cause: crate::identity::mini::client::Error,
+        elapsed: Duration,
+    },
     #[error("{0}")]
     History(#[from] crate::history::Error),
     #[error("{0}")]
@@ -351,10 +364,11 @@ impl Error {
                 Failure::Unknown => Failure::Unknown,
                 _ => Failure::Unavailable,
             },
-            Self::Proof => Failure::Proof,
+            Self::Proof | Self::MobileCodeInvalid => Failure::Proof,
             Self::Current(current::Error::Invalid) => Failure::Proof,
             Self::CodeInvalid => Failure::CodeInvalid,
             Self::Suspended => Failure::Suspended,
+            Self::MobileUnsupported => Failure::MobileUnsupported,
             Self::Mismatch => Failure::Mismatch,
             Self::TargetChanged => Failure::TargetChanged,
             Self::Conflict => Failure::Conflict,
@@ -376,7 +390,9 @@ impl Error {
     }
 
     pub(super) fn report(&self, operation_id: operation::Id) {
-        if let Self::NotCommitted { cause } = self {
+        if let Self::Mini { cause, elapsed } = self {
+            tracing::error!(%operation_id, stage="mini_phone_exchange", supplier_code=cause.code(), elapsed=?elapsed, error=?cause);
+        } else if let Self::NotCommitted { cause } = self {
             if matches!(
                 cause.as_ref(),
                 Self::SessionReadback { .. }
@@ -414,6 +430,8 @@ impl Error {
         matches!(
             self,
             Self::Proof
+                | Self::MobileCodeInvalid
+                | Self::MobileUnsupported
                 | Self::Current(current::Error::Invalid)
                 | Self::TargetChanged
                 | Self::Conflict

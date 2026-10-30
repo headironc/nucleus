@@ -8,8 +8,7 @@ use crate::{
     identity::{
         account, authentication, keys, operation,
         registration::attempt,
-        session::{Error, Id, Token, state},
-        website::AppId,
+        session::{Error, Id, Origin, Token, state},
     },
     kernel::App,
 };
@@ -25,8 +24,8 @@ impl Session {
     pub(crate) fn account_id(&self) -> account::Id {
         self.state.account_id()
     }
-    pub(crate) fn app_id(&self) -> &AppId {
-        self.state.app_id()
+    pub(crate) fn origin(&self) -> &Origin {
+        self.state.origin()
     }
     pub(super) fn authentication_id(&self) -> authentication::Id {
         self.state.authentication_id()
@@ -43,10 +42,10 @@ impl Session {
     pub(crate) fn matches(&self, token: &Token) -> bool {
         token.0.matches(self.state.hash())
     }
-    pub(crate) fn validate(&self, app_id: &AppId, now: DateTime<Utc>) -> Result<(), Error> {
-        if self.app_id() != app_id {
+    pub(crate) fn validate_origin(&self, origin: &Origin, now: DateTime<Utc>) -> Result<(), Error> {
+        if self.origin() != origin {
             return Err(Error::Facts {
-                rule: "session application is the configured website",
+                rule: "session retains its original source",
             });
         }
         self.validate_time(now)

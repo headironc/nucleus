@@ -2,7 +2,7 @@
 
 ## 阅读路径与权威
 
-当前设计按约 1500 人的内部小系统简化，先读[业务总览](overview.md)和[架构](architecture.md)。新增工牌使用固定快照、状态条件、人工重试与审计；同人同类型申请不限制数量。已有复杂实现按消费者迁移，目标不冒充已交付。公开内容管理、小程序暂缓，真实数据上线前完成[备份与恢复](operations/backup.md)。
+当前设计按约 1500 人的内部小系统简化，先读[业务总览](overview.md)和[架构](architecture.md)。新增工牌使用固定快照、状态条件、人工重试与审计；同人同类型申请不限制数量。已有复杂实现按消费者迁移，目标不冒充已交付。公开内容管理和微信身份登录暂缓，小程序当前范围限于手机号认证。真实数据上线前完成[备份与恢复](operations/backup.md)。
 
 先读[业务总览](overview.md)，再读架构的[应用内核](architecture.md#应用内核)与[威胁模型](architecture.md#威胁模型)，随后按用例进入下列正式业务专题。实施切片、开发循环与授权规则见[交付顺序](engineering/delivery.md)，模型选择、委派和接续见[模型政策](engineering/models.md)。架构拥有跨能力工程协议，业务专题拥有输入、资格、状态、事实、响应及专属恢复依据。
 
@@ -36,7 +36,7 @@
 | Halo 网站本人注销                              | 已交付 | [注销](identity/cancellation.md)、[页面](client/pages.md#网站本人注销设计稿)                                                                         |
 | 注销历史读取                                   | 目标   | [注销](identity/cancellation.md)                                                                                                                     |
 | 网站本人及协助换号                             | 已交付 | [换号](identity/mobile.md)                                                                                                                           |
-| 小程序手机号认证与小程序会话（暂缓）           | 目标   | [小程序手机号](identity/mini-mobile.md)、[小程序会话](client/session.md)                                                                             |
+| 小程序手机号认证、注册与 Bearer 会话后端       | 已交付 | [小程序手机号](identity/mini-mobile.md)、[本人读取](identity/current.md)、[退出](identity/revocation.md)；真实平台资格与集成验收另行完成             |
 | 微信身份登录、绑定与解绑（暂缓）               | 目标   | [微信身份](identity/wechat.md)、[微信事实](identity/wechat-data.md)                                                                                  |
 | 权限目录与系统角色                             | 已交付 | [权限目录](access/capabilities.md)                                                                                                                   |
 | 机构与 Workforce 角色、机构 Holder 及指派      | 已交付 | [角色与指派](access/roles.md)、[状态历史与完整性](architecture.md#状态历史与完整性)                                                                  |

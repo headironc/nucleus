@@ -101,14 +101,15 @@ CREATE TABLE identity.receipts (
     operation_id uuid NOT NULL UNIQUE,
     credential_id uuid NOT NULL UNIQUE,
     app_id text NOT NULL CHECK (app_id <> '' AND app_id !~ '[[:space:][:cntrl:]]'),
-    method text NOT NULL CHECK (method = 'message'),
-    transport text NOT NULL CHECK (transport = 'cookie'),
+    method text NOT NULL,
+    transport text NOT NULL,
     proof bytea NOT NULL CHECK (octet_length(proof) = 32),
     account_id uuid NOT NULL UNIQUE REFERENCES identity.accounts (id),
     person_id uuid NOT NULL REFERENCES identity.persons (id),
     revision_id uuid NOT NULL,
     transaction_id xid8 NOT NULL DEFAULT pg_catalog.pg_current_xact_id(),
-    FOREIGN KEY (revision_id, person_id) REFERENCES identity.revisions (id, person_id)
+    FOREIGN KEY (revision_id, person_id) REFERENCES identity.revisions (id, person_id),
+    CHECK ((method = 'message' AND transport = 'cookie') OR (method = 'mobile' AND transport = 'bearer'))
 );
 CREATE TABLE identity.suspensions (
     id uuid PRIMARY KEY,
@@ -287,8 +288,8 @@ CREATE TABLE identity.sessions (
     account_id uuid NOT NULL REFERENCES identity.accounts (id),
     sequence bigint NOT NULL CHECK (sequence IN (1, 2)),
     version bigint NOT NULL CHECK (version = sequence),
-    hash bytea NOT NULL CHECK (octet_length(hash) = 32),
-    method text NOT NULL CHECK (method = 'message'),
+    hash bytea NOT NULL UNIQUE CHECK (octet_length(hash) = 32),
+    method text NOT NULL CHECK (method IN ('message', 'mobile')),
     app_id text NOT NULL CHECK (app_id <> '' AND app_id !~ '[[:space:][:cntrl:]]'),
     created_at timestamptz NOT NULL CHECK (isfinite(created_at)),
     expires_at timestamptz NOT NULL CHECK (isfinite(expires_at) AND expires_at > created_at),
@@ -314,7 +315,7 @@ CREATE TABLE identity.issuances (
     authentication_id uuid NOT NULL REFERENCES identity.authentications (id),
     receipt_id uuid REFERENCES identity.receipts (id),
     hash bytea NOT NULL CHECK (octet_length(hash) = 32),
-    method text NOT NULL CHECK (method = 'message'),
+    method text NOT NULL CHECK (method IN ('message', 'mobile')),
     app_id text NOT NULL CHECK (app_id <> '' AND app_id !~ '[[:space:][:cntrl:]]'),
     created_at timestamptz NOT NULL CHECK (isfinite(created_at)),
     expires_at timestamptz NOT NULL CHECK (isfinite(expires_at) AND expires_at > created_at),
@@ -539,8 +540,18 @@ BEGIN
             ORDER BY finished_at DESC, id DESC LIMIT 1;
     ELSE
         SELECT * INTO STRICT authentication FROM identity.authentications WHERE id = NEW.id;
-        SELECT * INTO STRICT verification FROM identity.checks WHERE id = authentication.message_id;
+        IF authentication.transport = 'bearer' THEN
+            SELECT exchange.mobile_hash INTO STRICT original FROM identity.exchanges exchange
+                WHERE exchange.id = authentication.exchange_id AND exchange.operation_id = authentication.operation_id
+                    AND exchange.app_id = authentication.app_id AND exchange.proof = authentication.proof
+                    AND exchange.hash = authentication.hash AND exchange.key_id = authentication.key_id
+                    AND exchange.status = 'resolved' AND exchange.finished_at = authentication.finished_at
+                    AND exchange.transaction_id = authentication.transaction_id;
+        ELSE
+            SELECT * INTO STRICT verification FROM identity.checks WHERE id = authentication.message_id;
+        END IF;
     END IF;
+    IF authentication.transport = 'cookie' THEN
     IF verification.failures <> (SELECT count(*) FROM identity.authentications WHERE message_id = verification.id AND status = 'invalid') THEN
         RAISE EXCEPTION 'code failures require matching original results' USING ERRCODE = '23514';
     END IF;
@@ -556,10 +567,13 @@ BEGIN
         OR (authentication.status <> 'invalid' AND verification.authentication_id IS DISTINCT FROM authentication.id) THEN
         RAISE EXCEPTION 'authentication and code effects must agree' USING ERRCODE = '23514';
     END IF;
+    END IF;
     IF authentication.status = 'authenticated' THEN
         IF NOT EXISTS (SELECT 1 FROM identity.sessions session JOIN identity.handoffs handoff ON handoff.id = session.id
             JOIN identity.accounts account ON account.id = session.account_id
             WHERE session.authentication_id = authentication.id AND session.app_id = authentication.app_id
+                AND ((authentication.transport = 'cookie' AND session.method = 'message')
+                    OR (authentication.transport = 'bearer' AND session.method = 'mobile'))
                 AND session.created_at = authentication.finished_at AND (account.mobile).hash = original.mobile_hash
                 AND handoff.expires_at > session.created_at AND handoff.expires_at <= session.expires_at
                 AND NOT EXISTS (SELECT 1 FROM identity.suspensions suspension WHERE suspension.person_id = account.person_id
@@ -589,7 +603,26 @@ CREATE CONSTRAINT TRIGGER authentications_effects_check AFTER INSERT ON identity
 CREATE CONSTRAINT TRIGGER checks_effects_check AFTER UPDATE ON identity.checks
     DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION identity.check_authentication();
 
+CREATE FUNCTION identity.check_exchange_conclusion() RETURNS trigger
+LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+    IF (NEW.status = 'resolved') IS DISTINCT FROM EXISTS (
+        SELECT 1 FROM identity.authentications WHERE exchange_id = NEW.id
+            AND operation_id = NEW.operation_id AND app_id = NEW.app_id AND transport = 'bearer'
+            AND proof = NEW.proof AND hash = NEW.hash AND key_id = NEW.key_id
+            AND finished_at = NEW.finished_at AND transaction_id = NEW.transaction_id
+    ) THEN
+        RAISE EXCEPTION 'exchange conclusion and authentication commit together' USING ERRCODE = '23514';
+    END IF;
+    RETURN NULL;
+END
+$$;
+CREATE CONSTRAINT TRIGGER exchanges_conclusion_check AFTER UPDATE ON identity.exchanges
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION identity.check_exchange_conclusion();
+
 CREATE TRIGGER authentications_isolation_check BEFORE INSERT OR DELETE ON identity.authentications
+    FOR EACH STATEMENT EXECUTE FUNCTION identity.check_isolation();
+CREATE TRIGGER exchanges_isolation_check BEFORE INSERT OR UPDATE OR DELETE ON identity.exchanges
     FOR EACH STATEMENT EXECUTE FUNCTION identity.check_isolation();
 CREATE TRIGGER registrations_isolation_check BEFORE INSERT OR DELETE ON identity.registrations
     FOR EACH STATEMENT EXECUTE FUNCTION identity.check_isolation();
@@ -601,5 +634,6 @@ REVOKE ALL ON identity.persons, identity.revisions, identity.accounts, identity.
     identity.receipts, identity.suspensions, identity.resumptions, identity.cancellations, identity.replacements, identity.sessions,
     identity.handoffs, identity.registrations, identity.revocations FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity.lock_account(uuid), identity.lock_accounts(uuid,uuid), identity.check_verification(), identity.check_authentication() FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity.check_exchange_conclusion() FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity.lock_revocation(uuid, uuid, text) FROM PUBLIC;
 REVOKE ALL ON FUNCTION identity.cancelling(uuid) FROM PUBLIC;

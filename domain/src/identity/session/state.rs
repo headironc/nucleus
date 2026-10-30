@@ -7,8 +7,10 @@ use zeroize::Zeroizing;
 use crate::{
     history::{self, Change, Draft, Error, Keys, Kind, Locator, Read, Token, Verified},
     identity::{
-        account, authentication, operation, registration::attempt, session::Id, suspension,
-        transfer, website::AppId,
+        account, authentication, operation,
+        registration::attempt,
+        session::{Id, Origin},
+        suspension, transfer,
     },
     keys::seal::Seal,
 };
@@ -16,6 +18,17 @@ use crate::{
 pub(crate) const TABLE: &str = "identity.sessions";
 pub(crate) const ISSUANCES: &str = "identity.issuances";
 pub(crate) const REVOCATIONS: &str = "identity.revocations";
+
+pub(crate) async fn find_by_hash(client: &Client, hash: &[u8; 32]) -> Result<Option<Id>, Error> {
+    client
+        .query_opt(
+            "SELECT id FROM identity.sessions WHERE hash=$1",
+            &[&&hash[..]],
+        )
+        .await?
+        .map(|row| row.try_get(0).map_err(Error::decode))
+        .transpose()
+}
 
 pub(crate) async fn lock_shared(client: &Client, id: Id) -> Result<(), Error> {
     client
@@ -159,7 +172,7 @@ pub(crate) struct Input {
     pub(crate) authentication_id: authentication::Id,
     pub(crate) receipt_id: Option<attempt::Id>,
     pub(crate) hash: [u8; 32],
-    pub(crate) app_id: AppId,
+    pub(crate) origin: Origin,
     pub(crate) expires_at: DateTime<Utc>,
 }
 
@@ -170,7 +183,7 @@ pub(crate) struct State {
     authentication_id: authentication::Id,
     receipt_id: Option<attempt::Id>,
     hash: [u8; 32],
-    app_id: AppId,
+    origin: Origin,
     created_at: DateTime<Utc>,
     expires_at: DateTime<Utc>,
     revoked_at: Option<DateTime<Utc>>,
@@ -194,8 +207,8 @@ impl State {
     pub(crate) fn hash(&self) -> &[u8; 32] {
         &self.hash
     }
-    pub(crate) fn app_id(&self) -> &AppId {
-        &self.app_id
+    pub(crate) fn origin(&self) -> &Origin {
+        &self.origin
     }
     pub(crate) fn created_at(&self) -> DateTime<Utc> {
         self.created_at
@@ -217,7 +230,7 @@ impl State {
             authentication_id: self.authentication_id,
             receipt_id: self.receipt_id,
             hash: self.hash,
-            app_id: self.app_id.clone(),
+            origin: self.origin.clone(),
             expires_at: self.expires_at,
         }
     }
@@ -259,14 +272,13 @@ impl Kind for State {
             authentication_id: row.try_get("authentication_id").map_err(Error::decode)?,
             receipt_id: row.try_get("receipt_id").map_err(Error::decode)?,
             hash: decode_hash(row)?,
-            app_id: row.try_get("app_id").map_err(Error::decode)?,
+            origin: decode_origin(row)?,
             created_at: row.try_get("created_at").map_err(Error::decode)?,
             expires_at: row.try_get("expires_at").map_err(Error::decode)?,
             revoked_at: row.try_get("revoked_at").map_err(Error::decode)?,
             sequence: row.try_get("sequence").map_err(Error::decode)?,
             version: row.try_get("version").map_err(Error::decode)?,
         };
-        check_method(row)?;
         value.validate(now)?;
         Ok(value)
     }
@@ -292,7 +304,7 @@ impl history::State for State {
             authentication_id: data.input.authentication_id,
             receipt_id: data.input.receipt_id,
             hash: data.input.hash,
-            app_id: data.input.app_id,
+            origin: data.input.origin,
             created_at: data.created_at,
             expires_at: data.input.expires_at,
             revoked_at: data.revoked_at,
@@ -327,7 +339,7 @@ impl history::State for State {
                     && self.authentication_id == input.authentication_id
                     && self.receipt_id == input.receipt_id
                     && self.hash == input.hash
-                    && self.app_id == input.app_id
+                    && self.origin == input.origin
                     && self.created_at == *created_at
                     && self.expires_at == input.expires_at
             }
@@ -357,7 +369,7 @@ impl history::State for State {
         original: Option<&Verified<Self>>,
     ) -> Result<u64, Error> {
         Ok(match original {
-            None => client.execute("INSERT INTO identity.sessions (id,account_id,authentication_id,receipt_id,hash,method,app_id,created_at,expires_at,revoked_at,sequence,version,seal,seal_key_id,seal_version) VALUES ($1,$2,$3,$4,$5,'message',$6,$7,$8,$9,$10,$11,$12,$13,$14)", &[&self.id,&self.account_id,&self.authentication_id,&self.receipt_id,&&self.hash[..],&self.app_id,&self.created_at,&self.expires_at,&self.revoked_at,&self.sequence,&self.version,&seal.tag(),&seal.key_id(),&seal.version()]).await?,
+            None => client.execute("INSERT INTO identity.sessions (id,account_id,authentication_id,receipt_id,hash,method,app_id,created_at,expires_at,revoked_at,sequence,version,seal,seal_key_id,seal_version) VALUES ($1,$2,$3,$4,$5,$15,$6,$7,$8,$9,$10,$11,$12,$13,$14)", &[&self.id,&self.account_id,&self.authentication_id,&self.receipt_id,&&self.hash[..],&self.origin.app_id(),&self.created_at,&self.expires_at,&self.revoked_at,&self.sequence,&self.version,&seal.tag(),&seal.key_id(),&seal.version(),&self.origin.method()]).await?,
             Some(original) => client.execute("UPDATE identity.sessions SET revoked_at=$2,sequence=$3,version=$4,seal=$5,seal_key_id=$6,seal_version=$7 WHERE id=$1 AND version=$8 AND seal=$9 AND seal_key_id=$10 AND seal_version=$11", &[&self.id,&self.revoked_at,&self.sequence,&self.version,&seal.tag(),&seal.key_id(),&seal.version(),&original.version(),&original.seal().tag(),&original.seal().key_id(),&original.seal().version()]).await?,
         })
     }
@@ -549,7 +561,6 @@ impl Kind for Record {
         let kind = row.try_get::<_, &str>("kind").map_err(Error::decode)?;
         let payload = match (kind, sequence) {
             ("issuance", 1) => {
-                check_method(row)?;
                 let created_at = row.try_get("created_at").map_err(Error::decode)?;
                 let expires_at = row.try_get("expires_at").map_err(Error::decode)?;
                 validate_lifetime(created_at, expires_at, now)?;
@@ -562,7 +573,7 @@ impl Kind for Record {
                             .map_err(Error::decode)?,
                         receipt_id: row.try_get("receipt_id").map_err(Error::decode)?,
                         hash: decode_hash(row)?,
-                        app_id: row.try_get("app_id").map_err(Error::decode)?,
+                        origin: decode_origin(row)?,
                         expires_at,
                     },
                     created_at,
@@ -671,7 +682,7 @@ impl history::Record for Record {
     ) -> Result<(), Error> {
         match &self.data.payload {
             Payload::Issuance { input, created_at } => {
-                client.execute("INSERT INTO identity.issuances (id,account_id,authentication_id,receipt_id,hash,method,app_id,created_at,expires_at,operation_id,sequence,seal,seal_key_id,seal_version) VALUES ($1,$2,$3,$4,$5,'message',$6,$7,$8,$9,$10,$11,$12,$13)", &[&self.session_id,&self.data.account_id,&input.authentication_id,&input.receipt_id,&&input.hash[..],&input.app_id,created_at,&input.expires_at,&self.data.operation_id,&self.sequence,&seal.tag(),&seal.key_id(),&seal.version()]).await?;
+                client.execute("INSERT INTO identity.issuances (id,account_id,authentication_id,receipt_id,hash,method,app_id,created_at,expires_at,operation_id,sequence,seal,seal_key_id,seal_version) VALUES ($1,$2,$3,$4,$5,$14,$6,$7,$8,$9,$10,$11,$12,$13)", &[&self.session_id,&self.data.account_id,&input.authentication_id,&input.receipt_id,&&input.hash[..],&input.origin.app_id(),created_at,&input.expires_at,&self.data.operation_id,&self.sequence,&seal.tag(),&seal.key_id(),&seal.version(),&input.origin.method()]).await?;
             }
             Payload::Revocation { cause, revoked_at } => {
                 client.execute("INSERT INTO identity.revocations (id,account_id,sequence,mode,operation_id,cause_id,revoked_at,seal,seal_key_id,seal_version) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)", &[&self.session_id,&self.data.account_id,&self.sequence,&cause.mode(),&self.data.operation_id,cause.id(),revoked_at,&seal.tag(),&seal.key_id(),&seal.version()]).await?;
@@ -856,13 +867,12 @@ fn validate_lifetime(
     Ok(())
 }
 
-fn check_method(row: &Row) -> Result<(), Error> {
-    if row.try_get::<_, &str>("method").map_err(Error::decode)? != "message" {
-        return Err(Error::Integrity(
-            "a session retains its message authentication method",
-        ));
-    }
-    Ok(())
+fn decode_origin(row: &Row) -> Result<Origin, Error> {
+    Origin::restore(
+        row.try_get("method").map_err(Error::decode)?,
+        row.try_get("app_id").map_err(Error::decode)?,
+    )
+    .map_err(|_| Error::Integrity("a session retains a supported authentication source"))
 }
 
 fn decode_hash(row: &Row) -> Result<[u8; 32], Error> {
@@ -883,8 +893,8 @@ fn issuance_fields(input: &Input, created_at: DateTime<Utc>) -> Zeroizing<Vec<Ve
             .map(|id| id.as_bytes().to_vec())
             .unwrap_or_default(),
         input.hash.to_vec(),
-        b"message".to_vec(),
-        input.app_id.as_ref().as_bytes().to_vec(),
+        input.origin.method().as_bytes().to_vec(),
+        input.origin.app_id().as_bytes().to_vec(),
         created_at.timestamp_micros().to_string().into_bytes(),
         input.expires_at.timestamp_micros().to_string().into_bytes(),
     ])
@@ -934,7 +944,9 @@ mod tests {
             authentication_id: id(3),
             receipt_id: receipt.then(|| id(4)),
             hash: std::array::from_fn(|index| u8::try_from(index).expect("32 bytes")),
-            app_id: "website-fixture".parse().expect("app identity"),
+            origin: crate::identity::session::Origin::WebsiteMessage(
+                "website-fixture".parse().expect("app identity"),
+            ),
             expires_at: time() + TimeDelta::hours(1),
         }
     }
