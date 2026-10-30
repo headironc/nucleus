@@ -376,13 +376,6 @@ const TABLES: &[Table] = &[
         "",
     ),
     table(
-        crate::center::affiliation::PROFILES,
-        &[Select, Insert, Update],
-        "",
-        "",
-    ),
-    table(crate::kernel::completion::CENTER, &[Select, Insert], "", ""),
-    table(
         crate::workforce::number::REVISIONS,
         &[Select, Insert],
         "",
