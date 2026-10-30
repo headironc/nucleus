@@ -319,7 +319,7 @@ mod tests {
         );
         assert!(
             matches!(
-            Limits::new(3, 99, 3, 99).expect("file limits").publish(
+                Limits::new(3, 99, 3, 99).expect("file limits").publish(
                     &directory,
                     other,
                     super::ResourceId::allocate(),
