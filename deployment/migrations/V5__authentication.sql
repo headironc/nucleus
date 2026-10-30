@@ -220,7 +220,7 @@ CREATE TABLE identity.logouts (
     sequence bigint NOT NULL CHECK (sequence > 1),
     revoked_at timestamptz NOT NULL CHECK (isfinite(revoked_at)),
     initiator_id uuid NOT NULL,
-    scope text NOT NULL CHECK (scope IN ('current', 'all')),
+    scope text NOT NULL CHECK (scope IN ('current', 'all', 'other')),
     sessions uuid[] NOT NULL CHECK (array_position(sessions, NULL) IS NULL),
     seal bytea NOT NULL CHECK (octet_length(seal) = 32),
     seal_key_id bigint NOT NULL REFERENCES security.keys (id),
@@ -231,8 +231,11 @@ CREATE TABLE identity.logouts (
         DEFERRABLE INITIALLY DEFERRED,
     UNIQUE (account_id, sequence),
     UNIQUE (id, account_id),
-    CHECK (cardinality(sessions) > 0 AND initiator_id = ANY(sessions)),
-    CHECK (scope = 'all' OR sessions = ARRAY[initiator_id])
+    CHECK (cardinality(sessions) > 0 AND
+        ((scope = 'other' AND NOT initiator_id = ANY(sessions))
+            OR (scope <> 'other' AND initiator_id = ANY(sessions)))),
+    CHECK (scope = 'all' OR (scope = 'current' AND sessions = ARRAY[initiator_id])
+        OR (scope = 'other' AND cardinality(sessions) = 1))
 );
 
 CREATE TABLE identity.projections (

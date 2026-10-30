@@ -1,17 +1,13 @@
-//! Session logout and account-scoped observation of its permanent original set.
+//! Own effective sessions, logout and account-scoped permanent original results.
 
 mod command;
 
-use std::{convert::Infallible, num::NonZeroU64};
+use std::num::NonZeroU64;
 
-use bytes::BytesMut;
 use chrono::{DateTime, Utc};
 #[cfg(test)]
 pub(crate) use command::COMPLETIONS;
-use tokio_postgres::{
-    Client,
-    types::{FromSql, IsNull, ToSql, Type, to_sql_checked},
-};
+use tokio_postgres::Client;
 
 use crate::{
     identity::{
@@ -22,46 +18,40 @@ use crate::{
     runtime::registry,
 };
 
-pub type Error = kernel::Error<Infallible>;
+pub type Error = kernel::Error<Rejection>;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rejection {
+    CurrentSession,
+    NotFound,
+}
+
+impl kernel::Rejection for Rejection {
+    fn status(&self) -> kernel::Status {
+        match self {
+            Self::CurrentSession => kernel::Status::Conflict,
+            Self::NotFound => kernel::Status::NotFound,
+        }
+    }
+
+    fn code(&self) -> &'static str {
+        match self {
+            Self::CurrentSession => "current_session",
+            Self::NotFound => "resource_not_found",
+        }
+    }
+}
 
 pub(crate) async fn verify(client: &Client, app: &App, now: DateTime<Utc>) -> Result<(), Error> {
     command::verify(client, app, now).await
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::AsRefStr, strum::EnumString)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::AsRefStr)]
 #[strum(serialize_all = "snake_case")]
 pub enum Scope {
     Current,
     All,
-}
-
-impl<'a> FromSql<'a> for Scope {
-    fn from_sql(
-        kind: &Type,
-        raw: &'a [u8],
-    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        Ok(<&str>::from_sql(kind, raw)?.parse()?)
-    }
-
-    fn accepts(kind: &Type) -> bool {
-        <&str as FromSql>::accepts(kind)
-    }
-}
-
-impl ToSql for Scope {
-    fn to_sql(
-        &self,
-        kind: &Type,
-        out: &mut BytesMut,
-    ) -> Result<IsNull, Box<dyn std::error::Error + Send + Sync>> {
-        self.as_ref().to_sql(kind, out)
-    }
-
-    fn accepts(kind: &Type) -> bool {
-        <&str as ToSql>::accepts(kind)
-    }
-
-    to_sql_checked!();
+    Other(session::Id),
 }
 
 /// A confirmed, nonempty original logout set.
@@ -76,7 +66,7 @@ impl Completion {
             .ok()
             .and_then(NonZeroU64::new)
             .ok_or(Error::corrupt(
-                "a logout contains at least its initiating session",
+                "a logout contains at least one selected session",
             ))?;
         Ok(Self { count, revoked_at })
     }
@@ -87,6 +77,29 @@ impl Completion {
 
     pub fn revoked_at(&self) -> DateTime<Utc> {
         self.revoked_at
+    }
+}
+
+/// An effective own session observed together with the caller's current qualification.
+pub struct Session {
+    id: session::Id,
+    origin: session::Origin,
+    created_at: DateTime<Utc>,
+    current: bool,
+}
+
+impl Session {
+    pub fn id(&self) -> session::Id {
+        self.id
+    }
+    pub fn origin(&self) -> &session::Origin {
+        &self.origin
+    }
+    pub fn created_at(&self) -> DateTime<Utc> {
+        self.created_at
+    }
+    pub fn current(&self) -> bool {
+        self.current
     }
 }
 
@@ -134,6 +147,15 @@ pub struct Service {
 impl Service {
     pub(crate) fn prepare(app: App, current: current::Service) -> Self {
         Self { app, current }
+    }
+
+    pub async fn sessions(&self, actor: &Actor) -> Result<Vec<Session>, Error> {
+        self.app
+            .query(&command::Sessions {
+                service: self,
+                actor,
+            })
+            .await
     }
 
     pub async fn revoke(
@@ -300,6 +322,223 @@ mod tests {
     }
 
     #[test]
+    fn own_sessions_filter_effectiveness_and_other_logout_binds_its_target() {
+        let server = server();
+        Runtime::new().expect("runtime").block_on(Box::pin(async {
+            timeout(Duration::from_secs(40), Box::pin(async {
+                let database = Database::initialized(server).await;
+                let mut supplier = Supplier::new().await;
+                let (context, services) = start(&database, &supplier).await;
+                let (_, expired) = issue(&database, &services, &mut supplier).await;
+                Box::pin(crate::registration::tests::age_facts(&database, &services, chrono::TimeDelta::hours(49))).await;
+                let (receipt, actor) = issue(&database, &services, &mut supplier).await;
+                let (_, target) = issue(&database, &services, &mut supplier).await;
+                let foreign = Box::pin(register(&database, &services, &mut supplier)).await;
+                let sessions = services.revocation().sessions(&actor).await.expect("own effective snapshot");
+                assert_eq!(sessions.len(), 2);
+                assert_eq!(sessions.iter().filter(|session| session.current()).count(), 1);
+                assert!(sessions.iter().any(|session| session.id() == actor.session_id() && session.current()));
+                assert!(sessions.iter().any(|session| session.id() == target.session_id() && !session.current()));
+                for session in &sessions {
+                    assert!(matches!(session.origin(), crate::identity::session::Origin::WebsiteMessage(_)));
+                    assert!(session.created_at() <= database.now().await);
+                }
+                assert!(matches!(services.revocation().revoke(actor.clone(), operation(), super::Scope::Other(actor.session_id())).await,
+                    Err(super::Error::Rejected(super::Rejection::CurrentSession))));
+                for id in [expired.session_id(), foreign.session_id(), Uuid::new_v4().to_string().parse().expect("unknown session")] {
+                    assert!(matches!(services.revocation().revoke(actor.clone(), operation(), super::Scope::Other(id)).await,
+                        Err(super::Error::Rejected(super::Rejection::NotFound))));
+                }
+                let operation_id = operation();
+                let scope = super::Scope::Other(target.session_id());
+                let completion = services.revocation().revoke(actor.clone(), operation_id, scope).await.expect("other logout");
+                assert_eq!(completion.count().get(), 1);
+                assert!(services.current().read(&actor).await.is_ok());
+                assert!(services.current().read(&foreign).await.is_ok());
+                assert!(matches!(services.current().read(&target).await, Err(crate::identity::current::Error::Invalid)));
+                let replay = services.revocation().revoke(actor.clone(), operation_id, scope).await.expect("same effective initiator may recover its exact original");
+                assert_eq!(replay.revoked_at(), completion.revoked_at());
+                assert!(matches!(services.revocation().revoke(actor.clone(), operation_id, super::Scope::Other(expired.session_id())).await, Err(super::Error::Mismatch)));
+                assert!(matches!(services.revocation().revoke(actor.clone(), operation(), scope).await, Err(super::Error::Rejected(super::Rejection::NotFound))));
+                assert!(services.revocation().read(&foreign, operation_id).await.expect("hidden foreign result").is_none());
+                let original = services.revocation().read(&actor, operation_id).await.expect("original").expect("present");
+                assert_eq!(original.scope(), scope);
+                assert_eq!(original.initiator_id(), actor.session_id());
+                assert_eq!(original.revocations().len(), 1);
+                assert_eq!(original.revocations()[0].id(), target.session_id());
+                assert_eq!(services.revocation().sessions(&actor).await.expect("after revocation").len(), 1);
+                let observer = database.connections(&database.user).recover().await.expect("independent facts");
+                let row = observer.client().query_one("SELECT (SELECT count(*) FROM identity.logouts)=1 AS single, logout.scope='other' AND logout.initiator_id=$2 AND logout.sessions=ARRAY[$3::uuid] AND revocation.operation_id=logout.id AND revocation.revoked_at=logout.revoked_at AND revocation.transaction_id=logout.transaction_id AND NOT EXISTS(SELECT 1 FROM identity.handoffs WHERE id=$3) AND EXISTS(SELECT 1 FROM identity.handoffs WHERE id=$2) AS paired FROM identity.logouts logout JOIN identity.revocations revocation ON revocation.id=$3 WHERE logout.id=$1", &[&operation_id, &actor.session_id(), &target.session_id()]).await.expect("one atomic selected group");
+                assert!(row.get::<_, bool>("single")); assert!(row.get::<_, bool>("paired"));
+                observer.terminate().await.expect("observer ended");
+                services.close(); services.drain().await.expect("drain"); context.stop().await.expect("stop");
+                let (context, services) = start(&database, &supplier).await;
+                let Receipt::Session(issued) = receipt else { panic!("session") };
+                let actor = services.current().authenticate(Proof::Cookie { id: issued.id(), token: issued.token().text().parse().expect("token") }).await.expect("retained initiator after restart");
+                let original = services.revocation().read(&actor, operation_id).await.expect("verified after restart").expect("permanent original");
+                assert_eq!(original.scope(), scope);
+                assert_eq!(original.revocations()[0].id(), target.session_id());
+                Box::pin(crate::registration::tests::age_facts(&database, &services, chrono::TimeDelta::hours(25))).await;
+                Box::pin(services.authentication().retention().run()).await.expect("legal target cleanup");
+                let observer = database.connections(&database.user).recover().await.expect("cleanup observer");
+                assert!(observer.client().query_one("SELECT NOT EXISTS(SELECT 1 FROM identity.sessions WHERE id=$1) AND EXISTS(SELECT 1 FROM identity.logouts WHERE id=$2 AND sessions=ARRAY[$1::uuid])", &[&target.session_id(), &operation_id]).await.expect("target removed; permanent selection retained").get::<_, bool>(0));
+                observer.terminate().await.expect("observer ended");
+                services.close(); services.drain().await.expect("drain"); context.stop().await.expect("stop");
+                let (context, services) = start(&database, &supplier).await;
+                let (_, reader) = issue(&database, &services, &mut supplier).await;
+                let original = services.revocation().read(&reader, operation_id).await.expect("permanent original after cleanup and restart").expect("present");
+                assert_eq!(original.scope(), scope);
+                assert_eq!(original.revocations()[0].id(), target.session_id());
+                assert!(matches!(services.revocation().revoke(reader, operation_id, scope).await, Err(super::Error::Mismatch)), "a new reader cannot become the original initiator");
+                services.close(); services.drain().await.expect("drain"); context.stop().await.expect("stop"); supplier.stop().await;
+            })).await.expect("own sessions budget");
+        }));
+    }
+
+    #[test]
+    fn other_logout_rolls_back_every_fact_when_a_selected_write_fails() {
+        let server = server();
+        Runtime::new().expect("runtime").block_on(async {
+            timeout(Duration::from_secs(35), async {
+                for handoff in [false, true] {
+                    let database = Database::initialized(Arc::clone(&server)).await;
+                    let mut supplier = Supplier::new().await;
+                    let (context, services) = start(&database, &supplier).await;
+                    let (_, actor) = issue(&database, &services, &mut supplier).await;
+                    let (_, target) = issue(&database, &services, &mut supplier).await;
+                    let owner = database.connections("postgres").recover().await.expect("isolated fault owner");
+                    owner.client().batch_execute("CREATE FUNCTION identity.reject_test_write() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'isolated selected write fault'; END $$").await.expect("fault function");
+                    let trigger = if handoff { "CREATE TRIGGER test_write_failure BEFORE DELETE ON identity.handoffs FOR EACH ROW EXECUTE FUNCTION identity.reject_test_write()" }
+                        else { "CREATE TRIGGER test_write_failure BEFORE INSERT ON identity.revocations FOR EACH ROW EXECUTE FUNCTION identity.reject_test_write()" };
+                    owner.client().batch_execute(trigger).await.expect("fault installed");
+                    let operation_id = operation(); let scope = super::Scope::Other(target.session_id());
+                    assert!(matches!(services.revocation().revoke(actor.clone(), operation_id, scope).await, Err(super::Error::Unavailable(_))));
+                    assert!(owner.client().query_one("SELECT NOT EXISTS(SELECT 1 FROM identity.logouts) AND NOT EXISTS(SELECT 1 FROM identity.completions WHERE family='logout') AND NOT EXISTS(SELECT 1 FROM identity.revocations) AND (SELECT count(*) FROM identity.sessions WHERE revoked_at IS NULL AND sequence=1)=2 AND (SELECT count(*) FROM identity.handoffs)=2", &[]).await.expect("independent rollback before another attempt").get::<_, bool>(0));
+                    assert_eq!(services.revocation().sessions(&actor).await.expect("both remain effective").len(), 2);
+                    owner.client().batch_execute(if handoff { "DROP TRIGGER test_write_failure ON identity.handoffs" } else { "DROP TRIGGER test_write_failure ON identity.revocations" }).await.expect("remove injected failure");
+                    owner.client().batch_execute("DROP FUNCTION identity.reject_test_write()").await.expect("remove fault function");
+                    assert_eq!(services.revocation().revoke(actor, operation_id, scope).await.expect("only confirmed rollback permits retry").count().get(), 1);
+                    owner.terminate().await.expect("fault owner ended");
+                    services.close(); services.drain().await.expect("drain"); context.stop().await.expect("stop"); supplier.stop().await;
+                }
+            }).await.expect("selected write rollback budget");
+        });
+    }
+
+    #[test]
+    fn other_logout_recovers_unknown_commit_without_reselecting_the_target() {
+        use fixture::database_proxy::{Fault, Proxy};
+        let server = server();
+        Runtime::new().expect("runtime").block_on(async {
+            timeout(Duration::from_secs(35), async {
+                let database = Database::initialized(Arc::clone(&server)).await;
+                let proxy = Proxy::start(&server).await;
+                let mut supplier = Supplier::new().await;
+                let (context, services) =
+                    start_on(authentication::proxied(&database, &proxy), &supplier).await;
+                let (_, actor) = issue(&database, &services, &mut supplier).await;
+                let (_, target) = issue(&database, &services, &mut supplier).await;
+                let operation_id = operation();
+                let scope = super::Scope::Other(target.session_id());
+                proxy.arm(Fault::UnknownCommit);
+                let service = services.revocation().clone();
+                let initiator = actor.clone();
+                let task =
+                    tokio::spawn(
+                        async move { service.revoke(initiator, operation_id, scope).await },
+                    );
+                timeout(Duration::from_secs(2), proxy.intercepted())
+                    .await
+                    .expect("commit intercepted");
+                assert!(matches!(
+                    task.await.expect("caller"),
+                    Err(super::Error::Unknown(_))
+                ));
+                proxy.release();
+                let original = services
+                    .revocation()
+                    .read(&actor, operation_id)
+                    .await
+                    .expect("waits for original operation outcome")
+                    .expect("committed original");
+                assert_eq!(original.scope(), scope);
+                assert_eq!(original.revocations().len(), 1);
+                assert_eq!(original.revocations()[0].id(), target.session_id());
+                let replay = services
+                    .revocation()
+                    .revoke(actor.clone(), operation_id, scope)
+                    .await
+                    .expect("exact original recovery");
+                assert_eq!(replay.revoked_at(), original.revocations()[0].revoked_at());
+                assert_eq!(
+                    services
+                        .revocation()
+                        .sessions(&actor)
+                        .await
+                        .expect("initiator effective")
+                        .len(),
+                    1
+                );
+                services.close();
+                services.drain().await.expect("drain");
+                context.stop().await.expect("stop");
+                supplier.stop().await;
+                proxy.stop().await;
+            })
+            .await
+            .expect("unknown other logout budget");
+        });
+    }
+
+    #[test]
+    fn other_logout_serializes_competing_targets_and_all_logout() {
+        let server = server();
+        Runtime::new().expect("runtime").block_on(async {
+            timeout(Duration::from_secs(40), async {
+                for (first_all, second_all) in [(false, false), (false, true), (true, false)] {
+                    let database = Database::initialized(Arc::clone(&server)).await;
+                    let mut supplier = Supplier::new().await;
+                    let (context, services) = start(&database, &supplier).await;
+                    let (_, actor) = issue(&database, &services, &mut supplier).await;
+                    let (_, target) = issue(&database, &services, &mut supplier).await;
+                    let blocker = database.connections("postgres").recover().await.expect("blocker");
+                    blocker.client().batch_execute("BEGIN").await.expect("begin blocker");
+                    let pid: i32 = blocker.client().query_one("SELECT pg_backend_pid() FROM identity.accounts WHERE id=$1 FOR UPDATE", &[&actor.account_id()]).await.expect("hold account").get(0);
+                    let observer = database.connections(&database.user).recover().await.expect("observer");
+                    let service = services.revocation().clone(); let initiator = actor.clone();
+                    let scope = if first_all { super::Scope::All } else { super::Scope::Other(target.session_id()) };
+                    let first = tokio::spawn(async move { service.revoke(initiator, operation(), scope).await });
+                    timeout(Duration::from_secs(3), async { loop {
+                        if observer.client().query_one("SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)) AND query='SELECT id FROM identity.accounts WHERE id=$1 FOR UPDATE')", &[&pid]).await.expect("first reached account lock").get::<_, bool>(0) { break; }
+                        tokio::task::yield_now().await;
+                    }}).await.expect("first actual waiter");
+                    let service = services.revocation().clone(); let initiator = actor.clone();
+                    let scope = if second_all { super::Scope::All } else { super::Scope::Other(target.session_id()) };
+                    let second = tokio::spawn(async move { service.revoke(initiator, operation(), scope).await });
+                    timeout(Duration::from_secs(3), async { loop {
+                        let count: i64 = observer.client().query_one("WITH RECURSIVE blocked(pid) AS (SELECT pid FROM pg_stat_activity WHERE datname=current_database() AND $1=ANY(pg_blocking_pids(pid)) UNION SELECT backend.pid FROM pg_stat_activity backend JOIN blocked ON blocked.pid=ANY(pg_blocking_pids(backend.pid)) WHERE backend.datname=current_database()) SELECT count(*) FROM pg_stat_activity WHERE pid IN (SELECT pid FROM blocked) AND wait_event_type='Lock' AND query='SELECT id FROM identity.accounts WHERE id=$1 FOR UPDATE'", &[&pid]).await.expect("both actual waiters").get(0);
+                        if count == 2 { break; } tokio::task::yield_now().await;
+                    }}).await.expect("second actual waiter");
+                    blocker.client().batch_execute("COMMIT").await.expect("release account");
+                    assert_eq!(first.await.expect("first task").expect("first selected outcome").count().get(), if first_all { 2 } else { 1 });
+                    let result = second.await.expect("second task");
+                    if first_all { assert!(matches!(result, Err(super::Error::Unauthenticated))); }
+                    else if second_all { assert_eq!(result.expect("all selects the remaining initiator").count().get(), 1); }
+                    else { assert!(matches!(result, Err(super::Error::Rejected(super::Rejection::NotFound)))); }
+                    let row = observer.client().query_one("SELECT (SELECT count(*) FROM identity.revocations)::bigint AS revoked, (SELECT count(*) FROM identity.logouts)::bigint AS originals, (SELECT count(*) FROM identity.handoffs)::bigint AS handoffs", &[]).await.expect("committed outcomes before any recovery");
+                    let all = first_all || second_all;
+                    assert_eq!(row.get::<_, i64>("revoked"), if all { 2 } else { 1 });
+                    assert_eq!(row.get::<_, i64>("originals"), if second_all { 2 } else { 1 });
+                    assert_eq!(row.get::<_, i64>("handoffs"), if all { 0 } else { 1 });
+                    assert_eq!(services.current().read(&actor).await.is_ok(), !all);
+                    observer.terminate().await.expect("observer ended"); blocker.terminate().await.expect("blocker ended");
+                    services.close(); services.drain().await.expect("drain"); context.stop().await.expect("stop"); supplier.stop().await;
+                }
+            }).await.expect("other logout concurrency budget");
+        });
+    }
+
+    #[test]
     fn original_read_preserves_verified_results_when_commit_response_is_lost() {
         use fixture::database_proxy::{Fault, Proxy};
 
@@ -415,7 +654,7 @@ mod tests {
                         operation_id, scope,
                     };
                     let request = write.request(&authority).expect("changed original request binding");
-                    assert!(matches!(crate::kernel::completion::find::<std::convert::Infallible>(
+                    assert!(matches!(crate::kernel::completion::find::<super::Rejection>(
                         observer.client(), services.revocation().app.keys(),
                         <super::command::Write as crate::kernel::Command>::COMPLETIONS,
                         operation_id, &request,
@@ -494,7 +733,7 @@ mod tests {
                     proxy.release();
                     let completion = first.await.expect("first worker").expect("original set");
                     let observer = database.connections(&database.user).recover().await.expect("independent observer");
-                    let row = observer.client().query_one("SELECT cardinality(sessions)::bigint AS count,scope=$2 AND initiator_id=$3 AS paired FROM identity.logouts WHERE id=$1", &[&operation_id,&scope,&actor.session_id()]).await.expect("original facts before repeated DELETE or GET results");
+                    let row = observer.client().query_one("SELECT cardinality(sessions)::bigint AS count,scope=$2 AND initiator_id=$3 AS paired FROM identity.logouts WHERE id=$1", &[&operation_id,&scope.as_ref(),&actor.session_id()]).await.expect("original facts before repeated DELETE or GET results");
                     assert_eq!(row.get::<_, i64>("count"),if scope==super::Scope::All {2}else{1}); assert!(row.get::<_, bool>("paired"));
                     if scope==super::Scope::All {
                         assert!(matches!(second.await,Err(super::Error::Unauthenticated)));
@@ -716,6 +955,7 @@ mod tests {
                 let runtime = database.connections(&database.user).recover().await.expect("runtime");
                 for (defect, expected) in [
                     ("complete", None),
+                    ("complete_other", None),
                     ("completion", Some((SqlState::FOREIGN_KEY_VIOLATION, "logouts_family_id_person_id_fkey"))),
                     ("session_record", Some((SqlState::FOREIGN_KEY_VIOLATION, "sessions_revocation_id_account_id_revoked_at_fkey"))),
                     ("session_state", Some((SqlState::FOREIGN_KEY_VIOLATION, "revocations_id_account_id_revoked_at_fkey"))),
@@ -724,21 +964,34 @@ mod tests {
                     ("time", Some((SqlState::FOREIGN_KEY_VIOLATION, "revocations_id_account_id_revoked_at_fkey"))),
                     ("initiator", Some((SqlState::CHECK_VIOLATION, "logouts_check"))),
                     ("current_set", Some((SqlState::CHECK_VIOLATION, "logouts_check1"))),
+                    ("other_initiator", Some((SqlState::CHECK_VIOLATION, "logouts_check"))),
+                    ("other_set", Some((SqlState::CHECK_VIOLATION, "logouts_check1"))),
                     ("account_sequence", Some((SqlState::CHECK_VIOLATION, "accounts_records_check"))),
                 ] {
                     runtime.client().batch_execute("BEGIN").await.expect("rollback-only structure control");
                     let now = context.sample().await.expect("trusted time");
                     let operation_id = operation();
-                    let sessions = if defect == "initiator" { vec![member.session_id()] } else { vec![actor.session_id(), member.session_id()] };
+                    let sessions = match defect {
+                        "initiator" | "complete_other" => vec![member.session_id()],
+                        "other_initiator" => vec![actor.session_id()],
+                        "other_set" => vec![member.session_id(), member.session_id()],
+                        _ => vec![actor.session_id(), member.session_id()],
+                    };
+                    let scope = match defect {
+                        "current_set" => "current",
+                        "complete_other" | "other_initiator" | "other_set" => "other",
+                        _ => "all",
+                    };
                     let sequence = if defect == "account_sequence" { 2_i64 } else { 1_i64 };
                     // These seals test SQL structure only and never leave this transaction.
                     let result: Result<(), tokio_postgres::Error> = async {
                         if defect != "completion" {
                             runtime.client().execute("INSERT INTO identity.completions(family,operation_id,action,target,input,subject,person_id,revision_id,created_at,seal,seal_key_id,seal_version) SELECT 'logout',$1,'logout',account.id::text,decode(repeat('00',37),'hex'),'session',account.person_id,person.revision_id,$2,decode(repeat('00',32),'hex'),account.seal_key_id,1 FROM identity.accounts account JOIN identity.persons person ON person.id=account.person_id WHERE account.id=$3", &[&operation_id, &now, &actor.account_id()]).await?;
                         }
-                        runtime.client().execute("INSERT INTO identity.logouts(id,account_id,person_id,sequence,revoked_at,initiator_id,scope,sessions,seal,seal_key_id,seal_version) SELECT $1,id,person_id,sequence+$2,$3,$4,$5,$6,decode(repeat('00',32),'hex'),seal_key_id,1 FROM identity.accounts WHERE id=$7", &[&operation_id, &sequence, &now, &actor.session_id(), &if defect == "current_set" { "current" } else { "all" }, &sessions, &actor.account_id()]).await?;
+                        runtime.client().execute("INSERT INTO identity.logouts(id,account_id,person_id,sequence,revoked_at,initiator_id,scope,sessions,seal,seal_key_id,seal_version) SELECT $1,id,person_id,sequence+$2,$3,$4,$5,$6,decode(repeat('00',32),'hex'),seal_key_id,1 FROM identity.accounts WHERE id=$7", &[&operation_id, &sequence, &now, &actor.session_id(), &scope, &sessions, &actor.account_id()]).await?;
                         runtime.client().execute("UPDATE identity.accounts SET sequence=sequence+$2,version=version+1,changed_at=$3,seal=decode(repeat('00',32),'hex') WHERE id=$1", &[&actor.account_id(), &sequence, &now]).await?;
                         for id in [member.session_id(), actor.session_id()] {
+                            if defect == "complete_other" && id == actor.session_id() { continue; }
                             if defect != "session_record" {
                                 let cause = if defect == "cause" { operation() } else { operation_id };
                                 let account_id = if defect == "account" { foreign.account_id() } else { actor.account_id() };
