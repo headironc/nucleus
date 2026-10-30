@@ -266,6 +266,8 @@ bun tools/halo-image-artifact.ts build /absolute/path/to/new-artifact
 
 构建 metadata 的 config 摘要真正缺省时，工具用 metadata 指定的原始单 manifest 字节闭合 config 和有序层的引用链；非法或冲突的已提供字段仍拒绝。原始 `build-manifest.json` 随该路线的产物保留，下载端重新核其类型、大小、摘要及实际 OCI config。descriptor 真正缺省或经典 Docker archive 没有原 manifest 时，只能使用与独立读取的完整归档字节相符的直接 config 摘要，不声称原 manifest 证据，不重建或猜造 descriptor。提供了 null 或畸形 descriptor 仍拒绝。
 
+[工具清单](../.github/halo-ci/artifact-tools.json)固定官方 `quay.io/skopeo/stable:v1.22.3-immutable` 的 `linux/amd64` 子 manifest digest。[上游构建脚本](https://github.com/podman-container-tools/image_build/blob/cf7fa85fdbd159c47896601458fedf982aa65cd6/ci/tag_version.sh)只在版本的 immutable 标签不存在时创建它；普通 stable 版本标签每日更新。更新 pin 时核对官方 tag、index、平台 manifest 和 config 的字节摘要及平台，再验证实际导出、恢复和独立下载。运行时只使用清单中的 digest；不可取得时失败，不回退到浮动标签。
+
 固定 Skopeo 用 `copy --format v2s2 --dest-compress-format gzip --dest-force-compress-format` 生成单平台 `linux/amd64` OCI layout 归档，冻结字节后用 `--preserve-digests` 恢复。显式生成 gzip 可避免 Docker archive 传输把未压缩 tar 声明为 gzip。内部严格支持配对的 OCI manifest/config/tar 或 gzip 层，以及 Docker schema 2 manifest/config/diff.tar 或 gzip 层；当前来源使用后者。报告保留真实 media type，不代表任意 OCI 消费者均兼容。Docker 的 `.Id` 可能表示 manifest/index；工具分别保存实际运行引用与 config 摘要。恢复后按准确运行引用再次完整导出，核 config 原字节、平台、RootFS diff IDs 与冻结归档一致，单独核默认用户的实际 UID，再以宿主非 root 身份运行消费者，并核容器实际使用的引用。
 
 源码和已按锁文件、禁脚本准备的 Halo 依赖只读，`target` 和 HOME 私有可写。运行证据写入独立私有目录，容器不能写 host artifact output。确认容器终止后，host 只从已打开的目录 fd 导入固定普通文件，不跟随链接或未知目录，拒绝特殊文件和额外文件，再执行 host 扫描。验收容器禁止外网，执行准确版本、输入摘要、非 root、无 TCP 的私有 PG 查询、双 Chromium 实际页面 smoke 及 `tools/check-inputs.test.ts` 薄消费者。PG fast-stop、进程终态、私有目录删除和容器移除分别核对；清理失败不产生成功结论。首次导出兼容预检使用无网络的 scratch 小镜像；它不替代完整 OCI 的恢复后验收。
