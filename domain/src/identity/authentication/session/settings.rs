@@ -10,6 +10,17 @@ pub struct Settings {
     registration: TimeDelta,
 }
 impl Settings {
+    pub fn with_mini(
+        mut self,
+        app_id: crate::identity::mini::AppId,
+        seconds: u64,
+    ) -> Result<Self, Error> {
+        self.issuance = self
+            .issuance
+            .with_mini(app_id, seconds)
+            .map_err(invalid_issuance)?;
+        Ok(self)
+    }
     pub fn new(
         app_id: AppId,
         session_seconds: u64,

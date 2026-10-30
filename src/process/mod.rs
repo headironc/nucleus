@@ -36,16 +36,18 @@ pub fn run() -> Result<(), RunError> {
     let connections = crate::database::load(settings.database)?;
     let (challenge, message) =
         suppliers::Clients::new(settings.challenge, settings.message)?.into_parts();
+    let mini = settings.mini.map(suppliers::mini).transpose()?;
     let runtime = tokio::runtime::Runtime::new().map_err(RunError::Runtime)?;
     let stop_budget = settings.process.stop;
     runtime.block_on(supervise(
-        Application::start(
+        Application::start_with_mini(
             connections,
             keys,
             settings.services,
             settings.process,
             challenge,
             message,
+            mini,
         ),
         stop_budget,
         settings.listen,
@@ -311,6 +313,27 @@ impl Application {
         supplier: client::Client,
         message: message::client::Client,
     ) -> Result<Self, Error> {
+        Box::pin(Self::start_with_mini(
+            connections,
+            keys,
+            services,
+            settings,
+            supplier,
+            message,
+            None,
+        ))
+        .await
+    }
+
+    pub async fn start_with_mini(
+        connections: Connections,
+        keys: domain::keys::Keys,
+        services: domain::startup::Settings,
+        settings: Settings,
+        supplier: client::Client,
+        message: message::client::Client,
+        mini: Option<domain::identity::mini::client::Client>,
+    ) -> Result<Self, Error> {
         let deadline = time::Instant::now() + Duration::from_secs(10);
         let context = runtime::Context::hold(connections)
             .await
@@ -319,8 +342,10 @@ impl Application {
             let barrier =
                 timeout_at(deadline, Barrier::begin_at(context.clone(), deadline)).await??;
             Ok::<_, Error>(
-                domain::startup::Services::start(barrier, keys, services, supplier, message)
-                    .await?,
+                domain::startup::Services::start_with_mini(
+                    barrier, keys, services, supplier, message, mini,
+                )
+                .await?,
             )
         }
         .await
@@ -3886,6 +3911,8 @@ mod tests {
                     ("database_prerequisites", "database_prerequisites", "query_and_validation", "held"),
                     ("trusted_time", "trusted_time", "query", "held"),
                     ("revisions", "revisions", "query", "held"),
+                    ("exchanges_batch", "exchanges_batch", "query_and_validation", "held"),
+                    ("exchange_relations", "exchange_relations", "query", "held"),
                     ("number_states", "history_states", "query_and_validation", "held"),
                 ] {
                     let child = tokio::process::Command::new(std::env::current_exe().expect("test executable"))
@@ -3910,7 +3937,7 @@ mod tests {
                     assert_eq!(event["fields"]["kind"], "timeout");
                     assert_eq!(event["fields"]["connection"], connection);
                     assert_eq!(event["fields"]["waiting"], waiting);
-                    for secret in ["SELECT", "clock_timestamp", "security.clocks", "pg_advisory_xact_lock", "identity.revisions", "workforce.allocations", "13800000000", "fictional-token", fixture::PASSWORD] {
+                    for secret in ["SELECT", "clock_timestamp", "security.clocks", "pg_advisory_xact_lock", "identity.revisions", "identity.exchanges", "workforce.allocations", "13800000000", "fictional-token", fixture::PASSWORD] {
                         assert!(!events.iter().any(|event| contains_text(event, secret)), "unsafe diagnostic field");
                     }
                 }
@@ -3925,6 +3952,8 @@ mod tests {
             "database_prerequisites" => Stage::DatabasePrerequisites,
             "trusted_time" => Stage::TrustedTime,
             "revisions" => Stage::Revisions,
+            "exchanges_batch" => Stage::ExchangesBatch,
+            "exchange_relations" => Stage::ExchangeRelations,
             "number_states" => Stage::HistoryStates,
             _ => panic!("unknown diagnostics scenario"),
         };
@@ -3940,6 +3969,8 @@ mod tests {
                     Stage::DatabasePrerequisites => proxy.arm(Fault::StalledDatabasePrerequisites),
                     Stage::TrustedTime => proxy.arm(Fault::StalledTime),
                     Stage::Revisions => proxy.arm(Fault::StalledIdentityRevisions),
+                    Stage::ExchangesBatch => proxy.arm(Fault::StalledExchangesBatch),
+                    Stage::ExchangeRelations => proxy.arm(Fault::StalledExchangeRelations),
                     Stage::HistoryStates => proxy.arm(Fault::StalledNumberStates),
                     _ => unreachable!("selected diagnostics scenario"),
                 }
@@ -3981,7 +4012,7 @@ mod tests {
                         .expect("proxy settings"),
                     Password::new(fixture::PASSWORD.into()).expect("password"), roots,
                 ).expect("proxy connections");
-                let startup = Box::pin(Application::start(
+                let mut startup = Box::pin(Application::start(
                     startup_connections,
                     keys(0),
                     services(2),
@@ -3996,23 +4027,30 @@ mod tests {
                     Stage::BarrierConnection | Stage::DatabasePrerequisites => 11,
                     _ => 15,
                 };
-                let ((result, finished_at), intercepted_at) = timeout(Duration::from_secs(bound), async {
-                    tokio::join!(async {
-                        let result = startup.await;
-                        (result, Instant::now())
-                    }, async {
-                        timeout(Duration::from_secs(5), async {
+                let deadline = Instant::now() + Duration::from_secs(bound);
+                let intercepted_at = timeout(Duration::from_secs(5), async {
+                    tokio::select! {
+                        biased;
+                        () = async {
                             if matches!(stage, Stage::ClockConnection | Stage::BarrierConnection) {
                                 intercepted.await.expect("SSL negotiation intercepted");
                             } else {
                                 proxy.intercepted().await;
                             }
-                        })
-                            .await
-                            .expect("the selected startup wait actually reached the proxy");
-                        Instant::now()
-                    })
-                }).await.expect("startup fails within its existing bound");
+                        } => Instant::now(),
+                        _ = &mut startup => panic!("startup ended before the selected fault was observed"),
+                    }
+                }).await.expect("the selected startup wait actually reached the proxy");
+                // Batch and relationship checks have their own ten-second budgets after earlier scans.
+                // Measure their failure-and-cleanup bound from interception.
+                let deadline = if matches!(stage, Stage::HistoryStates | Stage::ExchangesBatch | Stage::ExchangeRelations) {
+                    intercepted_at + Duration::from_secs(bound)
+                } else {
+                    deadline
+                };
+                let result = tokio::time::timeout_at(deadline, startup)
+                    .await.expect("startup fails within its existing bound");
+                let finished_at = Instant::now();
                 if stage == Stage::TrustedTime {
                     // Exclude preceding startup work; allow one second for cleanup and scheduling.
                     let elapsed = finished_at.duration_since(intercepted_at);
@@ -4040,6 +4078,12 @@ mod tests {
                         process::Error::Services(domain::startup::Error::Number(
                             domain::workforce::number::Error::Unavailable(fault)
                         )) if matches!(fault.kind(), domain::kernel::FaultKind::History(domain::history::Error::Timeout(cause)) if cause.stage() == stage && cause.waiting() == Waiting::QueryAndValidation)
+                    ), "{error:?}"),
+                    Stage::ExchangesBatch | Stage::ExchangeRelations => assert!(matches!(
+                        &error,
+                        process::Error::Services(domain::startup::Error::Authentication(
+                            domain::identity::authentication::Error::VerificationTimeout(cause)
+                        )) if cause.stage() == stage && cause.waiting() == if stage == Stage::ExchangesBatch { Waiting::QueryAndValidation } else { Waiting::Query }
                     ), "{error:?}"),
                     // The enclosing deadline can also expire during connection termination,
                     // after the stage has already emitted its diagnostic.

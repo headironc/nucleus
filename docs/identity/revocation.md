@@ -16,7 +16,7 @@
 
 网站使用 Session-Id 选中原 cookie 认证并遵守同源条件。两条 DELETE 采用本次请求实际认证的会话；原会话被撤销后，以它重发 DELETE 返回 `authentication_invalid`，不能从这个 401 推断原退出是否提交。用户取得同账户的新会话后只能使用 GET 核对原操作；以新会话和旧 Operation-Id 重发 DELETE 不构成新退出，也不返回原完成。新的退出动作须用新 Operation-Id。GET 不要求原会话仍存在。GET 请求头中的 Operation-Id 只标识本次查询，查询参数才是原退出标识；响应不回显本次请求标识。
 
-DELETE 无正文，非空正文返回 400，超过共同上限返回 413；GET 的必填原操作查询参数重复、缺失或非法时返回 400。DELETE 使用必填准确 Origin，GET 沿读取同源规则。成功退出只清理所选 cookie，失败及原结果读取均不设置 cookie。
+DELETE 无正文，非空正文返回 400，超过共同上限返回 413；GET 的必填原操作查询参数重复、缺失或非法时返回 400。网站 DELETE 使用必填准确 Origin，网站 GET 沿读取同源规则；小程序使用 Bearer，不要求网站 Origin。网站成功退出只清理所选 cookie，小程序退出、全部失败及原结果读取均不设置 cookie。
 
 ## 撤销事实与约束
 

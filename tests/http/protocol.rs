@@ -559,12 +559,10 @@ fn http_validates_requests_before_business_work_and_describes_actual_routes() {
                 assert_eq!(operation["schema"]["type"], "string");
                 assert_eq!(operation["schema"]["format"], "uuid");
                 let session_parameters = value["paths"]["/api/v1/sessions"]["post"]["parameters"].as_array().expect("session parameters");
-                assert_eq!(session_parameters.len(), 2);
-                for name in ["Operation-Id", "Origin"] {
-                    let parameter = session_parameters.iter().find(|parameter| parameter["name"] == name).expect("required server input");
-                    assert_eq!(parameter["in"], "header");
-                    assert_eq!(parameter["required"], true);
-                }
+                assert_eq!(session_parameters.len(), 1);
+                let parameter = session_parameters.iter().find(|parameter| parameter["name"] == "Operation-Id").expect("required server input");
+                assert_eq!(parameter["in"], "header");
+                assert_eq!(parameter["required"], true);
                 let schemas = &value["components"]["schemas"];
                 let resolve = |schema: &serde_json::Value| {
                     let reference = schema["$ref"].as_str().expect("component reference");
@@ -589,23 +587,20 @@ fn http_validates_requests_before_business_work_and_describes_actual_routes() {
                     assert!(operation["responses"]["429"]["headers"]["Retry-After"].is_object());
                     let parameters = operation["parameters"].as_array().expect("same-origin parameters");
                     let session = parameters.iter().find(|parameter| parameter["name"] == "Session-Id").expect("required selected session");
-                    assert_eq!(session["required"], true);
-                    assert!(!parameters.iter().any(|parameter| parameter["name"] == "Authorization"));
                     let description = operation["description"].as_str().expect("operation contract");
                     let role_contract = matches!(path, "/api/v1/accounts/current/role" | "/api/v1/roles");
+                    assert_eq!(session["required"], role_contract);
+                    assert_eq!(parameters.iter().any(|parameter| parameter["name"] == "Authorization"), !role_contract);
                     if role_contract {
                         assert!(description.contains("docs/access/roles.md#"));
                     } else {
-                        assert!(description.contains("Any supplied Sec-Fetch-Site must be same-origin"));
+                        assert!(description.contains("Bearer"));
+                        assert!(description.contains("Origin"));
                     }
                     if method == "delete" {
-                        let origin = parameters.iter().find(|parameter| parameter["name"] == "Origin").expect("required origin");
-                        assert_eq!(origin["required"], true);
+                        assert!(!parameters.iter().any(|parameter| parameter["name"] == "Origin"), "conditional website Origin is described per source");
                     } else {
                         assert!(!parameters.iter().any(|parameter| parameter["name"] == "Origin"));
-                        if !role_contract {
-                            assert!(description.contains("absent Origin requires Sec-Fetch-Site: same-origin"));
-                        }
                     }
                     for response in value["paths"][path][method]["responses"].as_object().expect("documented results").values() {
                         assert_eq!(response["headers"]["Cache-Control"]["description"],"no-store");
@@ -687,8 +682,15 @@ fn http_validates_requests_before_business_work_and_describes_actual_routes() {
                     let receipt = resolve(&value["paths"]["/api/v1/registrations"]["post"]["responses"][status]["content"]["application/json"]["schema"]);
                     assert_eq!(receipt["properties"].as_object().expect("R2 receipt fields").len(), 2);
                     let session = resolve(&receipt["properties"]["session"]);
-                    assert_eq!(session["properties"].as_object().expect("R2 session fields").len(), 2);
-                    assert!(session["properties"].get("token").is_none());
+                    let sources = session["oneOf"].as_array().expect("R2 source-specific session delivery");
+                    assert_eq!(sources.len(), 2);
+                    let website = sources.iter().map(&resolve).find(|session| session["properties"].get("token").is_none()).expect("website cookie projection");
+                    let mini = sources.iter().map(&resolve).find(|session| session["properties"].get("token").is_some()).expect("mini Bearer projection");
+                    assert_eq!(website["properties"].as_object().expect("website fields").len(), 2);
+                    assert_eq!(mini["properties"].as_object().expect("mini fields").len(), 3);
+                    assert_eq!(mini["required"],serde_json::json!(["id","token","expiresAt"]));
+                    assert_eq!(mini["properties"]["token"]["minLength"], 43);
+                    assert_eq!(mini["properties"]["token"]["maxLength"], 43);
                     assert!(value["paths"]["/api/v1/registrations"]["post"]["responses"][status]["headers"]["Set-Cookie"].is_object());
                 }
                 let challenge_result = resolve(&value["paths"]["/api/v1/codes"]["post"]["responses"]["200"]["content"]["application/json"]["schema"]);
@@ -700,10 +702,16 @@ fn http_validates_requests_before_business_work_and_describes_actual_routes() {
                     let properties = branch["properties"].as_object().expect("session branch");
                     assert_eq!(properties.len(), 2);
                     if let Some(session) = properties.get("session") {
-                        let fields = resolve(session)["properties"].as_object().expect("session fields");
-                        assert_eq!(fields.len(), 2);
-                        assert!(fields.contains_key("id") && fields.contains_key("expiresAt"));
-                        assert!(!fields.contains_key("token"));
+                        let sources = resolve(session)["oneOf"].as_array().expect("R1 source-specific sessions");
+                        assert_eq!(sources.len(), 2);
+                        let mut bearer = 0;
+                        for source in sources {
+                            let fields = resolve(source)["properties"].as_object().expect("session fields");
+                            assert!(fields.contains_key("id") && fields.contains_key("expiresAt"));
+                            if fields.contains_key("token") { bearer += 1; assert_eq!(fields.len(), 3); }
+                            else { assert_eq!(fields.len(), 2); }
+                        }
+                        assert_eq!(bearer, 1);
                     } else {
                         let fields = resolve(&properties["registration"])["properties"].as_object().expect("registration fields");
                         assert_eq!(fields.len(), 3);

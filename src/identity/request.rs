@@ -44,10 +44,15 @@ fn check(
 ) -> Result<(), Error> {
     if create_session {
         context.admission.create_session(source.address())?;
+        return Ok(());
     } else {
         context.admission.accept(source.address())?;
     }
-    let mut origins = request.headers().get_all("origin").iter();
+    origin(request.headers(), context)
+}
+
+pub(super) fn origin(headers: &axum::http::HeaderMap, context: &Context) -> Result<(), Error> {
+    let mut origins = headers.get_all("origin").iter();
     let origin = origins.next().ok_or(Error::Origin)?;
     if origins.next().is_some()
         || origin.as_bytes() != context.settings.origin().ascii_serialization().as_bytes()

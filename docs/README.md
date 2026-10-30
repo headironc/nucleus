@@ -37,7 +37,7 @@
 | Halo 网站本人注销                         | 已交付 | [注销](identity/cancellation.md)、[页面](client/pages.md#网站本人注销设计稿)                                                                         |
 | 注销历史读取                              | 目标   | [注销](identity/cancellation.md)                                                                                                                     |
 | 网站本人及协助换号                        | 已交付 | [换号](identity/mobile.md)                                                                                                                           |
-| 小程序手机号认证与小程序会话（暂缓）      | 目标   | [小程序手机号](identity/mini-mobile.md)、[小程序会话](client/session.md)                                                                             |
+| 小程序手机号认证、注册与 Bearer 会话后端  | 已交付 | [小程序手机号](identity/mini-mobile.md)、[本人读取](identity/current.md)、[退出](identity/revocation.md)；真实平台资格与集成验收另行完成             |
 | 微信身份登录、绑定与解绑（暂缓）          | 目标   | [微信身份](identity/wechat.md)、[微信事实](identity/wechat-data.md)                                                                                  |
 | 权限目录与系统角色                        | 已交付 | [权限目录](access/capabilities.md)                                                                                                                   |
 | 机构与 Workforce 角色、机构 Holder 及指派 | 已交付 | [角色与指派](access/roles.md)、[状态历史与完整性](architecture.md#状态历史与完整性)                                                                  |

@@ -9,11 +9,13 @@ use std::{
 };
 
 use clap::{Args, Subcommand};
+#[cfg(test)]
+use domain::identity::website;
 use domain::{
     access::{appoint, initialize},
     center::affiliation,
     database::Barrier,
-    identity::{correction, operation, website},
+    identity::{correction, operation},
     runtime::Context,
     startup::Administration,
 };
@@ -617,11 +619,12 @@ impl Action {
         };
         let settings = settings::Settings::load()?;
         let keys = keys::credentials::load()?;
+        let sessions = settings.sessions()?;
         let connections = crate::database::runtime(settings.database)?;
-        execute(
+        execute_with_sessions(
             connections,
             keys,
-            settings.website,
+            sessions,
             options.operation,
             input,
             options.dry_run,
@@ -631,10 +634,38 @@ impl Action {
     }
 }
 
+#[cfg(test)]
 async fn execute(
     connections: Connections,
     keys: domain::keys::Keys,
     website: website::AppId,
+    operation: operation::Id,
+    input: Input,
+    dry_run: bool,
+    output: &mut impl Write,
+) -> Result<(), Error> {
+    let sessions = domain::identity::session::settings::Settings::new(
+        website,
+        domain::identity::session::settings::DEFAULT_SESSION_SECONDS,
+        domain::identity::session::settings::DEFAULT_RECOVERY_SECONDS,
+    )
+    .map_err(domain::startup::Error::from)?;
+    Box::pin(execute_with_sessions(
+        connections,
+        keys,
+        sessions,
+        operation,
+        input,
+        dry_run,
+        output,
+    ))
+    .await
+}
+
+async fn execute_with_sessions(
+    connections: Connections,
+    keys: domain::keys::Keys,
+    sessions: domain::identity::session::settings::Settings,
     operation: operation::Id,
     input: Input,
     dry_run: bool,
@@ -645,7 +676,7 @@ async fn execute(
     let context = Context::hold(connections).await?;
     let started = async {
         let barrier = Barrier::begin(context.clone()).await?;
-        Ok::<_, Error>(Administration::start(barrier, keys, website).await?)
+        Ok::<_, Error>(Administration::start_with_sessions(barrier, keys, sessions).await?)
     }
     .await;
     let (result, drain) = match started {
