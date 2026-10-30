@@ -1,8 +1,11 @@
 //! SMS R1 has one local transaction and recovers its original committed result.
 
 mod database;
+pub mod mobile;
 pub(super) mod retention;
 pub mod settings;
+
+use std::sync::Arc;
 
 use chrono::{DateTime, Utc};
 use platform::cryptography::{self, Encoded};
@@ -31,6 +34,134 @@ pub struct Input {
     message_id: message::Id,
     mobile: Mobile,
     code: message::Code,
+}
+
+pub(super) enum Request {
+    Message(Input),
+    Mobile(mobile::Input),
+}
+
+impl Request {
+    fn operation_id(&self) -> operation::Id {
+        match self {
+            Self::Message(input) => input.operation_id,
+            Self::Mobile(input) => input.operation_id(),
+        }
+    }
+    fn proof(&self) -> crate::identity::request::Proof {
+        match self {
+            Self::Message(input) => input.secret.proof(),
+            Self::Mobile(input) => input.secret().proof(),
+        }
+    }
+    fn encoded(&self, service: &Inner) -> Result<Encoded, Error> {
+        match self {
+            Self::Message(input) => Ok(input.encoded(service.settings.session().app_id())?),
+            Self::Mobile(input) => Ok(input.encoded(&mobile::origin(service)?)?),
+        }
+    }
+}
+
+pub(super) struct Pending {
+    proof: crate::identity::request::Proof,
+    hash: platform::cryptography::hmac::Tag,
+    completion: tokio::sync::watch::Receiver<()>,
+}
+
+impl Pending {
+    fn subscribe(
+        &self,
+        service: &Inner,
+        input: &Request,
+    ) -> Result<tokio::sync::watch::Receiver<()>, Error> {
+        if self.proof != input.proof() {
+            return Err(Error::Proof);
+        }
+        if !service
+            .keys
+            .input
+            .active()
+            .verify(&input.encoded(service)?, self.hash.as_ref())
+        {
+            return Err(Error::Mismatch);
+        }
+        Ok(self.completion.clone())
+    }
+}
+
+pub(super) async fn run(service: &Arc<Inner>, input: Request) -> Result<Receipt, Error> {
+    let operation_id = input.operation_id();
+    let mut accepted = false;
+    let result = reserve(service, input, &mut accepted).await;
+    if let Err(cause) = &result {
+        if cause.unreliable() {
+            service.registry.close();
+        }
+        if !accepted {
+            cause.report(operation_id);
+        }
+    }
+    result
+}
+
+async fn reserve(
+    service: &Arc<Inner>,
+    input: Request,
+    accepted: &mut bool,
+) -> Result<Receipt, Error> {
+    let operation_id = input.operation_id();
+    loop {
+        service.work.ready(&service.registry).await?;
+        {
+            let mut pending = service.pending_sessions.lock().await;
+            pending.retain(|_, request| request.completion.has_changed().is_ok());
+            if let Some(request) = pending.get(&operation_id) {
+                let mut completion = request.subscribe(service, &input)?;
+                drop(pending);
+                let _ = completion.changed().await;
+                continue;
+            }
+        }
+        let hash = service.keys.input.active().sign(&input.encoded(service)?);
+        let mut pending = service.pending_sessions.lock().await;
+        pending.retain(|_, request| request.completion.has_changed().is_ok());
+        if let Some(request) = pending.get(&operation_id) {
+            let mut completion = request.subscribe(service, &input)?;
+            drop(pending);
+            let _ = completion.changed().await;
+            continue;
+        }
+        let permit = service
+            .registry
+            .try_acquire_for(Family::CreateSession, operation_id)
+            .await?;
+        pending.insert(
+            operation_id,
+            Pending {
+                proof: input.proof(),
+                hash,
+                completion: permit.completion(),
+            },
+        );
+        drop(pending);
+        let worker = Arc::clone(service);
+        *accepted = true;
+        return service
+            .work
+            .run_reserved(
+                Arc::clone(&service.registry),
+                Family::CreateSession,
+                operation_id,
+                permit,
+                async move {
+                    match input {
+                        Request::Message(input) => Action.execute(&worker, &input).await,
+                        Request::Mobile(input) => mobile::Action.execute(&worker, &input).await,
+                    }
+                },
+            )
+            .await;
+    }
 }
 
 impl Input {
@@ -138,6 +269,7 @@ enum Outcome {
     Credential(Receipt),
     Invalid,
     Suspended,
+    Verification,
 }
 impl Outcome {
     fn deliver(self) -> std::result::Result<Receipt, Error> {
@@ -145,6 +277,7 @@ impl Outcome {
             Self::Credential(receipt) => Ok(receipt),
             Self::Invalid => Err(Error::CodeInvalid),
             Self::Suspended => Err(Error::Suspended),
+            Self::Verification => Err(Error::Verification),
         }
     }
 }
@@ -265,6 +398,7 @@ impl Inner {
                 input.operation_id,
             )
             .await?;
+            mobile::check_message_at(client, input).await?;
             if let Some(result) = self.read_original_session(client, input).await? {
                 return Ok(crate::database::transaction::Outcome::Known(result));
             }
@@ -348,6 +482,9 @@ impl Inner {
                         self.settings.session().issuance(),
                         session::Input {
                             source: session::Source::Authentication(id),
+                            origin: session::Origin::WebsiteMessage(
+                                self.settings.session().app_id().clone(),
+                            ),
                             account_id: account.id(),
                             operation_id: input.operation_id,
                             created_at: now,
@@ -370,7 +507,7 @@ impl Inner {
                     .await?;
                 database::consume(client, input.message_id, id).await?;
                 Outcome::Credential(
-                    database::create_registration(self, client, input, id, now).await?,
+                    database::create_registration(self, client, &input.mobile, id, now).await?,
                 )
             };
             return Ok(crate::database::transaction::Outcome::Pending(result));
@@ -460,6 +597,7 @@ impl Inner {
     ) -> Result<Option<Outcome>, Error> {
         let mut retried = false;
         loop {
+            mobile::check_message_at(client, input).await?;
             let Some(authentication) =
                 database::find_by_operation(client, input.operation_id).await?
             else {
@@ -498,10 +636,11 @@ pub(super) async fn verify_all(
     client: &Client,
     app: &crate::kernel::App,
     keys: &keys::Keys,
-    app_id: &website::AppId,
+    settings: &session::settings::Settings,
     now: DateTime<Utc>,
 ) -> std::result::Result<(), Error> {
-    database::verify_all(client, app, keys, app_id, now).await
+    mobile::verify_all(client, settings, keys, now).await?;
+    database::verify_all(client, app, keys, settings, now).await
 }
 
 #[cfg(test)]
@@ -691,7 +830,7 @@ pub(crate) mod tests {
         };
         let actor = services
             .current()
-            .authenticate(crate::identity::current::Proof {
+            .authenticate(crate::identity::current::Proof::Cookie {
                 id: credential.id(),
                 token: credential
                     .token()
@@ -714,7 +853,7 @@ pub(crate) mod tests {
         Box::pin(
             services
                 .registration()
-                .register(crate::registration::Input::new(
+                .register_input_for_test(crate::registration::Input::new(
                     Uuid::new_v4()
                         .to_string()
                         .parse()
@@ -943,6 +1082,7 @@ pub(crate) mod tests {
                     runtime.client(), &service.0.app, &service.0.keys.credential, &settings,
                     crate::identity::session::Input {
                         source: crate::identity::session::Source::Authentication(authentication_id),
+                        origin: crate::identity::session::Origin::WebsiteMessage(settings.app_id().clone()),
                         account_id,
                         operation_id: request.operation_id,
                         created_at: now,
@@ -1028,6 +1168,7 @@ pub(crate) mod tests {
                 service.0.settings.session().issuance(),
                 crate::identity::session::Input {
                     source: crate::identity::session::Source::Authentication(authentication_id),
+                    origin: crate::identity::session::Origin::WebsiteMessage(service.0.settings.session().app_id().clone()),
                     account_id, operation_id: request.operation_id, created_at: earlier,
                 },
             ).await.expect("paired session, issuance and handoff in the same transaction");
@@ -1609,7 +1750,7 @@ pub(crate) mod tests {
             assert_eq!(count(&database, "SELECT count(*) FROM identity.authentications").await, 1);
             let logout_message_id = message(&database, &service, &mut supplier, "13800000000").await;
             let Receipt::Session(revoked) = service.create_session(input(Uuid::new_v4(), logout_message_id, "13800000000", CODE)).await.expect("later current session") else { panic!("session"); };
-            let actor = service.0.current.authenticate(crate::identity::current::Proof {
+            let actor = service.0.current.authenticate(crate::identity::current::Proof::Cookie {
                 id: revoked.id(), token: revoked.token().text().parse().expect("original token"),
             }).await.expect("current logout actor");
             let operation_id = Uuid::new_v4().to_string().parse().expect("logout operation");
@@ -1968,7 +2109,7 @@ pub(crate) mod tests {
             super::database::create_registration(
                 &service.0,
                 runtime.client(),
-                &request,
+                &request.mobile,
                 authentication,
                 at,
             )
@@ -2140,7 +2281,7 @@ pub(crate) mod tests {
                     reader.client(),
                     &service.0.app,
                     &service.0.keys,
-                    service.0.settings.session().app_id(),
+                    service.0.settings.session().issuance(),
                     now,
                 )
                 .await

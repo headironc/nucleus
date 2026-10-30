@@ -1198,8 +1198,8 @@ mod tests {
                 assert!(matches!(Box::pin(services.role().delete(actor.clone(),operation,created.id(),Delete::new(created.change_id()))).await,Err(kernel::Error::Rejected(Rejection::Changed))));
                 let id=message(&database,services.authentication(),&mut supplier,"13800138000").await;
                 let Receipt::Registration(credential)=Box::pin(services.authentication().create_session(authentication::session::tests::input(Uuid::new_v4(),id,"13800138000",CODE))).await.expect("R1") else {panic!("registration credential")};
-                let issued=Box::pin(services.registration().register(crate::registration::Input::new(Uuid::new_v4().to_string().parse().expect("registration"),credential.id(),credential.token().text().parse().expect("token"),"Other Operator".parse().expect("name"),"00000020000229007X".parse().expect("number")))).await.expect("R2");
-                let other=services.current().authenticate(current::Proof {id:issued.id(),token:issued.token().text().parse().expect("token")}).await.expect("ordinary actor");
+                let issued=Box::pin(services.registration().register_input_for_test(crate::registration::Input::new(Uuid::new_v4().to_string().parse().expect("registration"),credential.id(),credential.token().text().parse().expect("token"),"Other Operator".parse().expect("name"),"00000020000229007X".parse().expect("number")))).await.expect("R2");
+                let other=services.current().authenticate(current::Proof::Cookie {id:issued.id(),token:issued.token().text().parse().expect("token")}).await.expect("ordinary actor");
                 assert!(matches!(Box::pin(services.role().delete(other.clone(),operation,created.id(),Delete::new(updated.change_id()))).await,Err(kernel::Error::Denied)));
                 let default=services.role().read_current(&other).await.expect("initial default role");
                 let confirmation=|candidate:&crate::access::appointment::Candidate,selected:&crate::access::role::Role| -> crate::access::appointment::Input {
@@ -2003,8 +2003,8 @@ mod tests {
                 assert!(matches!(services.role().create(actor, another, input.clone()).await, Err(kernel::Error::Rejected(Rejection::NameTaken))));
                 let id=message(&database,services.authentication(),&mut supplier,"13800138000").await;
                 let Receipt::Registration(credential)=Box::pin(services.authentication().create_session(authentication::session::tests::input(Uuid::new_v4(),id,"13800138000",CODE))).await.expect("new R1 identity") else {panic!("unregistered person")};
-                let issued=Box::pin(services.registration().register(crate::registration::Input::new(Uuid::new_v4().to_string().parse().expect("operation"),credential.id(),credential.token().text().parse().expect("token"),"Other Operator".parse().expect("name"),"00000020000229007X".parse().expect("number")))).await.expect("actual other account");
-                let other=services.current().authenticate(current::Proof {id:issued.id(),token:issued.token().text().parse().expect("token")}).await.expect("other current actor");
+                let issued=Box::pin(services.registration().register_input_for_test(crate::registration::Input::new(Uuid::new_v4().to_string().parse().expect("operation"),credential.id(),credential.token().text().parse().expect("token"),"Other Operator".parse().expect("name"),"00000020000229007X".parse().expect("number")))).await.expect("actual other account");
+                let other=services.current().authenticate(current::Proof::Cookie {id:issued.id(),token:issued.token().text().parse().expect("token")}).await.expect("other current actor");
                 let owner=database.connections("postgres").recover().await.expect("isolated later assignment owner");
                 assign_role(owner.client(), services.role(),&other,created.id()).await;
                 assert!(matches!(services.role().create(other,operation,input).await,Err(kernel::Error::Mismatch)),"maintenance permission never rebinds another person's original operation");

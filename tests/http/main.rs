@@ -18,6 +18,7 @@ mod database;
 mod directory;
 mod grant;
 mod invitation;
+mod mini;
 mod mobile;
 mod number;
 mod protocol;

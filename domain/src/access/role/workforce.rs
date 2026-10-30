@@ -245,7 +245,7 @@ mod tests {
         };
         let receipt = services
             .registration()
-            .register(crate::registration::Input::new(
+            .register_input_for_test(crate::registration::Input::new(
                 operation(),
                 credential.id(),
                 credential.token().text().parse().expect("proof"),
@@ -256,7 +256,7 @@ mod tests {
             .expect("R2 operator");
         services
             .current()
-            .authenticate(current::Proof {
+            .authenticate(current::Proof::Cookie {
                 id: receipt.id(),
                 token: receipt.token().text().parse().expect("proof"),
             })

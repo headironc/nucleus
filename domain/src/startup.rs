@@ -119,6 +119,19 @@ impl Administration {
         keys: Keys,
         app_id: website::AppId,
     ) -> Result<Self, Error> {
+        let settings = identity::session::settings::Settings::new(
+            app_id,
+            identity::session::settings::DEFAULT_SESSION_SECONDS,
+            identity::session::settings::DEFAULT_RECOVERY_SECONDS,
+        )?;
+        Box::pin(Self::start_with_sessions(barrier, keys, settings)).await
+    }
+
+    pub async fn start_with_sessions(
+        barrier: Barrier,
+        keys: Keys,
+        settings: identity::session::settings::Settings,
+    ) -> Result<Self, Error> {
         let metadata = keys.metadata().clone();
         let context = barrier.context().clone();
         // A maintenance process accepts exactly its one command and any original-result lookup.
@@ -138,7 +151,7 @@ impl Administration {
                 &metadata,
                 &identity,
                 &keys.invitation,
-                &app_id,
+                &settings,
             )
             .await?;
             verification::Stage::BarrierConfirmation
@@ -251,7 +264,7 @@ async fn verify(
     metadata: &keys::metadata::Metadata,
     keys: &Arc<identity::keys::Keys>,
     invitations: &grant::invitation::keys::Keys,
-    app_id: &website::AppId,
+    settings: &identity::session::settings::Settings,
 ) -> Result<chrono::DateTime<chrono::Utc>, Error> {
     let client = barrier.client();
     verification::Stage::Keys
@@ -278,9 +291,9 @@ async fn verify(
         .await??;
     crate::access::verification::verify(client, app, now).await?;
     initialize::verify(client, app, now).await?;
-    authentication::verify(client, app, keys, app_id, now).await?;
+    authentication::verify(client, app, keys, settings, now).await?;
     grant::invitation::verify(client, &roles, invitations, &revisions, now).await?;
-    registration::verify(client, app, keys, app_id, now).await?;
+    registration::verify(client, app, keys, settings, now).await?;
     revocation::verify(client, app, now).await?;
     transfer::verify(client, app, keys, now).await?;
     suspension::verify(client, app, now).await?;
@@ -314,6 +327,20 @@ impl Services {
         supplier: client::Client,
         message: message::client::Client,
     ) -> Result<Self, Error> {
+        Box::pin(Self::start_with_mini(
+            barrier, keys, settings, supplier, message, None,
+        ))
+        .await
+    }
+
+    pub async fn start_with_mini(
+        barrier: Barrier,
+        keys: Keys,
+        settings: Settings,
+        supplier: client::Client,
+        message: message::client::Client,
+        mini: Option<identity::mini::client::Client>,
+    ) -> Result<Self, Error> {
         let metadata = keys.metadata().clone();
         let encryption = Arc::new(keys.encryption);
         let seals = Arc::new(keys.seal);
@@ -329,8 +356,7 @@ impl Services {
             encryption,
             Arc::clone(&seals),
         );
-        let app_id = settings.authentication.session().app_id().clone();
-        let registration = registration::Service::prepare(
+        let registration = registration::Service::assemble(
             app.clone(),
             Arc::clone(&keys),
             settings.authentication.session().issuance().clone(),
@@ -346,7 +372,20 @@ impl Services {
                 settings.avatar_storage,
                 settings.avatar_limits,
             )?;
-            let now = verify(&barrier, &app, &metadata, &keys, &invitations, &app_id).await?;
+            if settings.authentication.session().issuance().mini_app_id()
+                != mini.as_ref().map(identity::mini::client::Client::app_id)
+            {
+                return Err(Error::MiniSettings);
+            }
+            let now = verify(
+                &barrier,
+                &app,
+                &metadata,
+                &keys,
+                &invitations,
+                settings.authentication.session().issuance(),
+            )
+            .await?;
             avatar
                 .verify_files(barrier.client())
                 .await
@@ -368,8 +407,12 @@ impl Services {
             .restore()
             .await
             .map_err(Error::AvatarFacts)?;
-            let current =
-                current::Service::prepare(app.clone(), Arc::clone(&keys), app_id, avatar.clone());
+            let current = current::Service::prepare(
+                app.clone(),
+                Arc::clone(&keys),
+                settings.authentication.session().issuance().clone(),
+                avatar.clone(),
+            );
             let authentication = authentication::Service::prepare(
                 app.clone(),
                 Arc::clone(&keys),
@@ -378,6 +421,7 @@ impl Services {
                 authentication::Suppliers {
                     challenge: supplier,
                     message,
+                    mini,
                 },
             );
             let revocation = revocation::Service::prepare(app.clone(), current.clone());
@@ -616,6 +660,10 @@ impl Services {
 pub enum Error {
     #[error("badge application preparation failed")]
     Application(#[from] application::Error),
+    #[error("mini-program source settings and supplier must be configured together")]
+    MiniSettings,
+    #[error("{0}")]
+    SessionSettings(#[from] identity::session::settings::Error),
     #[error("{0}")]
     Initialization(#[from] initialize::Error),
     #[error("{0}")]

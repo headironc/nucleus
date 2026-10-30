@@ -94,6 +94,36 @@ pub(crate) async fn start(
     .expect("start acceptance")
 }
 
+pub(crate) async fn start_mini(
+    server: &fixture::Server,
+    name: &str,
+    supplier: &Supplier,
+    mini: &crate::supplier::Mini,
+) -> Application {
+    let settings = Settings::new(
+        8,
+        domain::identity::message::Limits::default(),
+        session_settings()
+            .with_mini("mini-fixture".parse().expect("mini identity"), 2_592_000)
+            .expect("mini lifetimes"),
+        domain::registration::Limits::default(),
+        avatar_settings(),
+    )
+    .expect("work capacity")
+    .with_avatar_storage(Some(crate::database::avatar_storage()));
+    Application::start_with_mini(
+        connections(server, name, "clerk"),
+        keys(0),
+        settings,
+        process::Settings::new(Duration::from_secs(30)).expect("stop budget"),
+        supplier.client(),
+        message().await,
+        Some(mini.client()),
+    )
+    .await
+    .expect("mini application")
+}
+
 /// Fixture service settings with the given work capacity and default limits.
 pub(crate) fn services(capacity: usize) -> Result<Settings, domain::startup::CapacityError> {
     services_with_avatar(capacity, avatar_settings())

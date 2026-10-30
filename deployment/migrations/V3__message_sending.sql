@@ -14,6 +14,65 @@ CREATE TABLE identity.messages (
 );
 CREATE INDEX messages_created_at_id_idx ON identity.messages (created_at, id);
 
+CREATE TABLE identity.exchanges (
+    id uuid PRIMARY KEY,
+    operation_id uuid NOT NULL UNIQUE,
+    app_id text NOT NULL CHECK (app_id <> '' AND app_id !~ '[[:space:][:cntrl:]]'),
+    proof bytea NOT NULL CHECK (octet_length(proof) = 32),
+    hash bytea NOT NULL CHECK (octet_length(hash) = 32),
+    key_id bigint NOT NULL REFERENCES security.keys (id),
+    code_hash bytea NOT NULL CHECK (octet_length(code_hash) = 32),
+    lookup_key_id bigint NOT NULL REFERENCES security.keys (id),
+    worker_id uuid NOT NULL,
+    claimed_at timestamptz NOT NULL CHECK (isfinite(claimed_at)),
+    deadline timestamptz NOT NULL CHECK (isfinite(deadline) AND deadline = claimed_at + interval '30 seconds'),
+    status text NOT NULL CHECK (status IN ('claimed', 'resolved', 'exhausted')),
+    reason text CHECK (reason IN ('authentication_invalid', 'mobile_unsupported', 'verification_required')),
+    mobile_hash bytea CHECK (octet_length(mobile_hash) = 32),
+    finished_at timestamptz CHECK (isfinite(finished_at) AND finished_at >= claimed_at),
+    transaction_id xid8 NOT NULL DEFAULT pg_catalog.pg_current_xact_id(),
+    UNIQUE (lookup_key_id, code_hash),
+    CHECK ((status = 'claimed' AND reason IS NULL AND mobile_hash IS NULL AND finished_at IS NULL)
+        OR (status = 'resolved' AND reason IS NULL AND mobile_hash IS NOT NULL AND finished_at IS NOT NULL AND finished_at < deadline)
+        OR (status = 'exhausted' AND reason IS NOT NULL AND mobile_hash IS NULL AND finished_at IS NOT NULL))
+);
+CREATE INDEX exchanges_finished_at_id_idx ON identity.exchanges (finished_at, id);
+
+CREATE FUNCTION identity.check_exchange() RETURNS trigger
+LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        IF NEW.status <> 'claimed' THEN
+            RAISE EXCEPTION 'exchange starts with its original worker claim' USING ERRCODE = '23514';
+        END IF;
+    ELSIF OLD.status <> 'claimed' OR NEW.status = 'claimed'
+        OR ROW(NEW.id, NEW.operation_id, NEW.app_id, NEW.proof, NEW.hash, NEW.key_id,
+            NEW.code_hash, NEW.lookup_key_id, NEW.worker_id, NEW.claimed_at, NEW.deadline)
+            IS DISTINCT FROM ROW(OLD.id, OLD.operation_id, OLD.app_id, OLD.proof, OLD.hash, OLD.key_id,
+            OLD.code_hash, OLD.lookup_key_id, OLD.worker_id, OLD.claimed_at, OLD.deadline) THEN
+        RAISE EXCEPTION 'exchange has one immutable claim and one terminal transition' USING ERRCODE = '23514';
+    END IF;
+    IF NEW.transaction_id <> pg_catalog.pg_current_xact_id() THEN
+        RAISE EXCEPTION 'exchange transition belongs to its current transaction' USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER exchanges_transition_check BEFORE INSERT OR UPDATE ON identity.exchanges
+    FOR EACH ROW EXECUTE FUNCTION identity.check_exchange();
+
+CREATE FUNCTION identity.check_exchange_deletion() RETURNS trigger
+LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+    IF OLD.status = 'claimed' OR OLD.finished_at + interval '24 hours' > pg_catalog.clock_timestamp() THEN
+        RAISE EXCEPTION 'exchange execution and occupancy retention must end before deletion' USING ERRCODE = '23514';
+    END IF;
+    RETURN OLD;
+END
+$$;
+CREATE TRIGGER exchanges_deletion_check BEFORE DELETE ON identity.exchanges
+    FOR EACH ROW EXECUTE FUNCTION identity.check_exchange_deletion();
+
 CREATE TABLE identity.authentications (
     id uuid PRIMARY KEY,
     operation_id uuid NOT NULL UNIQUE,
@@ -22,14 +81,37 @@ CREATE TABLE identity.authentications (
     key_id bigint NOT NULL REFERENCES security.keys (id),
     purpose text NOT NULL CHECK (purpose = 'create_session'),
     app_id text NOT NULL CHECK (app_id <> '' AND app_id !~ '[[:space:][:cntrl:]]'),
-    transport text NOT NULL CHECK (transport = 'cookie'),
-    message_id uuid NOT NULL,
+    transport text NOT NULL,
+    message_id uuid,
+    exchange_id uuid UNIQUE REFERENCES identity.exchanges (id),
     status text NOT NULL CHECK (status IN ('invalid', 'suspended', 'authenticated', 'registrable')),
     finished_at timestamptz NOT NULL CHECK (isfinite(finished_at)),
-    transaction_id xid8 NOT NULL DEFAULT pg_catalog.pg_current_xact_id()
+    transaction_id xid8 NOT NULL DEFAULT pg_catalog.pg_current_xact_id(),
+    CHECK ((transport = 'cookie' AND message_id IS NOT NULL AND exchange_id IS NULL)
+        OR (transport = 'bearer' AND message_id IS NULL AND exchange_id IS NOT NULL AND status <> 'invalid'))
 );
 CREATE INDEX authentications_finished_at_id_idx ON identity.authentications (finished_at, id);
 CREATE INDEX authentications_message_id_idx ON identity.authentications (message_id);
+
+CREATE FUNCTION identity.check_session_operation() RETURNS trigger
+LANGUAGE plpgsql SET search_path = '' AS $$
+BEGIN
+    PERFORM pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended('identity/session-operation:' || NEW.operation_id::text, 0));
+    IF TG_TABLE_NAME = 'exchanges' THEN
+        IF EXISTS (SELECT 1 FROM identity.authentications WHERE operation_id = NEW.operation_id) THEN
+            RAISE EXCEPTION 'session operation already has an authentication' USING ERRCODE = '23514';
+        END IF;
+    ELSIF EXISTS (SELECT 1 FROM identity.exchanges WHERE operation_id = NEW.operation_id
+        AND (NEW.exchange_id IS DISTINCT FROM id OR NEW.transport <> 'bearer')) THEN
+        RAISE EXCEPTION 'session operation retains its original exchange' USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER exchanges_operation_check BEFORE INSERT ON identity.exchanges
+    FOR EACH ROW EXECUTE FUNCTION identity.check_session_operation();
+CREATE TRIGGER authentications_operation_check BEFORE INSERT ON identity.authentications
+    FOR EACH ROW EXECUTE FUNCTION identity.check_session_operation();
 
 CREATE TABLE identity.checks (
     id uuid PRIMARY KEY REFERENCES identity.messages (id) DEFERRABLE INITIALLY DEFERRED,
@@ -136,6 +218,6 @@ $$;
 CREATE TRIGGER claims_insert_check BEFORE INSERT ON identity.claims
     FOR EACH ROW EXECUTE FUNCTION identity.check_claim();
 
-REVOKE ALL ON identity.messages, identity.authentications,
+REVOKE ALL ON identity.messages, identity.authentications, identity.exchanges,
     identity.checks, identity.confirmations, identity.claims FROM PUBLIC;
-REVOKE ALL ON FUNCTION identity.check_message(), identity.check_message_pair(), identity.check_claim() FROM PUBLIC;
+REVOKE ALL ON FUNCTION identity.check_message(), identity.check_message_pair(), identity.check_claim(), identity.check_exchange(), identity.check_exchange_deletion(), identity.check_session_operation() FROM PUBLIC;

@@ -76,6 +76,11 @@ pub enum Fault {
     ExpiredInvitationCompletion,
     StalledAvatarUploads,
     PausedCommit,
+    PausedMobileLookup,
+    LostCommitBeforeSessionRead,
+    StalledExchangesBatch,
+    StalledExchangeRead,
+    StalledExchangeRelations,
 }
 
 struct Control {
@@ -242,6 +247,11 @@ impl Proxy {
                 Fault::ExpiredInvitationCompletion => 51,
                 Fault::StalledAvatarUploads => 52,
                 Fault::PausedCommit => 53,
+                Fault::PausedMobileLookup => 54,
+                Fault::LostCommitBeforeSessionRead => 55,
+                Fault::StalledExchangesBatch => 56,
+                Fault::StalledExchangeRead => 57,
+                Fault::StalledExchangeRelations => 58,
             },
             Ordering::SeqCst,
         );
@@ -327,7 +337,7 @@ async fn relay(
     let stalled_completion = AtomicBool::new(false);
     let termination_response = AtomicBool::new(false);
     let paused_read_end = AtomicBool::new(false);
-    let paused_authentication_lookup = AtomicBool::new(false);
+    let paused_lookup = AtomicBool::new(false);
     let committing = AtomicBool::new(false);
     let backend_pid = OnceLock::new();
     let outgoing = async {
@@ -387,7 +397,20 @@ async fn relay(
                     .compare_exchange(50, 0, Ordering::SeqCst, Ordering::SeqCst)
                     .is_ok()
             {
-                paused_authentication_lookup.store(true, Ordering::SeqCst);
+                paused_lookup.store(true, Ordering::SeqCst);
+            }
+            if message[0] == b'P'
+                && message
+                    .windows(b"SELECT id FROM identity.accounts WHERE (mobile).hash = $1\0".len())
+                    .any(|bytes| {
+                        bytes == b"SELECT id FROM identity.accounts WHERE (mobile).hash = $1\0"
+                    })
+                && control
+                    .fault
+                    .compare_exchange(54, 0, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+            {
+                paused_lookup.store(true, Ordering::SeqCst);
             }
             if message[0] == b'P'
                 && message
@@ -715,6 +738,15 @@ async fn relay(
                         .windows(b"UPDATE identity.challenges".len())
                         .any(|bytes| bytes == b"UPDATE identity.challenges")
                     || message
+                        .windows(b"INSERT INTO identity.exchanges".len())
+                        .any(|bytes| bytes == b"INSERT INTO identity.exchanges")
+                    || message
+                        .windows(b"UPDATE identity.exchanges".len())
+                        .any(|bytes| bytes == b"UPDATE identity.exchanges")
+                    || message
+                        .windows(b"DELETE FROM identity.exchanges".len())
+                        .any(|bytes| bytes == b"DELETE FROM identity.exchanges")
+                    || message
                         .windows(b"INSERT INTO identity.messages".len())
                         .any(|bytes| bytes == b"INSERT INTO identity.messages")
                     || message
@@ -956,6 +988,24 @@ async fn relay(
                     .any(|bytes| bytes == b"SELECT id, person_id FROM identity.revisions WHERE ($1::uuid IS NULL OR id>$1) ORDER BY id LIMIT 128")
             {
                 36
+            } else if message[0] == b'P'
+                && message
+                    .windows(b"SELECT operation_id FROM identity.exchanges WHERE".len())
+                    .any(|bytes| bytes == b"SELECT operation_id FROM identity.exchanges WHERE")
+            {
+                56
+            } else if message[0] == b'P'
+                && message
+                    .windows(b"FROM identity.exchanges WHERE operation_id=$1".len())
+                    .any(|bytes| bytes == b"FROM identity.exchanges WHERE operation_id=$1")
+            {
+                57
+            } else if message[0] == b'P'
+                && message
+                    .windows(b"SELECT NOT EXISTS (SELECT 1 FROM identity.exchanges exchange".len())
+                    .any(|bytes| bytes == b"SELECT NOT EXISTS (SELECT 1 FROM identity.exchanges exchange")
+            {
+                58
             } else if control.fault.load(Ordering::SeqCst) == 38 && message[0] == b'P'
                 && message
                     .windows(b"FROM workforce.numbers state".len())
@@ -1083,12 +1133,12 @@ async fn relay(
                     .compare_exchange(stalled, 0, Ordering::SeqCst, Ordering::SeqCst)
                     .is_ok()
             {
-                if matches!(stalled, 28 | 32..=36 | 38 | 39 | 44..=48 | 52) {
+                if matches!(stalled, 28 | 32..=36 | 38 | 39 | 44..=48 | 52 | 56..=58) {
                     // Keep PostgreSQL's idle timeout from racing the read deadline.
                     stalled_query.store(true, Ordering::SeqCst);
                 }
                 control.pause(&backend_pid).await?;
-                if matches!(stalled, 28 | 32..=36 | 38 | 39 | 44..=48 | 52) {
+                if matches!(stalled, 28 | 32..=36 | 38 | 39 | 44..=48 | 52 | 56..=58) {
                     stalled_query.store(false, Ordering::SeqCst);
                     resumed.notify_one();
                 }
@@ -1121,7 +1171,7 @@ async fn relay(
                     return Ok(());
                 }
                 // Proof preflight commits no coordinated business transaction.
-                if (changed && matches!(fault, 1..=3 | 7 | 8)
+                if (changed && matches!(fault, 1..=3 | 7 | 8 | 55)
                     || !changed && (coordinated || listing || keys) && fault == 9
                     || !changed && coordinated && fault == 25
                     || clock && fault == 12
@@ -1147,7 +1197,12 @@ async fn relay(
                         // The single interception below must not race a late success frame.
                         closed.notified().await;
                     }
-                    control.intercept(&backend_pid)?;
+                    if fault == 55 {
+                        // Complete this lost write, then expose its first recovery Session lookup.
+                        control.fault.store(50, Ordering::SeqCst);
+                    } else {
+                        control.intercept(&backend_pid)?;
+                    }
                     if matches!(fault, 2 | 7 | 8 | 15 | 25) {
                         released.as_mut().await;
                     }
@@ -1160,7 +1215,7 @@ async fn relay(
                     }
                     commands.write_all(&message).await?;
                     commands.flush().await?;
-                    if matches!(fault, 1 | 9 | 12 | 19) {
+                    if matches!(fault, 1 | 9 | 12 | 19 | 55) {
                         released.await;
                     }
                     return Ok(());
@@ -1226,19 +1281,19 @@ async fn relay(
                 resumed.notified().await;
             }
             let message = message?;
-            if paused_authentication_lookup.load(Ordering::SeqCst)
+            if paused_lookup.load(Ordering::SeqCst)
                 && (matches!(message[0], b'D' | b'C') || !completed.is_empty())
             {
                 completed.extend_from_slice(&message);
                 if message[0] != b'Z' {
                     continue;
                 }
-                // The row has been read, but its caller has not authenticated it or taken a lock.
+                // The lookup has completed, before the caller authenticates it or takes a lock.
                 control.pause(&backend_pid).await?;
                 output.write_all(&completed).await?;
                 output.flush().await?;
                 completed.clear();
-                paused_authentication_lookup.store(false, Ordering::SeqCst);
+                paused_lookup.store(false, Ordering::SeqCst);
                 continue;
             }
             if message[0] == b'K' {

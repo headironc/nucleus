@@ -8,7 +8,6 @@ use crate::{
     identity::{
         credential, keys,
         session::{Error, Id, Session, Token},
-        website::AppId,
     },
 };
 
@@ -68,14 +67,14 @@ pub(crate) async fn remove(client: &Client, id: Id) -> Result<(), crate::databas
     Ok(())
 }
 
-pub(crate) async fn deliver(
+pub(crate) async fn deliver_origin(
     client: &Client,
     session: &Session,
     keys: &keys::credential::Keys,
-    app_id: &AppId,
+    origin: &crate::identity::session::Origin,
     now: DateTime<Utc>,
 ) -> Result<Token, Error> {
-    session.validate(app_id, now)?;
+    session.validate_origin(origin, now)?;
     let handoff = find_by_session(client, session.id())
         .await?
         .ok_or(Error::Unavailable)?;

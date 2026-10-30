@@ -337,7 +337,7 @@ async fn select(
             &service.keys.input,
             &service.keys.encryption,
             &service.keys.mobile,
-            service.settings.app_id(),
+            &service.settings,
             now,
         )?;
     }
@@ -348,7 +348,7 @@ async fn select(
                 client,
                 &service.app,
                 history::Read::Locked,
-                service.settings.app_id(),
+                &service.settings,
                 now,
             )
             .await?;
@@ -523,7 +523,7 @@ mod tests {
                     Receipt::Session(_) => panic!("unregistered mobile"),
                 };
                 let operation = "00000000-0000-4000-8000-000000000001".parse().expect("operation");
-                services.registration().register(registration_input(operation, &credential, "00000020000229007X")).await.expect("complete registration");
+                services.registration().register_input_for_test(registration_input(operation, &credential, "00000020000229007X")).await.expect("complete registration");
                 age_facts(&database, &services, TimeDelta::hours(49)).await;
                 let observer = database.connections(&database.user).recover().await.expect("independent observer");
                 let original = observer.client().query_one("SELECT attempt.id AS attempt_id, session.id AS session_id FROM identity.attempts attempt JOIN identity.receipts receipt ON receipt.id=attempt.id JOIN identity.sessions session ON session.receipt_id=receipt.id WHERE attempt.operation_id=$1", &[&operation]).await.expect("original entities");
@@ -602,7 +602,7 @@ mod tests {
                         Receipt::Session(_) => panic!("unregistered mobile"),
                     };
                     let operation = "00000000-0000-4000-8000-000000000001".parse().expect("operation");
-                    assert!(matches!(services.registration().register(registration_input(operation, &credential, "000000200002290010")).await, Err(Error::IdNumberTaken)));
+                    assert!(matches!(services.registration().register_input_for_test(registration_input(operation, &credential, "000000200002290010")).await, Err(Error::IdNumberTaken)));
                     age_facts(&database, &services, TimeDelta::hours(49)).await;
                     let observer = database.connections(&database.user).recover().await.expect("independent observer");
                     let attempt_id: Uuid = observer.client().query_one("SELECT id FROM identity.attempts WHERE operation_id=$1", &[&operation]).await.expect("original refused attempt").get(0);
@@ -688,7 +688,7 @@ mod tests {
                             Receipt::Registration(value) => value, Receipt::Session(_) => panic!("unregistered mobile"),
                         };
                         let operation = Uuid::new_v4().to_string().parse().expect("operation");
-                        let result = services.registration().register(registration_input(operation, &credential, if refusal { "000000200002290010" } else { "00000020000229007X" })).await;
+                        let result = services.registration().register_input_for_test(registration_input(operation, &credential, if refusal { "000000200002290010" } else { "00000020000229007X" })).await;
                         if refusal { assert!(matches!(result, Err(Error::IdNumberTaken))); } else { assert!(result.is_ok()); }
                         age_facts(&database, &services, TimeDelta::hours(49)).await;
                         let observer = database.connections(&database.user).recover().await.expect("independent observer");
@@ -727,7 +727,7 @@ mod tests {
                         authentication.run().await.expect("R1 parent becomes eligible after its check is gone");
                         assert_eq!(count(&database, "SELECT count(*) FROM identity.authentications").await, 0);
                         if !refusal {
-                            assert!(matches!(services.registration().register(registration_input(operation, &credential, "00000020000229007X")).await, Err(Error::Verification)));
+                            assert!(matches!(services.registration().register_input_for_test(registration_input(operation, &credential, "00000020000229007X")).await, Err(Error::Verification)));
                         }
                         observer.terminate().await.expect("observer ended"); services.drain().await.expect("drained"); context.stop().await.expect("stopped"); supplier.stop().await; proxy.stop().await;
                     }).await.expect("cleanup scenario budget");
@@ -780,7 +780,7 @@ mod tests {
                     let operation = Uuid::new_v4().to_string().parse().expect("operation");
                     services
                         .registration()
-                        .register(registration_input(
+                        .register_input_for_test(registration_input(
                             operation,
                             &credential,
                             "00000020000229007X",

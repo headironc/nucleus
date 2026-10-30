@@ -3,8 +3,14 @@ import type { paths } from "./generated/types";
 
 type Login = paths["/api/v1/sessions"]["post"];
 type Receipt = Login["responses"][200]["content"]["application/json"];
-export type Input = Login["requestBody"]["content"]["application/json"];
-export type Session = Extract<Receipt, { session: unknown }>["session"];
+type LoginInput = Login["requestBody"]["content"]["application/json"];
+export type Input = Omit<LoginInput, "credential"> & {
+  credential: Extract<LoginInput["credential"], { type: "message" }>;
+};
+export type Session = Exclude<
+  Extract<Receipt, { session: unknown }>["session"],
+  { token: unknown }
+>;
 export type Registration = Extract<
   Receipt,
   { registration: unknown }
@@ -24,11 +30,17 @@ export type LoginResult =
 export type CurrentResult = { kind: "account"; account: Account } | Failure;
 
 export function validInput(input: unknown): input is Input {
-  return registry.createSession_input(input);
+  return (
+    registry.createSession_input(input) &&
+    (input as Input).credential.type === "message"
+  );
 }
 
 export function validSession(value: unknown): value is Session {
-  return registry.createSession_200({ code: "ok", session: value });
+  return (
+    registry.createSession_200({ code: "ok", session: value }) &&
+    !Object.hasOwn(value as object, "token")
+  );
 }
 
 export function validRegistration(value: unknown): value is Registration {
@@ -49,6 +61,7 @@ export async function login(
   input: Input,
   signal: AbortSignal,
 ): Promise<LoginResult> {
+  if (!validInput(input)) return { kind: "untrusted" };
   try {
     const response = await fetch("/api/v1/sessions", {
       method: "POST",
@@ -67,9 +80,11 @@ export async function login(
     if (!value) return { kind: "untrusted" };
     if (response.status !== 200) return failure(response, value);
     const result = value as Receipt;
-    return "session" in result
-      ? { kind: "session", session: result.session }
-      : { kind: "registration", registration: result.registration };
+    if ("session" in result)
+      return validSession(result.session)
+        ? { kind: "session", session: result.session }
+        : { kind: "untrusted" };
+    return { kind: "registration", registration: result.registration };
   } catch {
     return { kind: "disconnected" };
   }

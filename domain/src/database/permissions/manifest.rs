@@ -134,8 +134,14 @@ const TABLES: &[Table] = &[
     table(
         "identity.authentications",
         &[Select, Delete],
-        "id, operation_id, proof, hash, key_id, purpose, app_id, transport, message_id, status, finished_at",
+        "id, operation_id, proof, hash, key_id, purpose, app_id, transport, message_id, exchange_id, status, finished_at",
         "",
+    ),
+    table(
+        "identity.exchanges",
+        &[Select, Delete],
+        "id, operation_id, app_id, proof, hash, key_id, code_hash, lookup_key_id, worker_id, claimed_at, deadline, status",
+        "status, reason, mobile_hash, finished_at, transaction_id",
     ),
     table(
         "identity.checks",

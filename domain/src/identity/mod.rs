@@ -8,6 +8,7 @@ pub(crate) mod credential;
 pub mod current;
 pub mod keys;
 pub mod message;
+pub mod mini;
 pub mod mobile;
 pub mod operation;
 pub mod person;

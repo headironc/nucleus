@@ -1356,6 +1356,9 @@ pub(super) mod tests {
         reply: oneshot::Sender<(u16, String)>,
     }
     impl Request {
+        pub(crate) fn body(&self) -> &serde_json::Value {
+            &self.body
+        }
         pub(crate) fn reply(self, status: u16, body: String) {
             assert!(
                 self.reply.send((status, body)).is_ok(),
@@ -1438,6 +1441,17 @@ pub(super) mod tests {
                 "fictional-secret".parse().expect("secret"),
             )
             .expect("client")
+        }
+        pub(crate) fn mini_client(&self) -> crate::identity::mini::client::Client {
+            crate::identity::mini::client::Client::for_test(
+                self.address.port().expect("fixture port"),
+                "mini-fixture".parse().expect("fixture mini identity"),
+                crate::identity::mini::client::Secret::new(zeroize::Zeroizing::new(
+                    "fictional-mini-secret".into(),
+                ))
+                .expect("fixture secret"),
+            )
+            .expect("fixture mini client")
         }
         pub(crate) async fn request(&mut self) -> Request {
             timeout(Duration::from_secs(5), self.observe())
