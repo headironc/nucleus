@@ -1,7 +1,11 @@
 import { readFile } from "node:fs/promises";
 import { describe, it, expect } from "vitest";
 import { selectDocument, compile } from "./protocol.ts";
-import type { OperationObject, ResponseObject } from "openapi-typescript";
+import type {
+  OperationObject,
+  RequestBodyObject,
+  ResponseObject,
+} from "openapi-typescript";
 import { createRequire } from "node:module";
 import { runInNewContext } from "node:vm";
 
@@ -36,8 +40,16 @@ describe("the actual OpenAPI / Ajv generator combination", () => {
       "/api/v1/sessions",
       "/api/v1/sessions/current",
       "/api/v1/settings",
+      "/api/v1/workforce/application-photos",
+      "/api/v1/workforce/application-resources/{id}",
+      "/api/v1/workforce/application-template",
+      "/api/v1/workforce/applications",
+      "/api/v1/workforce/applications/preview",
+      "/api/v1/workforce/current/applications",
+      "/api/v1/workforce/current/applications/{id}",
       "/api/v1/workforce/current/grant",
       "/api/v1/workforce/current/numbers",
+      "/api/v1/workforce/directories",
       "/api/v1/workforce/grants",
       "/api/v1/workforce/grants/candidates",
       "/api/v1/workforce/grants/{id}/terminations",
@@ -47,10 +59,16 @@ describe("the actual OpenAPI / Ajv generator combination", () => {
       Object.keys(actual.components.schemas).length,
     );
     const compiled = compile(selected);
+    expect(compiled.binary).toContain('"image/png"');
+    expect(compiled.binary).toContain('"font/otf"');
     expect(selected.paths["/api/v1/sessions"].post).toBeDefined();
     expect(selected.paths["/api/v1/sessions"].delete).toBeDefined();
-    expect(selected.paths["/api/v1/accounts/current/affiliation"].get).toBeDefined();
-    expect(selected.paths["/api/v1/accounts/current/affiliation"].put).toBeDefined();
+    expect(
+      selected.paths["/api/v1/accounts/current/affiliation"].get,
+    ).toBeDefined();
+    expect(
+      selected.paths["/api/v1/accounts/current/affiliation"].put,
+    ).toBeDefined();
     for (const validator of [
       "sendCode_200",
       "createSession_200",
@@ -80,6 +98,59 @@ describe("the actual OpenAPI / Ajv generator combination", () => {
       "transferId",
     ])
       expect(compiled.validators).toContain(validator);
+  });
+  it("does not silently discard unsupported binary constraints", () => {
+    const selected = selectDocument(actual);
+    Object.assign(selected.components.schemas["application.Binary"], {
+      maxLength: 8,
+    });
+    expect(() => compile(selected)).toThrow("Unsupported binary schema");
+  });
+  it.each([
+    { side: "request", inline: false },
+    { side: "response", inline: false },
+    { side: "request", inline: true },
+    { side: "response", inline: true },
+  ])("rejects unsupported binary constraints %j", ({ side, inline }) => {
+    const selected = selectDocument(actual);
+    const operation = (
+      side === "request"
+        ? selected.paths["/api/v1/workforce/application-photos"].post
+        : selected.paths["/api/v1/workforce/application-resources/{id}"].get
+    ) as OperationObject;
+    const content =
+      side === "request"
+        ? (operation.requestBody as RequestBodyObject).content
+        : (operation.responses!["200"] as ResponseObject).content!;
+    const media = content["image/webp"];
+    if ("$ref" in media) throw new Error("Expected concrete binary test media");
+    if (inline)
+      media.schema = {
+        type: "string",
+        format: "binary",
+      };
+    Object.assign(media.schema!, { maxLength: 8 });
+    expect(() => compile(selected)).toThrow("Unsupported binary schema");
+  });
+  it("accepts description annotations beside supported binary references", () => {
+    const selected = selectDocument(actual);
+    const upload = selected.paths["/api/v1/workforce/application-photos"]
+      .post as OperationObject;
+    const resource = selected.paths["/api/v1/workforce/application-resources/{id}"]
+      .get as OperationObject;
+    const request = (upload.requestBody as RequestBodyObject).content;
+    const response = (resource.responses!["200"] as ResponseObject).content!;
+    const requestMedia = request["image/webp"],
+      responseMedia = response["image/webp"];
+    if ("$ref" in requestMedia || "$ref" in responseMedia)
+      throw new Error("Expected concrete binary test media");
+    Object.assign(requestMedia.schema!, {
+      description: "Prepared photograph bytes",
+    });
+    Object.assign(responseMedia.schema!, {
+      description: "Authorized resource bytes",
+    });
+    expect(compile(selected).binary).toBe(compile(selectDocument(actual)).binary);
   });
   it.each([
     { imaginaryConstraint: true },

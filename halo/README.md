@@ -51,6 +51,8 @@ bun run check:generated
 
 Session 协议适配器供短信登录与本人检查使用。注册适配器核对首次 `201` 和原结果重放 `200` 的网站会话形状。退出适配器核对原操作及撤销集合。本次退出只接纳原 Session；全部退出接纳正数会话结果，查询核对完整集合及原发起会话。员工服务适配器只保留当前 Grant 的 ID 与人员定位；本人结束适配器发出无正文 POST，并核对原操作、原 Grant、双方人员及 `self` 模式。
 
+固定工牌申请另选用本人可选目录、模板、照片上传、预览、创建、本人列表与详情，以及受会话保护的资源读取。预览和创建的 `404 target_unavailable` 保留为明确拒绝，避免把不可用照片误判为未知提交结果。
+
 政治面貌适配器分别读取当前值 `{affiliation:{value,createdAt}}`、13 个固定名称，并以 `{affiliation:code}` 首次填写。只有可信 `404 affiliation_unset` 映射为未填，成功回执只接纳 `{code:"ok"}`。本人注销适配器校验账户、人员和实名修订输入，使用原操作与 Session 标识发送请求。成功结果只含服务端注销 ID 和生效时刻，当前登录状态不能证明原结果。
 
 换号适配器分别绑定原号会话、建立原输入、Transfer 与新号输入；完成结果必须回指原 Transfer。恢复材料另保留服务端账户、Grant、人员及 Transfer/Message 标识，生成器把账户、Grant、人员、Session、Transfer 及 Message 标识作为固定校验器导出。Ajv 的独立校验器随 Vite 编译进浏览器包，运行时不编译 schema。类型及校验器的更新必须来自重新导出的快照，不能手改。
@@ -110,6 +112,22 @@ bun run test:browser -- tests/mobile-change.spec.ts
 单元测试核对五接口、独立操作、保存失败零请求、未知结果、限流、错码、材料期限及恢复绑定。受控浏览器使用真实页面、`Current`、`Sessions` 和 IndexedDB，检查阶段请求、跨账户遮蔽、三类离开提示、键盘焦点和六位验证码，并保留 320、390、768、1440 像素的明暗主题截图。
 
 完整组合验收使用真实 Nginx、Cookie、后端及隔离的 fake Siteverify/PNVS。场景先建立两条原 Session，在真实短信冷却内发码取得 429，等待后以相同操作、证明和输入重试。完成换号后丢失 PUT 回执，再以新号登录并显式 GET 原结果。Rust 在提交前后独立核对手机号归属、原会话撤销、Handoff 删除及永久完成事实；查询前后核对业务事实、后来会话与期限保持不变。具体运行结果归 PR 验收证据，受控响应不替代真实事务验收。
+
+## 固定工牌申请
+
+员工服务的“我的工牌申请”进入 `/workforce/applications`。本人列表与详情读取当前允许的投影；没有当前工号仍可查看完整历史，服务暂停或结束时只显示摘要。新申请从 `/workforce/applications/new` 进入，先确认科室和照片裁剪，再核对完整预览与领取地点。
+
+`app/protocol/applications.ts` 消费真实导出的模板、照片、预览、创建和本人读取接口。二进制成功媒体由生成器输出，错误继续使用生成的 JSON 校验器。`app/workforce/applications.ts` 拥有当前可见页的资料、请求和未知结果保护；不使用业务存储或原请求重放。资源在离页、隐藏或身份变化时释放。申请内容变化后重新预览，不以旧确认提交新内容。
+
+`app/workforce/artwork.ts` 加载同一固定字体和背景，按服务端 UTF-8 行范围绘制完整文字，不自行换行或压缩。照片完整居中显示，透明部分和留白透出固定背景。预览用于确认申请，正式打印材料仍按[媒体验收](../docs/workforce/media.md#验收)准备。
+
+```bash
+cd halo
+bun run test -- app/protocol/applications.test.ts app/workforce/photo.test.ts tools/protocol.test.ts
+bun run test:browser -- tests/applications.spec.ts tests/application-photo.spec.ts
+```
+
+浏览器夹具使用真实页面、控制器、生成校验器、IndexedDB、图片解码和合法测试字体，HTTP 响应受控。覆盖三种类型、同快照提交与查询、未知提交不重发、受限摘要、账户切换、失效资源、UTF-8 行范围、明暗主题和窄屏焦点。测试字体优先读取本树的后端夹具。后端候选尚未合入时，将 `HALO_APPLICATION_FONT_REV` 设为已抓取的准确 Git 修订，只读取得该修订中的字体；不读取其他任务的 WIP。原件分别记录协议快照摘要、字体来源及字节摘要。字体修订不代表协议或后端集成修订。这些检查不证明真实数据库事务、完整端到端或跨引擎打印效果。
 
 ## 头像本地选择与预览
 
