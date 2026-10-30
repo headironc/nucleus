@@ -1391,7 +1391,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     ).toBeVisible();
     await other.getByRole("button", { name: "确认填写" }).click();
     await expect(
-      other.getByRole("heading", { name: "暂时无法确认填写结果" }),
+      other.getByRole("heading", { name: "未能确认填写结果" }),
     ).toBeVisible();
     await expect(
       other.getByRole("button", { name: "重试本次填写" }),
@@ -1402,16 +1402,14 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     expect(JSON.parse(originalBody)).toEqual({ affiliation: "04" });
 
     await other
-      .getByRole("button", { name: "刷新当前状态", exact: true })
+      .getByRole("button", { name: "刷新", exact: true })
       .click();
     await expect(
-      other
-        .locator(".current-panel")
-        .getByRole("heading", { name: "当前政治面貌" }),
+      other.getByRole("heading", { name: "当前政治面貌" }),
     ).toBeVisible();
     await expect(
-      other.getByRole("heading", { name: "暂时无法确认填写结果" }),
-    ).toBeVisible();
+      other.getByRole("heading", { name: "未能确认填写结果" }),
+    ).toHaveCount(0);
     await expect(
       other.getByRole("heading", { name: "政治面貌已填写" }),
     ).toHaveCount(0);
@@ -1427,9 +1425,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
         response.request().method() === "GET" &&
         response.status() === 200,
     );
-    await other
-      .getByRole("button", { name: "刷新当前状态", exact: true })
-      .click();
+    await other.reload();
     const current = await (await currentResponse).json();
     expect(current).toMatchObject({
       code: "ok",
@@ -1438,7 +1434,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     expect(Number.isFinite(Date.parse(current.affiliation.createdAt))).toBe(
       true,
     );
-    await expect(other.locator(".current-panel")).toContainText("民革会员");
+    await expect(other.locator(".record-panel")).toContainText("民革会员");
     await affiliationObservation(person, "read", "after");
 
     await affiliationObservation(person, "conflict", "before");

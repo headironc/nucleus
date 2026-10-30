@@ -570,13 +570,6 @@ const rejections = [
     retry: false,
   },
   {
-    name: "request mismatch",
-    status: 409,
-    code: "request_mismatch",
-    heading: "本次填写无法继续",
-    retry: false,
-  },
-  {
     name: "dependency unavailable",
     status: 503,
     code: "dependency_unavailable",
@@ -585,9 +578,9 @@ const rejections = [
   },
   {
     name: "unknown outcome",
-    status: 500,
+    status: 503,
     code: "outcome_unknown",
-    heading: "暂时无法确认填写结果",
+    heading: "未能确认填写结果",
     retry: true,
   },
 ] as const;
@@ -625,9 +618,7 @@ for (const rejection of rejections) {
     }
     if (rejection.code === "outcome_unknown") {
       await expect(
-        page.getByText(
-          "本次填写可能已经完成。离开本页不会取消已经发出的填写。",
-        ),
+        page.getByText("请刷新查看。", { exact: true }),
       ).toBeVisible();
       await expect(
         page.getByRole("button", { name: "重试本次填写" }),
@@ -639,7 +630,7 @@ for (const rejection of rejections) {
         page.getByRole("button", { name: /秒后可刷新/ }),
       ).toBeVisible();
       await advanceClock(page, 5_100);
-      await page.getByRole("button", { name: "刷新当前状态" }).click();
+      await page.getByRole("button", { name: "刷新", exact: true }).click();
       await expect(
         page.getByRole("heading", { name: "尚未填写政治面貌" }),
       ).toBeVisible();
@@ -675,50 +666,50 @@ for (const status of [401, 403] as const) {
   });
 }
 
-test("unknown writes only refresh and trusted unset requires a new explicit confirmation", async ({
+test("a lost response refreshes the ordinary unset page before a new explicit confirmation", async ({
   page,
   context,
 }) => {
   await page.clock.setFixedTime(Date.now());
   const state = control({
-    put: () => ({ status: 500, body: { code: "outcome_unknown" } }),
+    put: () => {
+      throw Error("connection closed");
+    },
   });
   await start(page, context, state);
   await openForm(page);
   await page.getByRole("button", { name: "确认填写" }).click();
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认填写结果" }),
+    page.getByRole("heading", { name: "未能确认填写结果" }),
   ).toBeVisible();
   const marker = await page.evaluate(() =>
     sessionStorage.getItem("halo:affiliation"),
   );
   expect(marker).toBeNull();
-  await captureState(page, "unknown");
+  await captureState(page, "submit-error");
 
   state.read = () => ({ status: 404, body: { code: "affiliation_unset" } });
-  await advanceClock(page, 5_001);
-  await page.getByRole("button", { name: "刷新当前状态" }).click();
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
   await expect(
-    page.locator(".current-panel").getByRole("heading", {
-      name: "当前尚未填写",
-    }),
+    page.getByRole("heading", { name: "尚未填写政治面貌" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认填写结果" }),
-  ).toBeVisible();
+    page.getByRole("heading", { name: "未能确认填写结果" }),
+  ).toHaveCount(0);
   await expect(page.locator('input[name="affiliation"]')).toHaveCount(0);
-  await expect(page.locator(".current-panel")).toContainText(
-    "不能证明此前填写失败",
+  await expect(page.locator(".current-panel")).toHaveCount(0);
+  await expect(page.locator("main")).not.toContainText(
+    /原填写|原结果|另行读取/,
   );
   expect(await sensitiveStorage(page)).not.toContain("民革会员");
-  await captureState(page, "refreshed-unset");
+  await captureState(page, "ordinary-unset");
 
   state.put = () => ({ status: 200, body: { code: "ok" } });
   expect(state.puts).toHaveLength(1);
   await expect(page.getByRole("button", { name: "重试本次填写" })).toHaveCount(
     0,
   );
-  await page.getByRole("button", { name: "重新选择填写" }).click();
+  await page.getByRole("button", { name: "填写政治面貌", exact: true }).click();
   await expect(page.locator('input[name="affiliation"]:checked')).toHaveCount(
     0,
   );
@@ -740,25 +731,47 @@ test("unknown writes only refresh and trusted unset requires a new explicit conf
     .toBeNull();
 });
 
+test("a submission without a response can leave normally after showing the refresh prompt", async ({
+  page,
+  context,
+}) => {
+  const state = control({
+    put: () => {
+      throw Error("connection closed");
+    },
+  });
+  await start(page, context, state);
+  await openForm(page);
+  await page.getByRole("button", { name: "确认填写" }).click();
+  await expect(
+    page.getByRole("heading", { name: "未能确认填写结果" }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "← 返回个人账户", exact: true }).click();
+  await expect(page).toHaveURL(/\/account$/);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(state.puts).toHaveLength(1);
+});
+
 for (const response of [
   { code: "rate_limited", status: 429 },
   { code: "dependency_unavailable", status: 503 },
 ]) {
-  test(`unknown write stays unknown after refreshed ${response.code} and then a current record`, async ({
+  test(`a refreshed ${response.code} uses the ordinary read error and current record`, async ({
     page,
     context,
   }) => {
     await page.clock.setFixedTime(Date.now());
     const state = control({
-      put: () => ({ status: 500, body: { code: "outcome_unknown" } }),
+      put: () => {
+        throw Error("connection closed");
+      },
     });
     await start(page, context, state);
     await openForm(page);
     await page.getByRole("button", { name: "确认填写" }).click();
     await expect(
-      page.getByRole("heading", { name: "暂时无法确认填写结果" }),
+      page.getByRole("heading", { name: "未能确认填写结果" }),
     ).toBeVisible();
-    await advanceClock(page, 5_001);
     const gate = deferred();
     state.read = async () => {
       await gate.promise;
@@ -769,37 +782,39 @@ for (const response of [
       };
     };
     const action = page.getByRole("button", {
-      name: "刷新当前状态",
+      name: "刷新",
       exact: true,
     });
     await action.click();
     await expect(
-      page
-        .locator(".current-panel")
-        .getByRole("heading", { name: "正在读取当前政治面貌" }),
+      page.getByRole("heading", { name: "正在读取当前政治面貌" }),
     ).toBeVisible();
-    await expect(action).toBeDisabled();
+    await expect(action).toHaveCount(0);
     gate.resolve();
     await expect(
-      page
-        .locator(".current-panel")
-        .getByRole("heading", { name: "暂时无法读取当前政治面貌" }),
+      page.getByRole("heading", { name: "暂时无法读取当前政治面貌" }),
     ).toBeVisible();
-    await expect(action).toBeDisabled();
+    const retry = page.getByRole("button", { name: /重新读取/ });
+    await expect(retry).toBeDisabled();
     await advanceClock(page, 59_000);
-    await expect(action).toBeDisabled();
+    await expect(retry).toBeDisabled();
     expect(state.reads).toBe(2);
     state.read = () => ({ body: { code: "ok", affiliation: record } });
     await advanceClock(page, 2_000);
-    await expect(action).toBeEnabled();
-    await action.click();
-    await expect(page.locator(".current-panel")).toContainText("民革会员");
-    await expect(page.locator(".current-panel")).toContainText(
-      "原结果仍未确认",
-    );
+    await expect(retry).toBeEnabled();
+    await retry.click();
+    await expect(page.locator(".record-panel")).toContainText("民革会员");
+    await expect(page.locator(".current-panel")).toHaveCount(0);
     await expect(
-      page.getByRole("heading", { name: "暂时无法确认填写结果" }),
-    ).toBeVisible();
+      page.getByRole("heading", { name: "未能确认填写结果" }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "政治面貌已填写" }),
+    ).toHaveCount(0);
+    await expect(page.locator("main")).not.toContainText(
+      /原填写|原结果|另行读取/,
+    );
+    if (response.status === 429) await captureState(page, "ordinary-record");
     expect(state.reads).toBe(3);
     expect(state.puts).toHaveLength(1);
   });
@@ -975,7 +990,7 @@ test("a failed later current read cannot downgrade a known success", async ({
     page.getByRole("heading", { name: "政治面貌已填写" }),
   ).toBeVisible();
   await expect(page.locator(".current-panel")).toContainText(
-    "已确认的填写结果仍然有效",
+    "填写已完成。你可以稍后再查看当前记录。",
   );
 });
 
