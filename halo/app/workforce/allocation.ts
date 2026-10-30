@@ -302,13 +302,18 @@ export class AllocationController {
           this.material !== "missing" &&
           this.material.operation === original.operation
         ) {
-          this.store({
-            ...next,
-            outcome: "complete",
-            code: "ok",
-            number: result.number,
-            retryAt: 0,
-          });
+          try {
+            this.store({
+              ...next,
+              outcome: "complete",
+              code: "ok",
+              number: result.number,
+              retryAt: 0,
+            });
+          } catch {
+            // store retains the confirmed receipt before attempting persistence.
+            // Continue selection confirmation and show its unsaved warning.
+          }
         }
         if (active()) await this.current.confirm(binding);
       } else if (active()) {

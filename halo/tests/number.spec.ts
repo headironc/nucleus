@@ -198,6 +198,36 @@ test("no preselection, explicit confirmation and complete fixed number", async (
   ).toBeVisible();
   expect(state.posts).toHaveLength(1);
 });
+test("confirmed receipt is shown immediately when persistence fails", async ({
+  page,
+  context,
+}) => {
+  await page.addInitScript(() => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (
+        key === "halo.number-allocation" &&
+        JSON.parse(value).outcome === "complete"
+      )
+        throw new DOMException("Storage unavailable", "QuotaExceededError");
+      return original.call(this, key, value);
+    };
+  });
+  const state = await start(page, context);
+  await confirm(page);
+  await expect(
+    page.getByRole("heading", { name: "工号已领取", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("92605", { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveText(
+    "领取结果已确认，但浏览器未能保存。请记下工号，或返回员工服务查看。",
+  );
+  await expect(
+    page.getByRole("button", { name: "查看本次领取结果", exact: true }),
+  ).toHaveCount(0);
+  expect(state.posts).toHaveLength(1);
+});
+
 test("lost response reload replays only the same explicit original", async ({
   page,
   context,

@@ -155,12 +155,31 @@ describe("first self allocation", () => {
     const c = f.create();
     await ready(c);
     await c.submit(902);
+    expect(c.snapshot()).toMatchObject({
+      kind: "result",
+      persisted: false,
+      allocation: { outcome: "complete", number: fixed },
+    });
     await c.verify();
     expect(c.snapshot()).toMatchObject({
       kind: "result",
       persisted: false,
       allocation: { outcome: "complete", number: fixed },
     });
+    expect(f.allocate).toHaveBeenCalledTimes(1);
+    c.close();
+  });
+  it("conceals an unsaved receipt after the selected account changes", async () => {
+    const f = fixture();
+    f.allocate.mockImplementationOnce(async () => {
+      f.broken();
+      f.switch();
+      return { kind: "allocated", number: fixed };
+    });
+    const c = f.create();
+    await ready(c);
+    await c.submit(902);
+    await vi.waitFor(() => expect(c.snapshot().kind).toBe("other"));
     expect(f.allocate).toHaveBeenCalledTimes(1);
     c.close();
   });
