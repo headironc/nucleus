@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { runInNewContext, Script } from "node:vm";
 import { createHash } from "node:crypto";
 import { account, epoch, FakePlatform, proof, session } from "./fixture";
+import { packageDirectory, packageFile } from "./package-files";
 
 test.each(["login", "registration"])("the exported native package handles %s without Node, DOM, fetch, URL or structuredClone globals", async flow => {
   const platform = new FakePlatform();
@@ -15,10 +16,10 @@ test.each(["login", "registration"])("the exported native package handles %s wit
     Date: class extends Date { static now() { return epoch; } },
     ArrayBuffer, Uint8Array,
   };
-  runInNewContext(await readFile(new URL("../build/app.js", import.meta.url), "utf8"), context);
+  runInNewContext(await readFile(packageFile("app.js"), "utf8"), context);
   application.onLaunch();
   expect(application.identity).toBeDefined();
-  runInNewContext(await readFile(new URL("../build/pages/account/index.js", import.meta.url), "utf8"), context);
+  runInNewContext(await readFile(packageFile("pages/account/index.js"), "utf8"), context);
   const page = { ...definition, data: { ...definition.data }, setData(value: unknown) { Object.assign(this.data, value); } };
   page.onShow();
   let work = application.identity.authorize("phone-event-code"); await platform.next(0);
@@ -43,9 +44,9 @@ test.each(["login", "registration"])("the exported native package handles %s wit
 
 test("the native build records the one actual shared OpenAPI snapshot", async () => {
   const snapshot = await readFile(new URL("../../halo/protocol/openapi.json", import.meta.url));
-  const source = JSON.parse(await readFile(new URL("../build/build-source.json", import.meta.url), "utf8"));
+  const source = JSON.parse(await readFile(packageFile("build-source.json"), "utf8"));
   expect(source).toMatchObject({ source: "export", snapshot: "halo/protocol/openapi.json",
-    sha256: createHash("sha256").update(snapshot).digest("hex"), platformAcceptance: false });
+    sha256: createHash("sha256").update(snapshot).digest("hex"), outputDirectory: packageDirectory, platformAcceptance: false });
 });
 
 test("all shipped WXML bindings preserve raw source bytes and pass a host expression syntax check", async () => {
@@ -53,7 +54,7 @@ test("all shipped WXML bindings preserve raw source bytes and pass a host expres
   let bindings = 0;
   for (const page of manifest.pages as string[]) {
     const source = await readFile(new URL(`../src/${page}.wxml`, import.meta.url), "utf8");
-    expect(await readFile(new URL(`../build/${page}.wxml`, import.meta.url), "utf8")).toBe(source);
+    expect(await readFile(packageFile(`${page}.wxml`), "utf8")).toBe(source);
     // WXML binding expressions are checked as written, without HTML entity decoding.
     // This catches source encoding failures; only the platform compiler proves WXML support.
     for (const match of source.matchAll(/\{\{([\s\S]*?)\}\}/g)) {
@@ -74,8 +75,8 @@ test("native sessions page binds delayed modal confirmations and exposes only sa
   const context = { wx, App(value: unknown) { application = value; }, getApp() { return application; },
     Page(value: unknown) { definition = value; }, setTimeout() { return 1; }, clearTimeout() {},
     Date: class extends Date { static now() { return epoch; } }, ArrayBuffer, Uint8Array };
-  runInNewContext(await readFile(new URL("../build/app.js", import.meta.url), "utf8"), context); application.onLaunch();
-  runInNewContext(await readFile(new URL("../build/pages/sessions/index.js", import.meta.url), "utf8"), context);
+  runInNewContext(await readFile(packageFile("app.js"), "utf8"), context); application.onLaunch();
+  runInNewContext(await readFile(packageFile("pages/sessions/index.js"), "utf8"), context);
   const page = { ...definition, data: { ...definition.data }, setData(value: unknown) { Object.assign(this.data, value); } };
   page.onShow(); await platform.next(0); platform.reply(0, { code: "ok", account: account() });
   await platform.next(1); platform.reply(1, { code: "ok", sessions: [
@@ -93,7 +94,7 @@ test("native sessions page binds delayed modal confirmations and exposes only sa
   const all = modal; page.onHide(); old.success({ confirm: true }); all.success({ confirm: true });
   expect(platform.requests).toHaveLength(2);
   expect(page.data.sessions).toHaveLength(0);
-  runInNewContext(await readFile(new URL("../build/pages/account/index.js", import.meta.url), "utf8"), context);
+  runInNewContext(await readFile(packageFile("pages/account/index.js"), "utf8"), context);
   const accountPage = { ...definition, data: { ...definition.data }, setData(value: unknown) { Object.assign(this.data, value); } };
   accountPage.onShow(); await platform.next(2); platform.reply(2, { code: "ok", account: account() });
   await new Promise(resolve => setTimeout(resolve, 0));
@@ -102,4 +103,16 @@ test("native sessions page binds delayed modal confirmations and exposes only sa
   const current = modal; accountPage.onHide(); current.success({ confirm: true });
   expect(platform.requests).toHaveLength(3);
   application.onHide();
+});
+
+test("the selected self package ships its accepted local garden and stylesheet", async () => {
+  const garden = await readFile(packageFile("assets/self-garden.jpg"));
+  expect(createHash("sha256").update(garden).digest("hex")).toBe("f28233f0f4ed7bf72b7272ed42f2cdc592b014628fab4393698b1b408f017586");
+  expect(await readFile(packageFile("self.wxss"), "utf8")).toBe(await readFile(new URL("../src/self.wxss", import.meta.url), "utf8"));
+  expect(await readFile(packageFile("app.wxss"), "utf8")).toContain('@import "./self.wxss";');
+  for (const page of ["account", "sessions"]) {
+    const source = await readFile(packageFile(`pages/${page}/index.wxml`), "utf8");
+    expect(source).toContain("self-page");
+    expect(source).not.toMatch(/orbit-services|affiliation|change-avatar|self-scenario|orbit-statusbar/);
+  }
 });

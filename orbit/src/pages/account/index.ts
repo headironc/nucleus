@@ -1,17 +1,18 @@
 import type { View } from "../../controller";
+import { selfPresentation } from "../../presentation";
 
 Page({
   data: { phase: "checking", busy: false, canLogin: false, canRecover: false, canCheck: false,
     canReset: false, logoutPending: false, message: "正在准备个人账户…", name: "", suffix: "", avatar: "", bound: false,
-    inputName: "", inputIdNumber: "", avatarFailed: false },
+    inputName: "", inputIdNumber: "", avatarFailed: false, heading: "正在打开个人账户…", recoveryLabel: "查看办理结果" },
   onShow() {
     const identity = getApp().identity;
     if (!identity) {
-      this.setData({ phase: "unavailable", message: "暂时无法打开个人账户，请联系维护人员检查服务配置。" });
+      this.setData({ phase: "unavailable", heading: "暂时无法打开个人账户", message: "请稍后重试。" });
       return;
     }
     identity.subscribe((view: View) => {
-      this.setData({ ...view, ...(view.phase !== "registration" ? { inputName: "", inputIdNumber: "" } : {}), avatarFailed: false });
+      this.setData({ ...view, ...selfPresentation(view, "account"), ...(view.phase !== "registration" ? { inputName: "", inputIdNumber: "" } : {}), avatarFailed: false });
     });
     void identity.show();
   },

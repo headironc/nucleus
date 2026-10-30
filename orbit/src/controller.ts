@@ -15,6 +15,8 @@ export type View = {
   canCheck: boolean;
   canReset: boolean;
   logoutPending: boolean;
+  recoveryKind: "" | "login" | "registration" | "logout";
+  completedScope: "" | "current" | "all";
   name: string;
   suffix: string;
   avatar: string;
@@ -22,9 +24,9 @@ export type View = {
 };
 export type Selection = { generation: number; sessionId: string };
 export type SessionTarget = Selection & { targetId: string };
-const blank = (): View => ({ phase: "login", message: "使用微信绑定的手机号登录。首次使用可在验证后注册。", busy: false,
+const blank = (): View => ({ phase: "login", message: "", busy: false,
   sessions: [], sessionsReady: false, homeAction: false,
-  canRecover: false, canLogin: true, canCheck: false, canReset: false, logoutPending: false, name: "", suffix: "", avatar: "", bound: false });
+  canRecover: false, canLogin: true, canCheck: false, canReset: false, logoutPending: false, recoveryKind: "", completedScope: "", name: "", suffix: "", avatar: "", bound: false });
 
 /** One identity owner for the visible native private page. No private projection is persisted. */
 export class Controller {
@@ -181,6 +183,7 @@ export class Controller {
     const material = this.records.authentication ?? this.records.registration?.pending;
     const logoutPending = !material && !!this.selectedLogout();
     this.publish({ ...blank(), phase: "pending", canLogin: false, canCheck: logoutPending ? false : canCheck, logoutPending,
+      recoveryKind: this.records.authentication ? "login" : this.records.registration?.pending ? "registration" : logoutPending ? "logout" : "",
       canRecover: material ? !material.stopped && material.retryAt <= this.now() : logoutPending,
       message });
   }
@@ -190,8 +193,7 @@ export class Controller {
     } else if (this.records.registration?.pending) {
       this.pending("暂时无法确认注册结果。请继续检查本次注册，暂时不要再次提交。");
     } else if (this.records.registration) {
-      this.publish({ ...blank(), phase: "registration", canLogin: false,
-        message: "手机号已验证。请填写本人姓名与居民身份证号，提交后创建账户。" });
+      this.publish({ ...blank(), phase: "registration", canLogin: false });
     } else {
       this.publish({ ...blank(), message: this.records.unresolved ?
         "此前办理结果仍无法确认。可重新验证手机号并检查当前账户；当前账户不证明此前注册结果。" : blank().message });
@@ -484,7 +486,7 @@ export class Controller {
       if (result?.status === 200 && completion?.id === id && Number.isSafeInteger(completion.count) &&
           completion.count > 0 && (scope === "all" || completion.count === 1)) {
         this.retain({ ...this.records, session: undefined, logouts: this.withoutSelectedLogout() });
-        this.publish({ ...blank(), phase: "complete", homeAction: true, message: scope === "current" ? "已退出本次登录。" : "已退出全部登录。" });
+        this.publish({ ...blank(), phase: "complete", completedScope: scope, homeAction: true, message: scope === "current" ? "已退出本次登录。" : "已退出全部登录。" });
       } else {
         if (result?.status === 401 && result.value.code === "authentication_invalid") {
           this.retain({ ...this.records, session: undefined });
@@ -509,8 +511,8 @@ export class Controller {
     if (result?.status === 200 && matchesLogout(result.value as any, logout.scope, logout.sessionId)) {
       this.retain({ ...this.records, logouts: this.withoutSelectedLogout(),
         session: selected.id === logout.sessionId ? undefined : selected });
-      this.publish({ ...blank(), phase: "complete", canLogin: !this.records.session, canCheck: !!this.records.session,
-        message: logout.scope === "current" ? "此前本次登录已退出。" : "此前全部登录退出已完成。后来建立的登录不受影响。" });
+      this.publish({ ...blank(), phase: "complete", completedScope: logout.scope, canLogin: !this.records.session, canCheck: !!this.records.session,
+        message: this.records.session ? "可返回个人账户。" : "如需打开个人账户，请使用手机号登录。" });
     } else if (result?.status === 401 && result.value.code === "authentication_invalid") {
       this.retain({ ...this.records, session: undefined });
       this.presentAnonymous();

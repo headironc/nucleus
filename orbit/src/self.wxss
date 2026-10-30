@@ -1,0 +1,76 @@
+/* The accepted botanical self pages; public home keeps its existing styles. */
+.page.self-page { min-height: 100vh; max-width: none; padding: 22px 20px 32px; padding-bottom: calc(32px + env(safe-area-inset-bottom)); background: #f7f4ec; color: #263e31; font-size: 14px; }
+.self-page .page-title { margin: 12px 0 10px; font-family: "Songti SC", "STSong", "SimSun", serif; font-size: 30px; font-weight: 500; line-height: 1.45; letter-spacing: 1px; overflow-wrap: anywhere; }
+.self-page .body-copy { color: #74796b; font-size: 13px; line-height: 1.85; }
+.self-page button { width: 100%; margin: 0; font-family: inherit; }
+.self-page .self-button { display: flex; align-items: center; justify-content: center; gap: 10px; min-height: 49px; padding: 12px 16px; border: 1px solid transparent; border-radius: 15px; font-size: 14px; font-weight: 500; line-height: 1.5; text-align: center; box-sizing: border-box; }
+.self-page .primary { color: #fffaf0; background: #334f3d; }
+.self-page .secondary { color: #263e31; border-color: #d4d8c8; background: #eceee2; }
+.self-page .self-danger { color: #b34239; background: transparent; border-color: #b3423933; margin-top: 17px; }
+.self-page button[disabled] { opacity: .55; }
+.self-page .notice { padding: 13px 15px; margin: 15px 0 0; border-radius: 14px; color: #263e31; background: #eee6ce; font-size: 12px; line-height: 1.8; overflow-wrap: anywhere; }
+.self-page .self-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 24px; }
+.self-page .self-text-action { width: auto; min-height: 44px; padding: 10px 0; color: #74796b; font-size: 12px; font-weight: 400; line-height: 1.8; background: transparent; border: 0; }
+.self-page .self-inline-actions { display: flex; justify-content: center; flex-wrap: wrap; gap: 14px; margin-top: 8px; }
+.self-page .home-link { margin-top: 4px; padding: 12px 0; min-height: 44px; box-sizing: border-box; color: #74796b; font-size: 12px; line-height: 1.8; text-align: center; }
+.self-page .home-link.primary { margin-top: 24px; min-height: 49px; padding: 12px 16px; border-radius: 15px; color: #fffaf0; font-size: 14px; font-weight: 500; line-height: 1.5; }
+.self-page .self-art { position: relative; height: 215px; overflow: hidden; margin: 20px 0 25px; border-radius: 23px 23px 45px 23px; box-shadow: 6px 7px 0 #dce1bc; }
+.self-page .self-garden { display: block; width: 100%; height: 100%; }
+.self-page .self-art-shade { position: absolute; inset: 0; background: linear-gradient(90deg, #f5e8bcf5, #f5e8bc99 42%, transparent 80%); }
+.self-page .self-art-copy { position: absolute; top: 22px; left: 22px; color: #263e31; }
+.self-page .self-art-eyebrow { font-size: 9px; letter-spacing: 1.6px; }
+.self-page .self-art-title { margin-top: 10px; font-family: "Songti SC", "STSong", "SimSun", serif; font-size: 30px; font-weight: 500; line-height: 1.45; letter-spacing: 1px; }
+.self-page .self-art-stamp { position: absolute; right: 19px; bottom: 16px; padding: 7px 10px; color: #fffaf0; background: #263e31c9; border-radius: 5px; font-size: 9px; letter-spacing: 1px; }
+.self-page .self-login-heading { font-size: 23px; font-weight: 600; }
+.self-page .self-login-button { margin-top: 24px; }
+.self-page .self-phone-icon { position: relative; width: 12px; height: 20px; border: 1.5px solid currentColor; border-radius: 3px; box-sizing: border-box; }
+.self-page .self-phone-icon::after { content: ""; position: absolute; width: 4px; height: 1px; background: currentColor; left: 2.5px; bottom: 2px; }
+.self-page .self-verified { display: inline-flex; align-items: center; gap: 5px; margin-top: 15px; padding: 5px 9px; color: #263e31; background: #eceee2; border: 1px solid #d4d8c8; border-radius: 20px; font-size: 11px; }
+.self-page .self-field-group { margin-top: 23px; border: 1px solid #d4d8c8; background: #eceee2; border-radius: 20px; overflow: hidden; }
+.self-page .self-field { padding: 15px 17px 12px; }
+.self-page .self-field + .self-field { border-top: 1px solid #d4d8c8; }
+.self-page .field-label { margin: 0; color: #74796b; font-size: 12px; font-weight: 500; }
+.self-page .field { width: 100%; min-height: 39px; height: 39px; padding: 7px 0 3px; border: 0; border-radius: 0; background: transparent; color: #263e31; font-size: 16px; line-height: 1.7; box-sizing: content-box; }
+.self-registration > .self-button { margin-top: 22px; }
+.self-page .self-form-footnote { margin-top: 22px; padding-top: 15px; border-top: 1px solid #d4d8c8; color: #74796b; font-size: 12px; line-height: 1.85; }
+.self-page .self-identity { margin-top: 20px; border: 1px solid #6d825c40; border-radius: 23px; overflow: hidden; background: #dfe5d7; }
+.self-page .self-identity-garden { position: relative; height: 105px; overflow: hidden; }
+.self-page .self-identity-shade { position: absolute; inset: 30% 0 0; background: linear-gradient(transparent, #dfe5d7); }
+.self-page .self-identity-copy { position: relative; padding: 0 20px 21px; }
+.self-page .avatar { position: relative; display: block; width: 62px; height: 62px; margin-top: -27px; border: 4px solid #dfe5d7; border-radius: 20px; background: #f7f4ec; overflow: hidden; }
+.self-page .avatar-placeholder { display: flex; align-items: center; justify-content: center; color: #334f3d; box-sizing: content-box; }
+.self-page .self-person-icon { position: relative; width: 29px; height: 31px; }
+.self-page .self-person-icon::before { content: ""; position: absolute; top: 1px; left: 8px; width: 11px; height: 11px; border: 1.5px solid currentColor; border-radius: 50%; }
+.self-page .self-person-icon::after { content: ""; position: absolute; bottom: 0; left: 2px; width: 23px; height: 13px; border: 1.5px solid currentColor; border-bottom: 0; border-radius: 14px 14px 0 0; }
+.self-page .profile-name { margin-top: 9px; color: #263e31; font-family: "Songti SC", "STSong", "SimSun", serif; font-size: 29px; font-weight: 500; line-height: 1.45; overflow-wrap: anywhere; }
+.self-page .section-label { margin: 22px 4px 9px; color: #74796b; font-size: 11px; letter-spacing: .8px; }
+.self-page .self-group { background: #eceee2; border: 1px solid #d4d8c8; border-radius: 18px; overflow: hidden; }
+.self-page .detail-row { min-height: 53px; align-items: center; padding: 13px 15px; gap: 10px; border: 0; font-size: 14px; box-sizing: border-box; }
+.self-page .detail-row + .detail-row { border-top: 1px solid #d4d8c8; }
+.self-page .self-row-value { margin-left: auto; color: #74796b; font-size: 12px; text-align: right; }
+.self-page .settings-row { justify-content: flex-start; gap: 10px; min-height: 53px; padding: 13px 15px; color: #263e31; font-size: 14px; font-weight: 400; background: transparent; border: 0; border-radius: 0; }
+.self-page .self-chevron { margin-left: auto; color: #74796b; font-size: 19px; line-height: 1; }
+.self-page .self-devices-icon { position: relative; width: 17px; height: 16px; color: #a04e3e; }
+.self-page .self-devices-icon::before { content: ""; position: absolute; left: 0; top: 0; width: 12px; height: 9px; border: 1.5px solid currentColor; border-radius: 2px; }
+.self-page .self-devices-icon::after { content: ""; position: absolute; right: 0; bottom: 0; width: 5px; height: 10px; border: 1.5px solid currentColor; border-radius: 1px; }
+.self-page .self-status { margin-top: 48px; text-align: center; }
+.page.self-state { padding-top: 70px; text-align: center; }
+.self-page .self-status-copy { margin-top: 10px; }
+.self-page .self-status-emblem { display: flex; align-items: center; justify-content: center; width: 62px; height: 62px; margin: 0 auto 20px; border: 1px solid #d4d8c8; border-radius: 24px; color: #617b40; background: #eceee2; font-size: 28px; }
+.self-page .self-spinner { width: 38px; height: 38px; border: 2px solid #d4d8c8; border-top-color: #334f3d; border-radius: 50%; background: transparent; animation: self-spin 1s linear infinite; }
+@keyframes self-spin { to { transform: rotate(360deg); } }
+.self-page .session-list { padding: 0 15px; margin-top: 24px; border: 1px solid #d4d8c8; border-radius: 20px; }
+.self-page .session-row { gap: 14px; padding: 27px 0; border-bottom-color: #d4d8c8; }
+.self-page .source-icon { width: 13px; height: 20px; border-width: 1.5px; border-color: #74796b; border-radius: 3px; }
+.self-page .source-icon::after { width: 4px; height: 1px; left: 3px; bottom: 2px; background: #74796b; }
+.self-page .website-icon { width: 17px; height: 15px; }
+.self-page .website-icon::after { width: 100%; top: 4px; left: 0; }
+.self-page .session-source { font-size: 14px; font-weight: 600; }
+.self-page .session-date { color: #74796b; margin-top: 6px; font-size: 11px; line-height: 1.7; }
+.self-page .session-current { color: #617b40; font-size: 10px; }
+.self-page .session-exit { width: auto; min-height: 42px; margin: 0; padding: 10px 16px; border: 1px solid #d4d8c8; border-radius: 25px; background: #eceee2; color: #263e31; font-size: 12px; font-weight: 500; line-height: 1.7; }
+.self-page .session-all { display: flex; align-items: center; gap: 14px; margin-top: 24px; padding: 17px 15px; border: 1px solid #d4d8c8; border-radius: 20px; }
+.self-page .session-all-copy { flex: 1; min-width: 0; }
+.self-page .session-all .card-title { margin-bottom: 8px; font-size: 14px; font-weight: 600; }
+.self-page .session-all .body-copy { font-size: 11px; }
+.self-page .session-all .danger { color: #b34239; background: #b342390a; border-color: #b3423926; }

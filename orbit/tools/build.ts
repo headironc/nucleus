@@ -2,6 +2,7 @@ import { cp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { generate } from "./protocol.ts";
+import { packageOutput } from "./package-output.ts";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 export async function build() {
@@ -16,7 +17,7 @@ export async function build() {
   if (appid === "touristappid") throw new Error("A test-project identity cannot produce a production build");
   const library = process.env.ORBIT_BASE_LIBRARY;
   if (library && !/^(?:[0-9]+\.[0-9]+\.[0-9]+|latest|trial|widelyUsed)$/.test(library)) throw new Error("Invalid explicit base-library selection");
-  const out = join(root, "build");
+  const { name: outputName, directory: out } = await packageOutput();
   async function configuration(name: string): Promise<Record<string, any>> {
     try {
       const value = JSON.parse(await readFile(join(out, name), "utf8"));
@@ -49,9 +50,10 @@ export async function build() {
     }
     await writeFile(output, text);
   }
-  for (const entry of ["app.json", "app.wxss", "sitemap.json", "pages/home/index.json", "pages/home/index.wxml", "pages/account/index.json", "pages/account/index.wxml", "pages/sessions/index.json", "pages/sessions/index.wxml"]) {
+  for (const entry of ["app.json", "app.wxss", "self.wxss", "sitemap.json", "pages/home/index.json", "pages/home/index.wxml", "pages/account/index.json", "pages/account/index.wxml", "pages/sessions/index.json", "pages/sessions/index.wxml"]) {
     await cp(join(root, "src", entry), join(out, entry));
   }
+  await cp(join(root, "src/assets"), join(out, "assets"), { recursive: true });
   await writeFile(join(out, "project.config.json"), JSON.stringify({
     ...common, appid, projectname: "nucleus-orbit", miniprogramRoot: "./", compileType: "miniprogram",
     ...(library ? { libVersion: library } : {}),
@@ -59,6 +61,7 @@ export async function build() {
   }, null, 2));
   await writeFile(join(out, "build-source.json"), JSON.stringify({
     ...source,
+    outputDirectory: outputName,
     apiOrigin: origin,
     platformAcceptance: false,
   }, null, 2));

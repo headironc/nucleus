@@ -1,3 +1,4 @@
+@import "./self.wxss";
 page { background: #f8f6ef; color: #2f3731; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; font-size: 30rpx; }
 .page { padding: 48rpx 40rpx 72rpx; max-width: 880rpx; margin: 0 auto; box-sizing: border-box; }
 .eyebrow { color: #55684e; font-size: 24rpx; letter-spacing: 3rpx; margin-bottom: 32rpx; }

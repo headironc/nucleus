@@ -1,55 +1,68 @@
-<view class="page account">
-  <view class="eyebrow">司籍处 · 本人账户</view>
-  <view class="page-title">{{phase === 'registration' ? '创建个人账户' : '个人账户'}}</view>
-  <view class="notice" wx:if="{{message}}" role="status">{{message}}</view>
+<view class="page account self-page">
 
   <!-- snapshot:login:start -->
-  <view class="intro-card" wx:if="{{canLogin && phase !== 'complete'}}">
-    <view class="card-title">手机号登录</view>
-    <view class="body-copy">请主动授权微信绑定的手机号。手机号验证不会关联微信身份。</view>
-    <button class="primary" open-type="getPhoneNumber" bindgetphonenumber="authorize" disabled="{{busy}}">使用手机号登录</button>
-    <view class="small-copy">首次使用将在验证后进入注册。</view>
+  <view class="self-login" wx:if="{{canLogin && phase !== 'complete'}}">
+    <view class="self-art">
+      <image class="self-garden" src="/assets/self-garden.jpg" mode="aspectFill" aria-hidden="true" />
+      <view class="self-art-shade"></view>
+      <view class="self-art-copy"><view class="self-art-eyebrow">一页本草 · 一段四时</view><view class="self-art-title">草木相伴，<view>四时有序。</view></view></view>
+      <text class="self-art-stamp">个人账户</text>
+    </view>
+    <view class="page-title self-login-heading">登录个人账户</view>
+    <view class="body-copy">使用本人手机号登录。首次使用需填写姓名和身份证号，创建个人账户。</view>
+    <view class="notice" wx:if="{{message}}" role="status">{{message}}</view>
+    <button class="primary self-button self-login-button" open-type="getPhoneNumber" bindgetphonenumber="authorize" disabled="{{busy}}"><view class="self-phone-icon" aria-hidden="true"></view><text>使用手机号登录</text></button>
   </view>
   <!-- snapshot:login:end -->
 
   <!-- snapshot:registration:start -->
-  <view class="intro-card" wx:if="{{phase === 'registration'}}">
-    <view class="card-title">填写实名资料</view>
-    <view class="body-copy">用于建立你的个人账户。请按本人居民身份证填写。</view>
-    <view class="field-label">姓名</view>
-    <input class="field" value="{{inputName}}" bindinput="inputName" maxlength="64" placeholder="填写本人姓名" disabled="{{busy}}" />
-    <view class="field-label">居民身份证号</view>
-    <input class="field" value="{{inputIdNumber}}" bindinput="inputIdNumber" type="idcard" maxlength="18" placeholder="18 位居民身份证号" disabled="{{busy}}" />
-    <button class="primary" bindtap="submit" disabled="{{busy}}">提交注册</button>
-    <view class="small-copy">注册后可查看个人账户，员工服务需另行开通。</view>
+  <view class="self-registration" wx:if="{{phase === 'registration' && !busy}}">
+    <view class="page-title">创建个人账户</view>
+    <view class="body-copy">请填写本人居民身份证上的姓名和号码。</view>
+    <view class="self-verified"><text aria-hidden="true">✓</text><text>手机号已验证</text></view>
+    <view class="notice" wx:if="{{message}}" role="status">{{message}}</view>
+    <view class="self-field-group">
+      <view class="self-field"><view class="field-label">姓名</view><input class="field" value="{{inputName}}" bindinput="inputName" maxlength="64" placeholder="填写本人姓名" aria-label="姓名" disabled="{{busy}}" /></view>
+      <view class="self-field"><view class="field-label">居民身份证号</view><input class="field" value="{{inputIdNumber}}" bindinput="inputIdNumber" type="idcard" maxlength="18" placeholder="填写 18 位居民身份证号" aria-label="居民身份证号" disabled="{{busy}}" /></view>
+    </view>
+    <button class="primary self-button" bindtap="submit" disabled="{{busy}}">创建账户</button>
+    <view class="self-form-footnote">注册后可查看个人账户，员工服务需另行开通。</view>
   </view>
   <!-- snapshot:registration:end -->
 
   <!-- snapshot:account:start -->
-  <view class="intro-card" wx:if="{{phase === 'account'}}">
-    <view class="profile">
-      <image class="avatar" wx:if="{{avatar && !avatarFailed}}" src="{{avatar}}" mode="aspectFit" binderror="avatarError" />
-      <view class="avatar avatar-placeholder" wx:else>人</view>
-      <view><view class="profile-name">{{name}}</view><view class="small-copy">当前已登录的本人账户</view></view>
+  <view class="self-account" wx:if="{{phase === 'account'}}">
+    <view class="page-title">个人账户</view>
+    <view class="self-identity">
+      <view class="self-identity-garden"><image class="self-garden" src="/assets/self-garden.jpg" mode="aspectFill" aria-hidden="true" /><view class="self-identity-shade"></view></view>
+      <view class="self-identity-copy">
+        <image class="avatar" wx:if="{{avatar && !avatarFailed}}" src="{{avatar}}" mode="aspectFill" binderror="avatarError" />
+        <view class="avatar avatar-placeholder" wx:else><view class="self-person-icon" aria-hidden="true"></view></view>
+        <view class="profile-name">{{name}}</view>
+      </view>
     </view>
-    <view class="small-copy" wx:if="{{avatarFailed}}">图片暂时无法加载</view>
-    <view class="detail-row"><text>居民身份证号</text><text>尾号 {{suffix}}</text></view>
-    <view class="detail-row"><text>微信身份</text><text>{{bound ? '已关联' : '未关联'}}</text></view>
-    <button class="secondary" wx:if="{{!logoutPending}}" bindtap="check" disabled="{{busy}}">刷新个人资料</button>
-    <button class="text-button" bindtap="switchAccount" disabled="{{busy}}">切换账户</button>
-    <view class="section-label login-security">登录安全</view>
-    <button class="settings-row" bindtap="sessions" disabled="{{busy}}"><text>登录管理</text><text aria-hidden="true">›</text></button>
-    <view class="separator"></view>
-    <button class="secondary" bindtap="logoutCurrent" disabled="{{busy || logoutPending}}">退出本次登录</button>
+    <view class="notice" wx:if="{{message}}" role="status">{{message}}</view>
+    <view class="notice" wx:if="{{avatarFailed}}" role="status">头像暂时无法显示。</view>
+    <view class="section-label">账户资料</view>
+    <view class="self-group"><view class="detail-row"><text>居民身份证号</text><text class="self-row-value">尾号 {{suffix}}</text></view><view class="detail-row"><text>微信关联</text><text class="self-row-value">{{bound ? '已关联' : '未关联'}}</text></view></view>
+    <view class="section-label">登录安全</view>
+    <view class="self-group"><button class="settings-row" bindtap="sessions" disabled="{{busy}}"><view class="self-devices-icon" aria-hidden="true"></view><text>登录管理</text><text class="self-chevron" aria-hidden="true">›</text></button></view>
+    <button class="secondary self-button self-danger" bindtap="logoutCurrent" disabled="{{busy || logoutPending}}">退出本次登录</button>
+    <view class="self-inline-actions"><button class="text-button self-text-action" wx:if="{{!logoutPending}}" bindtap="check" disabled="{{busy}}">刷新个人资料</button><button class="text-button self-text-action" bindtap="switchAccount" disabled="{{busy}}">切换账户</button></view>
   </view>
   <!-- snapshot:account:end -->
 
-  <button class="secondary" wx:if="{{phase !== 'account' && canCheck}}" bindtap="check" disabled="{{busy}}">检查登录状态</button>
-  <view class="notice" wx:if="{{logoutPending && phase === 'account'}}">此前退出结果仍待确认。</view>
-  <button class="secondary" wx:if="{{canRecover}}" bindtap="recover" disabled="{{busy}}">{{logoutPending ? '查看退出结果' : '检查本次办理结果'}}</button>
-  <button class="text-button" wx:if="{{canReset}}" bindtap="restartLogin" disabled="{{busy}}">重新验证手机号</button>
-  <view class="small-copy" wx:if="{{busy}}">请稍候…</view>
-  <navigator class="home-link primary" wx:if="{{homeAction}}" url="/pages/home/index" open-type="reLaunch">返回公开首页</navigator>
+  <view class="self-status" wx:if="{{phase !== 'account' && !(canLogin && phase !== 'complete') && (phase !== 'registration' || busy)}}">
+    <view class="self-status-emblem {{busy ? 'self-spinner' : ''}}" aria-hidden="true"><text wx:if="{{!busy}}">{{phase === 'complete' ? '✓' : '!'}}</text></view>
+    <view class="page-title">{{heading}}</view><view class="body-copy" wx:if="{{message && !busy}}" role="status">{{message}}</view>
+  </view>
+  <view class="self-actions" wx:if="{{(phase !== 'account' && canCheck) || canRecover || canReset}}">
+    <button class="{{phase === 'complete' && !homeAction ? 'primary' : 'secondary'}} self-button" wx:if="{{phase !== 'account' && canCheck}}" bindtap="check" disabled="{{busy}}">{{phase === 'complete' && !homeAction ? '返回个人账户' : '检查登录状态'}}</button>
+    <button class="primary self-button" wx:if="{{canRecover}}" bindtap="recover" disabled="{{busy}}">{{recoveryLabel}}</button>
+    <button class="text-button self-text-action" wx:if="{{canReset}}" bindtap="restartLogin" disabled="{{busy}}">重新验证手机号</button>
+  </view>
+  <button class="primary self-button" wx:if="{{phase === 'complete' && !homeAction && canLogin}}" bindtap="check">使用手机号登录</button>
+  <navigator class="home-link primary self-button" wx:if="{{homeAction}}" url="/pages/home/index" open-type="reLaunch">返回公开首页</navigator>
   <navigator class="home-link" wx:else url="/pages/home/index" open-type="reLaunch">返回公开首页</navigator>
-  <button class="text-button" wx:if="{{phase === 'complete' && canLogin}}" bindtap="check">重新登录</button>
+  <button class="text-button self-text-action" wx:if="{{phase === 'complete' && homeAction && canLogin}}" bindtap="check">重新登录</button>
 </view>

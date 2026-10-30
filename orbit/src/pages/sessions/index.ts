@@ -1,4 +1,5 @@
 import type { View } from "../../controller";
+import { selfPresentation } from "../../presentation";
 
 function loginDate(value: string): string {
   const date = new Date(value);
@@ -9,17 +10,18 @@ function loginDate(value: string): string {
 Page({
   data: { phase: "checking", busy: false, canCheck: false, canLogin: false, canRecover: false,
     sessionsReady: false, logoutPending: false, homeAction: false, message: "正在加载登录列表…",
+    heading: "正在加载登录情况…", recoveryLabel: "查看退出结果",
     sessions: [] as { id: string; sourceLabel: string; date: string; current: boolean }[] },
   onShow() {
     const identity = getApp().identity;
     if (!identity) {
-      this.setData({ phase: "unavailable", message: "暂时无法打开登录管理，请联系维护人员检查服务配置。" });
+      this.setData({ phase: "unavailable", heading: "暂时无法打开登录管理", message: "请稍后重试。" });
       return;
     }
     identity.subscribe((view: View) => {
       this.setData({ phase: view.phase, busy: view.busy, canCheck: view.canCheck, canLogin: view.canLogin,
         canRecover: view.canRecover, logoutPending: view.logoutPending, sessionsReady: view.sessionsReady,
-        message: view.message, homeAction: view.homeAction,
+        message: view.message, homeAction: view.homeAction, ...selfPresentation(view, "sessions"),
         sessions: view.sessions.map(item => ({ id: item.id, sourceLabel: item.source === "website" ? "网站" : "小程序",
           date: loginDate(item.createdAt), current: item.current })) });
     });
