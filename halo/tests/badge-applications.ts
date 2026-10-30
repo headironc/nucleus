@@ -38,7 +38,7 @@ type CurrentGrant =
   paths["/api/v1/workforce/current/grant"]["get"]["responses"][200]["content"]["application/json"];
 
 export type BadgeObservation = {
-  // Ownership stays fixed; foreign reads use the other member's session below.
+  // These identify the caller; applicationIds retain the target owner's records.
   accountId: string;
   personId: string;
   session: string;
@@ -136,7 +136,13 @@ export async function ownBadgeApplications(
     value: Partial<
       Pick<
         BadgeObservation,
-        "session" | "operation" | "input" | "application" | "resourceId"
+        | "accountId"
+        | "personId"
+        | "session"
+        | "operation"
+        | "input"
+        | "application"
+        | "resourceId"
       >
     > = {},
   ) => {
@@ -477,6 +483,8 @@ export async function ownBadgeApplications(
     expect(otherGrant.grant.status).toBe("active");
     const resourceId = records[0].photo.resourceId;
     await observe("foreign", "before", {
+      accountId: other.account.id,
+      personId: other.account.personId,
       session: other.session.id,
       resourceId,
     });
@@ -513,6 +521,8 @@ export async function ownBadgeApplications(
     await expect(page.getByText("暂无申请", { exact: true })).toBeVisible();
     await picture(page, "foreign-own-history");
     await observe("foreign", "after", {
+      accountId: other.account.id,
+      personId: other.account.personId,
       session: other.session.id,
       resourceId,
     });
