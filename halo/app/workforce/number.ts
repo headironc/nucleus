@@ -17,6 +17,11 @@ const labels = new Map<number, string>([
   [1000, "临时人员"],
 ]);
 
+export const numberSubtypes = Array.from(labels, ([value, name]) => ({
+  value,
+  name,
+}));
+
 export type NumberSummary = Readonly<{ display: string; subtype: string }>;
 
 /** Stored numbers keep their complete year; display text is never an identity. */

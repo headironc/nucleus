@@ -171,7 +171,7 @@ Rust 分类豁免上表列出的 Markdown、三份根配置、`halo/` 和 Halo �
 
 当前四个基础 CI 的稳定检查均为 required status checks，且每个 PR 都上报。修改触发条件或选检逻辑时，必须保留稳定检查的上报和失败语义。路径过滤导致 required 检查缺失时可能阻止合并，见 [GitHub 的说明](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#handling-skipped-but-required-checks)。
 
-CI 分类与最终状态的实现和验收见 [Rust 工作区验证](rust.md#workspace-validation)。自动代码与安全审查保持现有触发方式。通过轻量检查不表示设计稿已经完成页面、真机或生产验收。
+CI 分类与最终状态的实现和验收见 [Rust 工作区验证](rust.md#workspace-validation)。代码与安全审查的手动请求、覆盖及批准条件见[交付规则](delivery.md#审查关卡与证据复用)。通过轻量检查不表示设计稿已经完成页面、真机或生产验收。
 
 ### Rust 包选择
 
