@@ -17,10 +17,51 @@ defaults:
     shell: bash
 
 jobs:
-  docs:
-    name: Nucleus Docs
+  route:
+    name: Select Docs executor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    outputs:
+      executor: ${{ steps.route.outputs.executor }}
+      candidate: ${{ steps.route.outputs.candidate }}
+    steps:
+      - name: Select executor without candidate code
+        id: route
+        env:
+          # Enable only after domain acceptance and the assigned field window.
+          VM_ENABLED: "false"
+          CANARY_PR: "0"
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_REPOSITORY_ID: ${{ github.event.pull_request.base.repo.id }}
+          BASE_REPOSITORY: ${{ github.event.pull_request.base.repo.full_name }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          HEAD_REPOSITORY_ID: ${{ github.event.pull_request.head.repo.id }}
+          HEAD_FORK: ${{ github.event.pull_request.head.repo.fork }}
+          AUTHOR_ID: ${{ github.event.pull_request.user.id }}
+        run: |
+          test "$GITHUB_EVENT_NAME" = pull_request
+          test "$GITHUB_REPOSITORY_ID" = 1432619931
+          test "$GITHUB_REPOSITORY" = headironc/nucleus
+          test "$BASE_REPOSITORY_ID" = "$GITHUB_REPOSITORY_ID"
+          test "$BASE_REPOSITORY" = "$GITHUB_REPOSITORY"
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ ]] || exit 1
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          case "$BASE_REF" in dev|main) ;; *) exit 1 ;; esac
+          case "$VM_ENABLED" in true|false) ;; *) exit 1 ;; esac
+          executor=hosted
+          if [[ "$VM_ENABLED" = true && "$HEAD_REPOSITORY_ID" = 1432619931 && "$HEAD_FORK" = false && "$AUTHOR_ID" = 19648989 && "$PR_NUMBER" = "$CANARY_PR" ]]; then
+            executor=vm
+          fi
+          printf 'executor=%s\ncandidate=%s\n' "$executor" "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+  hosted:
+    name: Docs on hosted
+    needs: route
+    if: needs.route.outputs.executor == 'hosted'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    outputs:
+      candidate: ${{ steps.checks.outputs.candidate }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -32,28 +73,79 @@ jobs:
         with:
           node-version-file: .tool-versions
           package-manager-cache: false
-      - name: Install lychee
+      - uses: ./.github/actions/docs-check
+        id: checks
+        with:
+          executor: hosted
+
+  vm:
+    name: Docs on VM
+    needs: route
+    if: needs.route.outputs.executor == 'vm'
+    runs-on: nucleus-runners
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/headironc/nucleus-ci@sha256:80ae416d4bc7287532c0974d25390c5bc9b27cd62defe4e64860b501414b4592
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+    outputs:
+      candidate: ${{ steps.checks.outputs.candidate }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify container access
         run: |
-          curl --fail --location --silent --show-error --max-time 120 --output "$RUNNER_TEMP/lychee.tar.gz" 'https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-gnu.tar.gz'
-          echo "1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a  $RUNNER_TEMP/lychee.tar.gz" | sha256sum --check --strict
-          mkdir -p "$RUNNER_TEMP/lychee"
-          tar --extract --gzip --file "$RUNNER_TEMP/lychee.tar.gz" --directory "$RUNNER_TEMP/lychee" --strip-components=1
-          echo "$RUNNER_TEMP/lychee" >> "$GITHUB_PATH"
-      - name: Record candidate and tools
+          test "$(id -u)" != 0
+          test -w "$GITHUB_WORKSPACE"
+          test -w "$RUNNER_TEMP"
+          test -w "$HOME"
+      - uses: ./.github/actions/docs-check
+        id: checks
+        with:
+          executor: vm
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: docs-vm-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/docs-*.log
+          retention-days: 7
+          if-no-files-found: error
+
+  docs:
+    name: Nucleus Docs
+    needs: [route, hosted, vm]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require the selected complete executor
+        if: ${{ !cancelled() }}
         env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          ROUTE_RESULT: ${{ needs.route.result }}
+          EXECUTOR: ${{ needs.route.outputs.executor }}
+          ROUTE_CANDIDATE: ${{ needs.route.outputs.candidate }}
+          HOSTED_RESULT: ${{ needs.hosted.result }}
+          HOSTED_CANDIDATE: ${{ needs.hosted.outputs.candidate }}
+          VM_RESULT: ${{ needs.vm.result }}
+          VM_CANDIDATE: ${{ needs.vm.outputs.candidate }}
+          CANCELLED: "false"
         run: |
-          printf 'repository=%s pr=%s run=%s attempt=%s\n' "$GITHUB_REPOSITORY" "$PR_NUMBER" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
-          git rev-parse HEAD
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          bun --version
-          node --version
-          lychee --version
-      - name: Install dependencies
-        run: bun install --frozen-lockfile --ignore-scripts
-      - name: Test design preview
-        run: bun test tools/preview-design.test.ts
-      - name: Check document formatting and Markdown
-        run: bun run check:docs
-      - name: Check local links
-        run: bun run check:docs:links
+          test "$CANCELLED" = false
+          test "$ROUTE_RESULT" = success
+          test "$ROUTE_CANDIDATE" = "$GITHUB_SHA"
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]] || exit 1
+          case "$EXECUTOR:$HOSTED_RESULT:$VM_RESULT" in
+            hosted:success:skipped) test "$HOSTED_CANDIDATE" = "$GITHUB_SHA" ;;
+            vm:skipped:success) test "$VM_CANDIDATE" = "$GITHUB_SHA" ;;
+            *) echo 'Docs executor result rejected' >&2; exit 1 ;;
+          esac
+      - name: Reject cancelled Docs workflow
+        if: ${{ cancelled() }}
+        run: |
+          echo 'Docs workflow cancelled; no successful result' >&2
+          exit 1

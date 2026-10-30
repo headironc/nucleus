@@ -1,0 +1,65 @@
+name: Complete Docs checks
+description: Check the exact PR candidate with the same four Docs obligations
+inputs:
+  executor:
+    description: Selected executor for diagnostic identity
+    required: true
+outputs:
+  candidate:
+    description: Verified event checkout
+    value: ${{ steps.identity.outputs.candidate }}
+runs:
+  using: composite
+  steps:
+    - name: Record candidate and tools
+      id: identity
+      shell: bash
+      env:
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        EXECUTOR: ${{ inputs.executor }}
+      run: |
+        set -euo pipefail
+        {
+          printf 'repository=%s repository_id=%s pr=%s base=%s head=%s merge=%s workflow=%s run=%s attempt=%s executor=%s uid=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_REPOSITORY_ID" "$PR_NUMBER" "$BASE_SHA" "$HEAD_SHA" "$GITHUB_SHA" "$GITHUB_WORKFLOW_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$EXECUTOR" "$(id -u)"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          bun tools/check-bun.ts
+          node --input-type=module -e 'import { readFileSync } from "node:fs"; const pins = readFileSync(".tool-versions", "utf8").split("\n").filter(line => /^\s*nodejs/.test(line)); if (pins.length !== 1 || pins[0] !== `nodejs ${process.versions.node}`) throw new Error("Node version does not match .tool-versions");'
+          bun --version
+          node --version
+        } 2>&1 | tee "$RUNNER_TEMP/docs-identity.log"
+        printf 'candidate=%s\n' "$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+    - name: Install lychee
+      shell: bash
+      run: |
+        set -euo pipefail
+        {
+          curl --fail --location --silent --show-error --max-time 120 --output "$RUNNER_TEMP/lychee.tar.gz" 'https://github.com/lycheeverse/lychee/releases/download/lychee-v0.24.2/lychee-x86_64-unknown-linux-gnu.tar.gz'
+          echo "1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a  $RUNNER_TEMP/lychee.tar.gz" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/lychee"
+          tar --extract --gzip --file "$RUNNER_TEMP/lychee.tar.gz" --directory "$RUNNER_TEMP/lychee" --strip-components=1
+          test "$("$RUNNER_TEMP/lychee/lychee" --version)" = 'lychee 0.24.2'
+          "$RUNNER_TEMP/lychee/lychee" --version
+          echo "$RUNNER_TEMP/lychee" >> "$GITHUB_PATH"
+        } 2>&1 | tee "$RUNNER_TEMP/docs-lychee.log"
+    - name: Install dependencies
+      shell: bash
+      run: |
+        set -euo pipefail
+        bun install --frozen-lockfile --ignore-scripts 2>&1 | tee "$RUNNER_TEMP/docs-dependencies.log"
+    - name: Test design preview
+      shell: bash
+      run: |
+        set -euo pipefail
+        bun test tools/preview-design.test.ts 2>&1 | tee "$RUNNER_TEMP/docs-preview.log"
+    - name: Check document formatting and Markdown
+      shell: bash
+      run: |
+        set -euo pipefail
+        bun run check:docs 2>&1 | tee "$RUNNER_TEMP/docs-documents.log"
+    - name: Check local links
+      shell: bash
+      run: |
+        set -euo pipefail
+        bun run check:docs:links 2>&1 | tee "$RUNNER_TEMP/docs-links.log"

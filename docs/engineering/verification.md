@@ -10,11 +10,17 @@ Nucleus 独立维护原生 CI、业务选检、依赖环境及结果解释。旧
 
 ### 原生 Docs
 
-[Docs 工作流](../../.github/workflows/docs.yml)在面向 `dev` 或 `main` 的原生 `pull_request` 合成候选上运行唯一的 `docs` 作业，显示名为 `Nucleus Docs`。打开、重开、更新提交和编辑 PR 均重新执行；编辑事件包含更换目标分支。非文档改动和草稿 PR 也运行，不使用路径或作业条件跳过。存在合并冲突而没有合成候选时，不形成 Docs 成功证据。
+[Docs 工作流](../../.github/workflows/docs.yml)消费面向 `dev` 或 `main` 的原生 `pull_request` 合成候选。打开、重开、更新提交和编辑 PR 均重新执行；编辑事件包含更换目标分支。非文档改动和草稿 PR 也运行，不使用路径过滤。存在合并冲突而没有合成候选时，不形成 Docs 成功证据。唯一 required 名仍为 GitHub Actions App 15368 的 `Nucleus Docs`，由 hosted 的 `docs` 作业汇总。
 
-该作业使用 GitHub 托管的 Ubuntu 24.04、根目录 `.tool-versions` 固定的 Bun 和 Node，以及 lychee 0.24.2。Action 固定到完整源提交，lychee 发布包安装前核对固定摘要。依赖按锁文件安装且禁用安装脚本；检出不保留凭据，权限仅为 `contents: read`。日志记录仓库、PR、运行及尝试编号，并核对实际检出提交等于事件的 `GITHUB_SHA`。
+hosted 的 `route` 不检出或执行候选代码。它验证仓库、PR 事件和目标身份，再选择 `hosted` 或 `vm` 中一条完整路径。当前准备阶段在源码中固定关闭 VM 资格，所有合法来源均走 hosted；准备版保持待验，不单独合并。生命周期矩阵、实际来源与旧控制能力隔离、领域接纳及唯一现场窗口成立后，原作者才在同一 PR 绑定准确 canary PR 号。正常窄资格为同仓库、非 fork、作者 ID `19648989`；其他来源保持完整 hosted。route 条件只选择正常流程，不构成对恶意 workflow 的池访问隔离。
 
-作业直接运行[文档维护](../README.md#文档维护)的预览传输回归、格式、Markdown 和离线链接四项义务。任一准备或检查失败均失败，不忽略错误；超时和取消保留原生终态。同一 PR 的新运行取消旧运行，其他 PR 相互独立。失败、取消、超时、缺失运行及旧候选成功均不能作为当前候选成功。实际 PR 验收还须覆盖成功、断链、预览失败、工具不匹配、取消、非文档改动和候选或目标变化；本地回归不代替托管运行。
+hosted executor 使用 Ubuntu 24.04 和根目录 `.tool-versions` 固定的 Bun、Node。VM executor 使用固定 `nucleus-ci` digest `80ae416d4bc7287532c0974d25390c5bc9b27cd62defe4e64860b501414b4592`，验证非 root 及 workspace、RUNNER_TEMP、HOME 可写，不提权或改文件模式。两路调用同一 [Docs action](../../.github/actions/docs-check/action.yml)，核对实际 HEAD 等于 `GITHUB_SHA`、Bun/Node 精确版本，再安装并核对 lychee 0.24.2 的固定摘要和版本。Action 固定完整源提交，依赖按锁文件安装且禁用安装脚本；检出不保留凭据。默认权限仅 `contents: read`，只有 VM 增加 `packages: read`；无 Environment、秘密投递或写权限。PR 合成候选不要求等于默认分支 tip。
+
+每条 executor 保留 15 分钟预算，运行[文档维护](../README.md#文档维护)的预览传输回归、格式、Markdown 和离线链接四项义务。日志管道保留失败退出；任一准备或检查失败均失败，超时和取消保留原生终态。同一 PR 的新运行取消旧运行，其他 PR 相互独立。始终运行的 hosted aggregate 只接受 route 成功、当前工作流未取消、选中 executor 成功且另一条 skipped，并核 route 和选中 executor 的候选均等于当前 `GITHUB_SHA`。双成功、双跳过、非法或缺失 route、候选失配和任何选中失败均拒绝，不从旧 check 或 attempt 补成功。
+
+VM 按 run/attempt 上传 `docs-vm` 诊断 artifact，保留 7 天。白名单包含仓库/PR/base/head/merge/workflow/run/attempt、UID、executor、工具版本及检查日志，不上传环境、凭据、HOME 或依赖。正常 VM 验收核 artifact ID、ZIP 摘要与内容，并由唯一现场负责人核容器、网络、runner、VM、根盘和槽位回收；上传成功不证明检查或回收成功。源码不调用带 Rust/PG 副作用的镜像 verifier。
+
+真实切换依次验收 hosted 前态、准确 PR 的 VM canary、普通 PR 恢复 hosted 并真实通过、最终 VM 资格及合后真实消费。每阶段先核原运行与回收终态，再进入下一次运行；源码恢复只撤回本片路由和配对输入，保留并行交付。hosted 前态或恢复入口没有 artifact 时保留平台日志。真实 hosted fallback、取消和故障恢复的证据分别绑定实际来源与运行，未能合法产生的外部 fork 实测范围保留未知。本地表达式和真实命令回归不代替托管或现场验收。
 
 Docs 成功只证明上述文档检查，不代表 Rust、维护工具、Halo、完整 CI、提升或部署验收。当前切片不配置分支保护、队列、自动批准或合并；需要消费状态时，由平台所有者从真实 PR 运行回读检查名称、提供方及候选关联。
 
