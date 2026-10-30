@@ -60,6 +60,20 @@ plan 直接调用现分类器。无法核实比较时保守选择 full/all；畸
 
 该状态只证明 package 责任，不包含 Halo、main 晋级、部署或自动准入。HTTP 中要求 Halo/Node/浏览器的测试仍明确 ignored，本状态不声称浏览器覆盖。本地继续按当前 classifier 的完整选检执行或核对输入后复用有效证据，不因托管范围排除 Halo 而免检。
 
+### Runner 首个真实消费者
+
+[Runner probe](../../.github/workflows/runner-probe.yml) 只接受准确 `headironc/nucleus` 仓库的默认 `dev` 手动派发。现场负责人先绑定已审合并提交，以完整 SHA 填入 `expected_revision`。作业核对仓库 ID、事件、ref、源码和 workflow SHA，再检出同一提交并核 HEAD；checkout 不保留凭据。派发前确认无在途 probe。固定 concurrency 禁止并行且不取消原运行，不把串行机制当作堆积请求的许可。
+
+唯一 job 使用 `nucleus-standard-probe`，超时 45 分钟。原生 container 初始化以 `github.actor` 和只读包权限的 `github.token` 拉取固定 digest。默认权限为 `contents: read`，仅该 job 增加 `packages: read`。镜像及首次发布、冷拉取证据归 [Halo 镜像合同](../../halo/README.md#首次私有包发布与冷拉取)。源码准备可独立推进，真实派发等待准确成品与兼容输入被接纳。
+
+容器以镜像默认非 root 用户运行。Runner 负责工作区、临时目录和 HOME 挂载的可写性，保留镜像预装的 Cargo/Rustup 路径。workflow 不提升权限、放宽文件模式或注入管理秘密，也不使用跨任务缓存。初始化或写权限失败保持失败结论。
+
+先执行 `bun tools/halo-ci-image.ts verify`，核镜像输入与预装 PostgreSQL，再创建 job 私有 TMPDIR。完整消费者命令为 `bun tools/check-packages.ts --package platform --test-threads 2`，包含 build、test/doctest 和 rustdoc；`CARGO_BUILD_JOBS=2` 限制编译并发。最后以 `always()` 调用原 PostgreSQL 清理入口。日志管道保留失败退出，清理发现泄漏时仍失败。诊断日志按 run/attempt 上传并保留 7 天，取消保持非成功。
+
+成功验收同时要求完整 package 检查、PG scan empty、TMPDIR removed、原 run/job 成功终态，以及 GARM 自动回收对应 VM 的证据。硬终止可能阻止清理，单有 `always()` 不证明资源已回收。现场负责人持有唯一 dispatch、运行观察和 VM 生命周期责任；源码检查与合并不代替实际验收，也不证明全部 CI 已迁移。
+
+[专用 PR 检查](../../.github/workflows/runner-probe-checks.yml)执行 `.github/runner-probe/` 的类型与回归，覆盖实际来源拒绝、只读权限、完整命令、日志失败传播和清理条件。固定 actionlint 1.7.12 核两份工作流，额外 runner 标签由 `.github/actionlint.yaml` 声明。产品代码、镜像及 fixture 输入未变时按下文复用原证据；回归不启动 VM 或 registry 操作。
+
 ## CI 触发与选检
 
 本节区分当前自动行为与建议目标。下表覆盖 Docs、Rust checks、Maintenance tools、Packages 和 OCI producer 五份基础工作流；首次私有包发布及其专用 PR 检查另见 [Halo 合同](../../halo/README.md#首次私有包发布与冷拉取)。下表的建议尚未实现。分类器的 `skip` 只描述其所属检查，不能让未接入分类器的工作流跳过。检查范围由本页维护，镜像内部协议见 [Halo CI 镜像](../../halo/README.md#ci-依赖镜像)。

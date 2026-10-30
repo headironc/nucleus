@@ -1,0 +1,84 @@
+name: Runner first consumer
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_revision:
+        description: Reviewed dev commit (full SHA)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nucleus-runner-first-consumer
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  platform:
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      github.repository_id == '1432619931' &&
+      github.repository == 'headironc/nucleus' &&
+      github.ref == 'refs/heads/dev'
+    runs-on: nucleus-standard-probe
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/headironc/nucleus-ci@sha256:80ae416d4bc7287532c0974d25390c5bc9b27cd62defe4e64860b501414b4592
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ github.token }}
+    env:
+      CARGO_BUILD_JOBS: "2"
+      EXPECTED_REVISION: ${{ inputs.expected_revision }}
+    steps:
+      - name: Bind reviewed dev revision
+        run: |
+          test "$GITHUB_EVENT_NAME" = workflow_dispatch
+          test "$GITHUB_REPOSITORY_ID" = 1432619931
+          test "$GITHUB_REPOSITORY" = headironc/nucleus
+          test "$GITHUB_REF" = refs/heads/dev
+          [[ "$EXPECTED_REVISION" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_REVISION"
+          test "$GITHUB_WORKFLOW_SHA" = "$EXPECTED_REVISION"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ inputs.expected_revision }}
+          persist-credentials: false
+      - name: Verify checkout and container access
+        run: |
+          test "$(git rev-parse HEAD)" = "$EXPECTED_REVISION"
+          test "$(id -u)" != 0
+          test -w "$GITHUB_WORKSPACE"
+          test -w "$RUNNER_TEMP"
+          test -w "$HOME"
+          printf 'repository=%s run=%s attempt=%s candidate=%s uid=%s gid=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA" "$(id -u)" "$(id -g)"
+      - name: Verify installed image and PostgreSQL
+        run: bun tools/halo-ci-image.ts verify 2>&1 | tee "$RUNNER_TEMP/runner-probe-image.log"
+      - name: Create private fixture scope
+        run: bun tools/package-postgresql.ts temp 2>&1 | tee "$RUNNER_TEMP/runner-probe-temp.log"
+      - name: Check complete platform package
+        run: bun tools/check-packages.ts --package platform --test-threads 2 2>&1 | tee "$RUNNER_TEMP/runner-probe-platform.log"
+      - name: Check and clean private PostgreSQL scope
+        if: always()
+        run: bun tools/package-postgresql.ts cleanup 2>&1 | tee "$RUNNER_TEMP/runner-probe-cleanup.log"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: always()
+        with:
+          name: runner-probe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/runner-probe-*.log
+          retention-days: 7
+          if-no-files-found: warn
+      - name: Reject cancelled probe
+        if: cancelled()
+        run: |
+          echo 'Runner probe cancelled; no successful package result' >&2
+          exit 1
