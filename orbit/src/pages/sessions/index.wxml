@@ -1,0 +1,27 @@
+<view class="page sessions-page">
+  <view class="page-title">登录管理</view>
+  <view class="body-copy">查看网站和小程序的登录情况，按需退出。</view>
+  <view class="notice" wx:if="{{message}}" role="status">{{message}}</view>
+
+  <!-- snapshot:sessions:start -->
+  <view class="session-list" wx:if="{{sessionsReady}}">
+    <view class="session-row" wx:for="{{sessions}}" wx:key="id">
+      <view class="source-icon {{item.sourceLabel === '网站' ? 'website-icon' : 'mini-icon'}}" aria-hidden="true"></view>
+      <view class="session-copy"><view class="session-source">{{item.sourceLabel}}</view><view class="session-date">登录于 {{item.date}}</view></view>
+      <text class="session-current" wx:if="{{item.current}}">本次登录</text>
+      <button class="session-exit" wx:else data-id="{{item.id}}" bindtap="logoutOther" disabled="{{busy || logoutPending}}" aria-label="退出{{item.sourceLabel}} {{item.date}}">退出</button>
+    </view>
+  </view>
+  <view class="session-all" wx:if="{{sessionsReady}}">
+    <view class="card-title">退出全部登录</view>
+    <view class="body-copy">退出网站和小程序的全部登录，包括本次登录。</view>
+    <button class="text-button danger" bindtap="logoutAll" disabled="{{busy || logoutPending}}">全部退出</button>
+  </view>
+  <!-- snapshot:sessions:end -->
+
+  <button class="secondary" wx:if="{{canCheck}}" bindtap="refresh" disabled="{{busy}}">{{phase === 'sessions' ? '刷新列表' : '检查登录状态'}}</button>
+  <button class="secondary" wx:if="{{canRecover}}" bindtap="recover" disabled="{{busy}}">查看退出结果</button>
+  <navigator class="home-link" wx:if="{{canLogin && !homeAction}}" url="/pages/account/index" open-type="redirect">使用手机号登录</navigator>
+  <navigator class="home-link primary" wx:if="{{homeAction}}" url="/pages/home/index" open-type="reLaunch">返回公开首页</navigator>
+  <navigator class="home-link" wx:else url="/pages/account/index" open-type="redirect">返回个人账户</navigator>
+</view>

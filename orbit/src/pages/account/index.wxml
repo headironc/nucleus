@@ -4,7 +4,7 @@
   <view class="notice" wx:if="{{message}}" role="status">{{message}}</view>
 
   <!-- snapshot:login:start -->
-  <view class="intro-card" wx:if="{{canLogin}}">
+  <view class="intro-card" wx:if="{{canLogin && phase !== 'complete'}}">
     <view class="card-title">手机号登录</view>
     <view class="body-copy">请主动授权微信绑定的手机号。手机号验证不会关联微信身份。</view>
     <button class="primary" open-type="getPhoneNumber" bindgetphonenumber="authorize" disabled="{{busy}}">使用手机号登录</button>
@@ -28,27 +28,28 @@
   <!-- snapshot:account:start -->
   <view class="intro-card" wx:if="{{phase === 'account'}}">
     <view class="profile">
-      <image class="avatar" wx:if="{{avatar &amp;&amp; !avatarFailed}}" src="{{avatar}}" mode="aspectFit" binderror="avatarError" />
+      <image class="avatar" wx:if="{{avatar && !avatarFailed}}" src="{{avatar}}" mode="aspectFit" binderror="avatarError" />
       <view class="avatar avatar-placeholder" wx:else>人</view>
       <view><view class="profile-name">{{name}}</view><view class="small-copy">当前已登录的本人账户</view></view>
     </view>
     <view class="small-copy" wx:if="{{avatarFailed}}">图片暂时无法加载</view>
     <view class="detail-row"><text>居民身份证号</text><text>尾号 {{suffix}}</text></view>
     <view class="detail-row"><text>微信身份</text><text>{{bound ? '已关联' : '未关联'}}</text></view>
-    <button class="secondary" bindtap="check" disabled="{{busy}}">刷新个人资料</button>
+    <button class="secondary" wx:if="{{!logoutPending}}" bindtap="check" disabled="{{busy}}">刷新个人资料</button>
     <button class="text-button" bindtap="switchAccount" disabled="{{busy}}">切换账户</button>
+    <view class="section-label login-security">登录安全</view>
+    <button class="settings-row" bindtap="sessions" disabled="{{busy}}"><text>登录管理</text><text aria-hidden="true">›</text></button>
     <view class="separator"></view>
     <button class="secondary" bindtap="logoutCurrent" disabled="{{busy || logoutPending}}">退出本次登录</button>
-    <button class="text-button danger" bindtap="logoutAll" disabled="{{busy || logoutPending}}">退出全部设备</button>
   </view>
   <!-- snapshot:account:end -->
 
-  <view class="actions" wx:if="{{phase !== 'account' &amp;&amp; canCheck}}">
-    <button class="secondary" bindtap="check" disabled="{{busy}}">检查登录状态</button>
-  </view>
-  <view class="notice" wx:if="{{logoutPending}}">此前退出结果仍待确认。</view>
-  <button class="secondary" wx:if="{{canRecover}}" bindtap="recover" disabled="{{busy}}">{{logoutPending ? '查看本次退出结果' : '检查本次办理结果'}}</button>
+  <button class="secondary" wx:if="{{phase !== 'account' && canCheck}}" bindtap="check" disabled="{{busy}}">检查登录状态</button>
+  <view class="notice" wx:if="{{logoutPending && phase === 'account'}}">此前退出结果仍待确认。</view>
+  <button class="secondary" wx:if="{{canRecover}}" bindtap="recover" disabled="{{busy}}">{{logoutPending ? '查看退出结果' : '检查本次办理结果'}}</button>
   <button class="text-button" wx:if="{{canReset}}" bindtap="restartLogin" disabled="{{busy}}">重新验证手机号</button>
   <view class="small-copy" wx:if="{{busy}}">请稍候…</view>
-  <navigator class="home-link" url="/pages/home/index" open-type="reLaunch">返回公开首页</navigator>
+  <navigator class="home-link primary" wx:if="{{homeAction}}" url="/pages/home/index" open-type="reLaunch">返回公开首页</navigator>
+  <navigator class="home-link" wx:else url="/pages/home/index" open-type="reLaunch">返回公开首页</navigator>
+  <button class="text-button" wx:if="{{phase === 'complete' && canLogin}}" bindtap="check">重新登录</button>
 </view>

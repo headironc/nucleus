@@ -41,15 +41,13 @@ Page({
     wx.showModal({ title: "切换账户", content: "将隐藏当前资料。另一账户需要重新授权手机号登录。", confirmText: "切换账户",
       success: result => { if (result.confirm) void identity.switchAccount(selection); } });
   },
-  logoutCurrent() { this.confirmLogout("current"); },
-  logoutAll() { this.confirmLogout("all"); },
-  confirmLogout(scope: "current" | "all") {
+  sessions() { wx.navigateTo({ url: "/pages/sessions/index" }); },
+  logoutCurrent() {
     const identity = getApp().identity;
     const selection = identity?.selection();
     if (!identity || !selection) return;
-    wx.showModal({ title: scope === "all" ? "退出全部设备" : "退出本次登录",
-      content: scope === "all" ? "将退出此前建立的全部登录。继续使用时需要重新登录。" : "将退出当前小程序登录。继续使用时需要重新登录。",
-      confirmText: "退出登录", success: result => { if (result.confirm) void identity.logout(scope, selection); } });
+    wx.showModal({ title: "退出本次登录？", content: "退出后，再次进入个人账户需要重新登录。其他登录不受影响。",
+      confirmText: "退出登录", success: result => { if (result.confirm) void identity.logout("current", selection); } });
   },
   avatarError() { this.setData({ avatarFailed: true }); },
 });

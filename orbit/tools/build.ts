@@ -34,7 +34,7 @@ export async function build() {
   }
   const source = await generate();
   await mkdir(out, { recursive: true });
-  const entries = ["app.ts", "pages/home/index.ts", "pages/account/index.ts"];
+  const entries = ["app.ts", "pages/home/index.ts", "pages/account/index.ts", "pages/sessions/index.ts"];
   for (const entry of entries) {
     const result = await Bun.build({
       entrypoints: [join(root, "src", entry)], target: "browser", format: "cjs", minify: false,
@@ -49,7 +49,7 @@ export async function build() {
     }
     await writeFile(output, text);
   }
-  for (const entry of ["app.json", "app.wxss", "sitemap.json", "pages/home/index.json", "pages/home/index.wxml", "pages/account/index.json", "pages/account/index.wxml"]) {
+  for (const entry of ["app.json", "app.wxss", "sitemap.json", "pages/home/index.json", "pages/home/index.wxml", "pages/account/index.json", "pages/account/index.wxml", "pages/sessions/index.json", "pages/sessions/index.wxml"]) {
     await cp(join(root, "src", entry), join(out, entry));
   }
   await writeFile(join(out, "project.config.json"), JSON.stringify({
