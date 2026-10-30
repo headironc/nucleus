@@ -48,7 +48,7 @@ function validCollection(collection: Collection): boolean {
     return false;
   if (collection.count === 0) return collection.original === null;
   if (!collection.original) return false;
-  if (collection.original.scope === "current" && collection.count !== 1)
+  if (collection.original.scope !== "all" && collection.count !== 1)
     return false;
   const seen = new Set<string>();
   let previous: string | undefined;
@@ -63,7 +63,10 @@ function validCollection(collection: Collection): boolean {
     seen.add(id);
     previous = id;
   }
-  return seen.has(identity(collection.original.initiatorId));
+  const includesInitiator = seen.has(identity(collection.original.initiatorId));
+  return collection.original.scope === "other"
+    ? !includesInitiator
+    : includesInitiator;
 }
 
 export function matchesOriginal(
