@@ -230,6 +230,11 @@ function Service({
             <NumberCard controller={numbers} now={now} />
           )}
           <div className="result-actions">
+            {account.kind === "ready" && (
+              <a className="primary" href="/workforce/applications">
+                我的工牌申请
+              </a>
+            )}
             {account.kind === "ready" &&
               (status === "active" || status === "suspended") && (
                 <a className="primary" href="/workforce/termination">

@@ -7,6 +7,203 @@
     font: 600 clamp(1.75rem, 4vw, 2.5rem)/1.4 var(--song);
     margin: 1rem 0;
   }
+  .application-navigation {
+    display: flex;
+    gap: 1.25rem;
+    flex-wrap: wrap;
+    margin-bottom: 2rem;
+    color: var(--sub);
+    font-size: 0.85rem;
+  }
+  .application-navigation a {
+    text-underline-offset: 0.2em;
+  }
+  .application-form {
+    max-width: 52rem;
+  }
+  .application-introduction {
+    margin: 1rem 0 2rem;
+    line-height: 1.8;
+    color: var(--sub);
+  }
+  .application-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin: 1.5rem 0 0.75rem;
+    align-items: center;
+  }
+  .application-actions .secondary,
+  .application-detail > .secondary {
+    min-height: 48px;
+    padding: 0.65rem 1rem;
+    border: 1px solid var(--control-line);
+    border-radius: var(--radius-s);
+    background: var(--surface);
+    color: var(--ink);
+  }
+  .application-list {
+    padding: 0;
+    list-style: none;
+    margin: 1.75rem 0;
+  }
+  .application-list li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 1rem;
+    padding: 1.5rem 0;
+    border-bottom: 1px solid var(--line);
+  }
+  .application-list h2 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: 0.5rem;
+  }
+  .application-list time {
+    display: block;
+    color: var(--sub);
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+  }
+  .application-list a {
+    flex-shrink: 0;
+    min-height: 44px;
+    padding: 0.5rem;
+    display: grid;
+    place-items: center;
+    text-underline-offset: 0.2em;
+  }
+  .application-pagination {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 1rem;
+    margin-top: 1.5rem;
+  }
+  .application-pagination button {
+    min-height: 44px;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--control-line);
+    border-radius: var(--radius-s);
+  }
+  .application-empty {
+    padding: 3rem 0;
+    color: var(--sub);
+  }
+  .application-result {
+    max-width: 42rem;
+    display: grid;
+    gap: 1.25rem;
+    margin-top: 2rem;
+    line-height: 1.8;
+  }
+  .application-result h2 {
+    font: 600 1.5rem/1.5 var(--song);
+  }
+  .application-result .primary {
+    justify-self: start;
+  }
+  .application-snapshot {
+    display: grid;
+    gap: 1rem;
+    min-width: 0;
+    line-height: 1.8;
+  }
+  .application-snapshot div {
+    min-width: 0;
+  }
+  .application-snapshot dt {
+    font-size: 0.8rem;
+    color: var(--sub);
+    margin-bottom: 0.25rem;
+  }
+  .application-snapshot dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+  .application-preview {
+    margin: 1.5rem 0;
+    min-width: 0;
+  }
+  .application-preview canvas {
+    display: block;
+    width: min(100%, 24rem);
+    height: auto;
+    border: 1px solid var(--line);
+  }
+  .application-preview figcaption {
+    color: var(--sub);
+    font-size: 0.8rem;
+    line-height: 1.8;
+    margin-top: 0.75rem;
+  }
+  .application-detail {
+    max-width: 48rem;
+    display: grid;
+    gap: 1.25rem;
+    line-height: 1.8;
+  }
+  .application-detail > .secondary {
+    justify-self: start;
+  }
+  .application-backdrop {
+    position: fixed;
+    inset: 0;
+    background: var(--backdrop);
+    z-index: 50;
+  }
+  .application-dialog {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: min(52rem, calc(100% - 2rem));
+    max-height: calc(100dvh - 2rem);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--surface);
+    color: var(--ink);
+    padding: 2rem;
+    border: 1px solid var(--line);
+    border-radius: var(--radius-m);
+    box-shadow: 0 1rem 4rem var(--shadow);
+    z-index: 51;
+  }
+  .application-dialog-content {
+    min-height: 0;
+    overflow-y: auto;
+    padding-right: 0.25rem;
+  }
+  .application-dialog > h2,
+  .application-dialog > p,
+  .application-dialog > .application-actions {
+    flex-shrink: 0;
+  }
+  .application-dialog h2 {
+    font: 600 1.5rem/1.5 var(--song);
+    margin-bottom: 0.75rem;
+  }
+  .application-dialog > p {
+    line-height: 1.8;
+  }
+  .application-kind-summary {
+    font-weight: 600;
+    margin-top: 1rem;
+  }
+  .application-dialog .application-snapshot {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .application-dialog .application-preview canvas {
+    margin-inline: auto;
+  }
+  .application-layout :focus-visible,
+  .application-dialog :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 4px;
+  }
   .application-photo {
     display: grid;
     gap: 1rem;
@@ -29,7 +226,10 @@
     padding: 0;
     min-width: 0;
   }
-  .application-kinds legend { font-weight: 600; margin-bottom: 0.75rem; }
+  .application-kinds legend {
+    font-weight: 600;
+    margin-bottom: 0.75rem;
+  }
   .application-kinds label {
     display: flex;
     align-items: center;
@@ -38,8 +238,14 @@
     border: 1px solid var(--control-line);
     border-radius: var(--radius-s);
   }
-  .application-field { display: grid; gap: 0.75rem; min-width: 0; }
-  .application-field > label { font-weight: 600; }
+  .application-field {
+    display: grid;
+    gap: 0.75rem;
+    min-width: 0;
+  }
+  .application-field > label {
+    font-weight: 600;
+  }
   .application-field select {
     width: 100%;
     min-width: 0;
@@ -51,11 +257,32 @@
     color: var(--ink);
     font: inherit;
   }
-  .application-checkbox { display: flex; gap: 0.65rem; align-items: start; line-height: 1.8; }
-  .application-checkbox input { margin-top: 0.35rem; flex-shrink: 0; }
-  .application-selected { line-height: 1.8; overflow-wrap: anywhere; }
-  .application-notice { padding: 1rem; background: var(--warn-soft); color: var(--warn); line-height: 1.8; }
-  .application-kinds input, .application-checkbox input { width: 1.15rem; height: 1.15rem; accent-color: var(--accent); }
+  .application-checkbox {
+    display: flex;
+    gap: 0.65rem;
+    align-items: start;
+    line-height: 1.8;
+  }
+  .application-checkbox input {
+    margin-top: 0.35rem;
+    flex-shrink: 0;
+  }
+  .application-selected {
+    line-height: 1.8;
+    overflow-wrap: anywhere;
+  }
+  .application-notice {
+    padding: 1rem;
+    background: var(--warn-soft);
+    color: var(--warn);
+    line-height: 1.8;
+  }
+  .application-kinds input,
+  .application-checkbox input {
+    width: 1.15rem;
+    height: 1.15rem;
+    accent-color: var(--accent);
+  }
   .application-photo h2 {
     font-size: 1.2rem;
     font-weight: 600;
@@ -150,8 +377,27 @@
     color: var(--ink);
   }
   @media (max-width: 620px) {
-    .application-layout { width: calc(100% - 2rem); margin-top: 1.5rem; }
-    .application-photo-editor { grid-template-columns: minmax(0, 1fr); padding: 1rem; }
-    .application-photo-editor figure { width: min(100%, 13.5rem); margin-inline: auto; }
+    .application-layout {
+      width: calc(100% - 2rem);
+      margin-top: 1.5rem;
+    }
+    .application-photo-editor {
+      grid-template-columns: minmax(0, 1fr);
+      padding: 1rem;
+    }
+    .application-photo-editor figure {
+      width: min(100%, 13.5rem);
+      margin-inline: auto;
+    }
+    .application-dialog {
+      padding: 1.25rem;
+    }
+    .application-dialog .application-snapshot {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .application-dialog .application-actions {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 }

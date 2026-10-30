@@ -275,6 +275,118 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workforce/application-template": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["workforceApplicationTemplate"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workforce/application-photos": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["workforceApplicationPhoto"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workforce/application-resources/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["workforceApplicationResource"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workforce/applications/preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["workforceApplicationPreview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workforce/applications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["workforceApplicationSubmit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workforce/current/applications": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["workforceCurrentApplications"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workforce/current/applications/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["workforceCurrentApplication"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workforce/grants/{id}/terminations": {
         parameters: {
             query?: never;
@@ -844,6 +956,200 @@ export interface components {
         "number.Receipt": {
             code: string;
             number: components["schemas"]["number.Revision"];
+        };
+        "application.TemplateResponse": components["schemas"]["application.TemplateChoices"] & {
+            code: string;
+        };
+        "application.TemplateChoices": {
+            pickups: string[];
+            template: components["schemas"]["application.Template"];
+        };
+        "application.Template": {
+            backgroundId: components["schemas"]["application.ResourceId"];
+            fontId: components["schemas"]["application.ResourceId"];
+            layout: components["schemas"]["application.Layout"];
+        };
+        /** Format: uuid */
+        "application.ResourceId": string;
+        "application.Layout": {
+            department: components["schemas"]["application.TextArea"];
+            /** Format: int32 */
+            heightUm: number;
+            name: components["schemas"]["application.TextArea"];
+            number: components["schemas"]["application.TextArea"];
+            photo: components["schemas"]["application.Rectangle"];
+            title: components["schemas"]["application.TextArea"];
+            /** Format: int32 */
+            widthUm: number;
+        };
+        "application.TextArea": {
+            area: components["schemas"]["application.Rectangle"];
+            /** Format: int32 */
+            fontSizeUm: number;
+            /** Format: int32 */
+            lineHeightUm: number;
+            wrap: boolean;
+        };
+        /** @description Coordinates and dimensions are integer micrometres, relative to the top-left canvas. */
+        "application.Rectangle": {
+            /** Format: int32 */
+            heightUm: number;
+            /** Format: int32 */
+            widthUm: number;
+            /** Format: int32 */
+            xUm: number;
+            /** Format: int32 */
+            yUm: number;
+        };
+        /** Format: binary */
+        "application.Binary": string;
+        "application.PhotoResponse": components["schemas"]["application.Photo"] & {
+            code: string;
+        };
+        "application.Photo": {
+            /** Format: int32 */
+            height: number;
+            mediaType: string;
+            photoId: components["schemas"]["application.PhotoId"];
+            resourceId: components["schemas"]["application.ResourceId"];
+            /** Format: int32 */
+            width: number;
+        };
+        /** Format: uuid */
+        "application.PhotoId": string;
+        "application.PreviewInput": {
+            kind: components["schemas"]["application.Kind"];
+            selections: components["schemas"]["application.Selections"];
+        };
+        /** @enum {string} */
+        "application.Kind": "issuance" | "duplication" | "replacement";
+        "application.Selections": {
+            departmentId: components["schemas"]["directory.department.Id"];
+            photoId: components["schemas"]["application.PhotoId"];
+            pickup: string;
+            rosterId: components["schemas"]["directory.roster.Id"] | null;
+            titleId: components["schemas"]["directory.title.Id"] | null;
+        };
+        "application.PreviewResponse": components["schemas"]["application.Preview"] & {
+            code: string;
+        };
+        "application.Preview": {
+            kind: components["schemas"]["application.Kind"];
+            photo: components["schemas"]["application.Photo"];
+            snapshot: components["schemas"]["application.Snapshot"];
+        };
+        /**
+         * @description Deserializing this content does not establish acceptance; submit compares every field
+         *     with a newly constructed trusted snapshot inside the decisive transaction.
+         */
+        "application.Snapshot": {
+            department: components["schemas"]["application.Department"];
+            name: string;
+            number: components["schemas"]["number.Number"];
+            photoId: components["schemas"]["application.PhotoId"];
+            pickup: string;
+            position: components["schemas"]["application.Position"] | null;
+            printedNumber: string;
+            printedTitle: string;
+            template: components["schemas"]["application.Template"];
+            text: components["schemas"]["application.TextLayout"];
+            title: components["schemas"]["application.Title"] | null;
+        };
+        "application.Department": {
+            id: components["schemas"]["directory.department.Id"];
+            name: string;
+            printed: string;
+        };
+        /** @description A complete number; equal display text does not make two numbers equal. */
+        "number.Number": {
+            /** Format: int32 */
+            serial: number;
+            subtype: components["schemas"]["number.Subtype"];
+            /** Format: int32 */
+            year: number;
+        };
+        "application.Position": {
+            name: string;
+            rosterId: components["schemas"]["directory.roster.Id"];
+        };
+        "application.TextLayout": {
+            department: components["schemas"]["application.Line"][];
+            name: components["schemas"]["application.Line"][];
+            number: components["schemas"]["application.Line"][];
+            title: components["schemas"]["application.Line"][];
+        };
+        /**
+         * @description UTF-8 byte ranges address the original complete printable field, without duplicated text.
+         *     Coordinates use micrometres from the canvas top-left; x is the line's left edge.
+         */
+        "application.Line": {
+            /** Format: double */
+            baselineUm: number;
+            direction: components["schemas"]["application.Direction"];
+            end: number;
+            start: number;
+            /** Format: double */
+            widthUm: number;
+            /** Format: double */
+            xUm: number;
+        };
+        /** @enum {string} */
+        "application.Direction": "ltr" | "rtl";
+        "application.Title": {
+            id: components["schemas"]["directory.title.Id"];
+            name: string;
+        };
+        "application.Input": {
+            expected: components["schemas"]["application.Snapshot"];
+            kind: components["schemas"]["application.Kind"];
+            selections: components["schemas"]["application.Selections"];
+        };
+        "application.Created": {
+            application: components["schemas"]["application.Application"];
+            code: string;
+        };
+        "application.Application": components["schemas"]["application.Summary"] & {
+            photo: components["schemas"]["application.Photo"];
+            snapshot: components["schemas"]["application.Snapshot"];
+        };
+        "application.Summary": {
+            id: components["schemas"]["application.Id"];
+            kind: components["schemas"]["application.Kind"];
+            status: components["schemas"]["application.Status"];
+            /** Format: date-time */
+            submittedAt: string;
+        };
+        /** Format: uuid */
+        "application.Id": string;
+        /** @enum {string} */
+        "application.Status": "submitted";
+        "application.ListResponse": components["schemas"]["application.List"] & {
+            code: string;
+        };
+        "application.List": {
+            /** @enum {string} */
+            access: "full";
+            applications: components["schemas"]["application.Application"][];
+            /** Format: int64 */
+            count: number;
+        } | {
+            /** @enum {string} */
+            access: "restricted";
+            applications: components["schemas"]["application.Summary"][];
+            /** Format: int64 */
+            count: number;
+        };
+        "application.DetailResponse": components["schemas"]["application.Detail"] & {
+            code: string;
+        };
+        "application.Detail": {
+            /** @enum {string} */
+            access: "full";
+            application: components["schemas"]["application.Application"];
+        } | {
+            /** @enum {string} */
+            access: "restricted";
+            application: components["schemas"]["application.Summary"];
         };
         "termination.Input": {
             target: components["schemas"]["grant.member.Target"];
@@ -3105,6 +3411,900 @@ export interface operations {
                 };
             };
             /** @description dependency_unavailable or outcome_unknown */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    workforceApplicationTemplate: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required diagnostic correlation only; no deduplication or recovery */
+                "Operation-Id": string;
+                "Session-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fixed layout and pickup choices before confirmed cropping */
+            200: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["application.TemplateResponse"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds before another attempt */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description internal_error */
+            500: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    workforceApplicationPhoto: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required diagnostic correlation only */
+                "Operation-Id": string;
+                "Session-Id": string;
+                Origin: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Confirmed static bytes; at most 8 MiB */
+        requestBody: {
+            content: {
+                "image/jpeg": components["schemas"]["application.Binary"];
+                "image/png": components["schemas"]["application.Binary"];
+                "image/webp": components["schemas"]["application.Binary"];
+            };
+        };
+        responses: {
+            /** @description Prepared immutable photograph */
+            201: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["application.PhotoResponse"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            415: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            422: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds before another attempt */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description internal_error */
+            500: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable or outcome_unknown */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    workforceApplicationResource: {
+        parameters: {
+            query?: never;
+            header: {
+                "Session-Id": string;
+            };
+            path: {
+                id: components["schemas"]["application.ResourceId"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Private immutable bytes; Operation-Id is ignored */
+            200: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "image/webp": components["schemas"]["application.Binary"];
+                    "font/ttf": components["schemas"]["application.Binary"];
+                    "font/otf": components["schemas"]["application.Binary"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description target_unavailable */
+            404: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds before another attempt */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description internal_error */
+            500: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    workforceApplicationPreview: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required diagnostic correlation only */
+                "Operation-Id": string;
+                "Session-Id": string;
+                Origin: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /** @description At most 8 KiB including every selected value */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["application.PreviewInput"];
+            };
+        };
+        responses: {
+            /** @description Trusted actual content to confirm */
+            200: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["application.PreviewResponse"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description target_unavailable */
+            404: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description number_required */
+            409: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            415: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description selection_unavailable, missing_glyph or text_overflow */
+            422: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds before another attempt */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description internal_error */
+            500: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    workforceApplicationSubmit: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required diagnostic correlation only; reusing this value does not deduplicate submissions */
+                "Operation-Id": string;
+                "Session-Id": string;
+                Origin: string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        /** @description At most 128 KiB; includes the complete trusted snapshot and all original text lines */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["application.Input"];
+            };
+        };
+        responses: {
+            /** @description Fixed application and audit committed together; the request is not deduplicated */
+            201: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["application.Created"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description target_unavailable */
+            404: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description data_changed or number_required */
+            409: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            415: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description selection_unavailable, missing_glyph or text_overflow */
+            422: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds before another attempt */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description internal_error */
+            500: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable or outcome_unknown; refresh own applications, do not automatically resubmit */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    workforceCurrentApplications: {
+        parameters: {
+            query?: {
+                page?: number;
+                size?: number;
+            };
+            header: {
+                /** @description Required diagnostic correlation only */
+                "Operation-Id": string;
+                "Session-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Full history for active participation; otherwise only cancellable summaries */
+            200: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["application.ListResponse"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds before another attempt */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description internal_error */
+            500: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    workforceCurrentApplication: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Required diagnostic correlation only */
+                "Operation-Id": string;
+                "Session-Id": string;
+            };
+            path: {
+                id: components["schemas"]["application.Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description The immutable own application or its restricted summary */
+            200: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["application.DetailResponse"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description target_unavailable */
+            404: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds before another attempt */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description internal_error */
+            500: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable */
             503: {
                 headers: {
                     /** @description no-store */

@@ -29,6 +29,13 @@ describe("the actual OpenAPI / Ajv generator combination", () => {
       "/api/v1/sessions",
       "/api/v1/sessions/current",
       "/api/v1/settings",
+      "/api/v1/workforce/application-photos",
+      "/api/v1/workforce/application-resources/{id}",
+      "/api/v1/workforce/application-template",
+      "/api/v1/workforce/applications",
+      "/api/v1/workforce/applications/preview",
+      "/api/v1/workforce/current/applications",
+      "/api/v1/workforce/current/applications/{id}",
       "/api/v1/workforce/current/grant",
       "/api/v1/workforce/current/numbers",
       "/api/v1/workforce/directories",
@@ -41,10 +48,16 @@ describe("the actual OpenAPI / Ajv generator combination", () => {
       Object.keys(actual.components.schemas).length,
     );
     const compiled = compile(selected);
+    expect(compiled.binary).toContain('"image/png"');
+    expect(compiled.binary).toContain('"font/otf"');
     expect(selected.paths["/api/v1/sessions"].post).toBeDefined();
     expect(selected.paths["/api/v1/sessions"].delete).toBeDefined();
-    expect(selected.paths["/api/v1/accounts/current/affiliation"].get).toBeDefined();
-    expect(selected.paths["/api/v1/accounts/current/affiliation"].put).toBeDefined();
+    expect(
+      selected.paths["/api/v1/accounts/current/affiliation"].get,
+    ).toBeDefined();
+    expect(
+      selected.paths["/api/v1/accounts/current/affiliation"].put,
+    ).toBeDefined();
     for (const validator of [
       "sendCode_200",
       "createSession_200",
@@ -74,6 +87,13 @@ describe("the actual OpenAPI / Ajv generator combination", () => {
       "transferId",
     ])
       expect(compiled.validators).toContain(validator);
+  });
+  it("does not silently discard unsupported binary constraints", () => {
+    const selected = selectDocument(actual);
+    Object.assign(selected.components.schemas["application.Binary"], {
+      maxLength: 8,
+    });
+    expect(() => compile(selected)).toThrow("Unsupported binary schema");
   });
   it.each([
     { imaginaryConstraint: true },

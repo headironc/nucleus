@@ -1034,6 +1034,429 @@ export default {
       ]
     }
   },
+  "GET /api/v1/workforce/application-template": {
+    "200": {
+      "validator": "workforceApplicationTemplate_200",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "workforceApplicationTemplate_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "workforceApplicationTemplate_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "workforceApplicationTemplate_403",
+      "codes": [
+        "permission_denied"
+      ]
+    },
+    "413": {
+      "validator": "workforceApplicationTemplate_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "429": {
+      "validator": "workforceApplicationTemplate_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "workforceApplicationTemplate_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "workforceApplicationTemplate_503",
+      "codes": [
+        "dependency_unavailable"
+      ]
+    }
+  },
+  "POST /api/v1/workforce/application-photos": {
+    "201": {
+      "validator": "workforceApplicationPhoto_201",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "workforceApplicationPhoto_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "workforceApplicationPhoto_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "workforceApplicationPhoto_403",
+      "codes": [
+        "permission_denied"
+      ]
+    },
+    "413": {
+      "validator": "workforceApplicationPhoto_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "415": {
+      "validator": "workforceApplicationPhoto_415",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "422": {
+      "validator": "workforceApplicationPhoto_422",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "429": {
+      "validator": "workforceApplicationPhoto_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "workforceApplicationPhoto_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "workforceApplicationPhoto_503",
+      "codes": [
+        "dependency_unavailable",
+        "outcome_unknown"
+      ]
+    }
+  },
+  "GET /api/v1/workforce/application-resources/{id}": {
+    "400": {
+      "validator": "workforceApplicationResource_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "workforceApplicationResource_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "workforceApplicationResource_403",
+      "codes": [
+        "permission_denied"
+      ]
+    },
+    "404": {
+      "validator": "workforceApplicationResource_404",
+      "codes": [
+        "target_unavailable"
+      ]
+    },
+    "413": {
+      "validator": "workforceApplicationResource_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "429": {
+      "validator": "workforceApplicationResource_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "workforceApplicationResource_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "workforceApplicationResource_503",
+      "codes": [
+        "dependency_unavailable"
+      ]
+    }
+  },
+  "POST /api/v1/workforce/applications/preview": {
+    "200": {
+      "validator": "workforceApplicationPreview_200",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "workforceApplicationPreview_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "workforceApplicationPreview_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "workforceApplicationPreview_403",
+      "codes": [
+        "permission_denied"
+      ]
+    },
+    "404": {
+      "validator": "workforceApplicationPreview_404",
+      "codes": [
+        "target_unavailable"
+      ]
+    },
+    "409": {
+      "validator": "workforceApplicationPreview_409",
+      "codes": [
+        "number_required"
+      ]
+    },
+    "413": {
+      "validator": "workforceApplicationPreview_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "415": {
+      "validator": "workforceApplicationPreview_415",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "422": {
+      "validator": "workforceApplicationPreview_422",
+      "codes": [
+        "selection_unavailable",
+        "missing_glyph",
+        "text_overflow"
+      ]
+    },
+    "429": {
+      "validator": "workforceApplicationPreview_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "workforceApplicationPreview_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "workforceApplicationPreview_503",
+      "codes": [
+        "dependency_unavailable"
+      ]
+    }
+  },
+  "POST /api/v1/workforce/applications": {
+    "201": {
+      "validator": "workforceApplicationSubmit_201",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "workforceApplicationSubmit_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "workforceApplicationSubmit_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "workforceApplicationSubmit_403",
+      "codes": [
+        "permission_denied"
+      ]
+    },
+    "404": {
+      "validator": "workforceApplicationSubmit_404",
+      "codes": [
+        "target_unavailable"
+      ]
+    },
+    "409": {
+      "validator": "workforceApplicationSubmit_409",
+      "codes": [
+        "data_changed",
+        "number_required"
+      ]
+    },
+    "413": {
+      "validator": "workforceApplicationSubmit_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "415": {
+      "validator": "workforceApplicationSubmit_415",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "422": {
+      "validator": "workforceApplicationSubmit_422",
+      "codes": [
+        "selection_unavailable",
+        "missing_glyph",
+        "text_overflow"
+      ]
+    },
+    "429": {
+      "validator": "workforceApplicationSubmit_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "workforceApplicationSubmit_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "workforceApplicationSubmit_503",
+      "codes": [
+        "dependency_unavailable",
+        "outcome_unknown"
+      ]
+    }
+  },
+  "GET /api/v1/workforce/current/applications": {
+    "200": {
+      "validator": "workforceCurrentApplications_200",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "workforceCurrentApplications_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "workforceCurrentApplications_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "workforceCurrentApplications_403",
+      "codes": [
+        "permission_denied"
+      ]
+    },
+    "413": {
+      "validator": "workforceCurrentApplications_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "429": {
+      "validator": "workforceCurrentApplications_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "workforceCurrentApplications_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "workforceCurrentApplications_503",
+      "codes": [
+        "dependency_unavailable"
+      ]
+    }
+  },
+  "GET /api/v1/workforce/current/applications/{id}": {
+    "200": {
+      "validator": "workforceCurrentApplication_200",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "workforceCurrentApplication_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "workforceCurrentApplication_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "workforceCurrentApplication_403",
+      "codes": [
+        "permission_denied"
+      ]
+    },
+    "404": {
+      "validator": "workforceCurrentApplication_404",
+      "codes": [
+        "target_unavailable"
+      ]
+    },
+    "413": {
+      "validator": "workforceCurrentApplication_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "429": {
+      "validator": "workforceCurrentApplication_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "workforceCurrentApplication_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "workforceCurrentApplication_503",
+      "codes": [
+        "dependency_unavailable"
+      ]
+    }
+  },
   "POST /api/v1/workforce/grants/{id}/terminations": {
     "201": {
       "validator": "terminateWorkforceGrant_201",
