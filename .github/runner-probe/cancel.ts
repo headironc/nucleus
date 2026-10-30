@@ -318,6 +318,9 @@ function stopPostgres(state: State) {
   }
 }
 function requestStop(path: string) {
+  // Recheck cross-step ownership after waiting or handling a signal/error.
+  // Startup may be interrupted before its newly owned state is published.
+  if (existsSync(join(path, "state.json"))) load(path);
   const file = join(path, "stop");
   if (existsSync(file)) plain(file);
   else writeFileSync(file, "stop\n", { flag: "wx", mode: 0o600 });

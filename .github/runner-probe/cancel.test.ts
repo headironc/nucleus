@@ -168,6 +168,53 @@ for (const mode of ["cancel", "timeout"] as const) {
 }
 
 for (const mode of ["cancel", "timeout"] as const) {
+  for (const interruption of ["state", "SIGINT", "SIGTERM"] as const) {
+    test(`${mode}: stored mode drift during ${interruption} refuses stop of the original workload`, async () => {
+      const f = fixture(false, mode);
+      try {
+        expect(execute(helper, "start", f.env).status).toBe(0);
+        const original = readFileSync(f.stateFile, "utf8");
+        const state = f.state();
+        const waiting = spawn(process.execPath, [helper, "wait"], {
+          cwd: root,
+          env: f.env,
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        let output = "";
+        waiting.stdout.on("data", (data) => {
+          output += data;
+        });
+        waiting.stderr.on("data", (data) => {
+          output += data;
+        });
+        const ended = new Promise<number | null>((done) =>
+          waiting.once("exit", done),
+        );
+        await until(() =>
+          output.includes(`RUNNER_PROBE_${mode.toUpperCase()}_WAITING`),
+        );
+        try {
+          writeFileSync(
+            f.stateFile,
+            JSON.stringify({
+              ...state,
+              mode: mode === "cancel" ? "timeout" : "cancel",
+            }),
+          );
+          if (interruption !== "state") waiting.kill(interruption);
+          expect(await ended, output).not.toBe(0);
+          expect(existsSync(join(f.directory, "stop"))).toBe(false);
+          expect(f.sql("SELECT 1").status).toBe(0);
+          expect(alive(state.owner)).toBe(true);
+        } finally {
+          writeFileSync(f.stateFile, original);
+        }
+      } finally {
+        f.clean();
+      }
+    }, 60000);
+  }
+
   test(`${mode}: ownership, mode, path and reused process identity mismatches refuse cleanup without stopping PG`, () => {
     const f = fixture(false, mode);
     try {
