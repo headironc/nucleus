@@ -10,6 +10,7 @@ mod application;
 mod appointment;
 mod authentication;
 mod avatar;
+mod badge;
 mod cancellation;
 mod center;
 mod correction;

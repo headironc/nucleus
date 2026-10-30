@@ -66,7 +66,13 @@ pub(crate) fn services_with_avatar(
         domain::registration::Limits::default(),
         avatar,
     )
-    .map(|settings| settings.with_avatar_storage(Some(crate::database::avatar_storage())))
+    .map(|settings| {
+        settings
+            .with_application(domain::workforce::application::fixture_settings(
+                crate::database::avatar_storage(),
+            ))
+            .with_avatar_storage(Some(crate::database::avatar_storage()))
+    })
 }
 
 pub(crate) async fn start(

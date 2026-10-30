@@ -49,7 +49,8 @@
 | Halo 网站本人政治面貌首次填写与当前值读取      | 已交付 | [政治面貌](center/affiliation.md)、[页面](client/pages.md#网站本人政治面貌)、[网站检查](../halo/README.md#本人政治面貌)                              |
 | 工号生命周期与封印状态                         | 已交付 | [工号](workforce/numbers.md)                                                                                                                         |
 | Workforce 目录、分类规则与配置完成             | 已交付 | [目录](workforce/directories.md)、[配置完成](workforce/completions.md)                                                                               |
-| 工牌固定模板、照片、申请、成品与发放           | 目标   | [模板与照片](workforce/media.md)、[申请](workforce/applications.md)、[成品与发放](workforce/fulfillment.md)                                          |
+| 工牌固定模板读取、照片准备、本人提交与历史     | 已交付 | [模板与照片](workforce/media.md)、[申请](workforce/applications.md)                                                                                  |
+| 工牌取消、管理审批、成品与发放                 | 目标   | [申请](workforce/applications.md)、[成品与发放](workforce/fulfillment.md)                                                                            |
 | 栏目创建领域组件                               | 已交付 | [栏目](content/columns.md)；含永久原结果、导航顺序与封印核验；尚未装配栏目 HTTP 入口                                                                 |
 | 栏目 HTTP 接入、管理列表与历史查询（暂缓）     | 目标   | [栏目](content/columns.md)、[内容 HTTP](content/http.md)                                                                                             |
 | 栏目修改、排序、删除与其余网站公开内容（暂缓） | 目标   | [栏目](content/columns.md)、[草稿、版本与上线](content/publication.md)                                                                               |
@@ -69,10 +70,11 @@
 | 公开设置与网站交付配置                         | 已交付 | [网站交付边界](http/site.md)、[部署设置](settings.md)                                                                                                |
 | 网站其余页面与小程序客户端                     | 目标   | [页面](client/pages.md)、[网站工程](client/website.md)                                                                                               |
 | 真实部署、Nginx 与 systemd 验收                | 目标   | [业务交付顺序](engineering/delivery.md#里程碑与生产准备)                                                                                             |
-| 统一审计表                                     | 目标   | [审计](architecture.md#审计)                                                                                                                         |
+| 工牌照片准备与提交的统一审计接入               | 已交付 | [审计](architecture.md#审计)                                                                                                                         |
+| 既有能力迁入统一审计表                         | 目标   | [审计](architecture.md#审计)                                                                                                                         |
 | 每日备份与恢复演练                             | 目标   | [备份与恢复](operations/backup.md)                                                                                                                   |
 
-现有业务历史不表示已有统一审计表。暂停公开内容后，已交付的栏目创建组件继续保留，后续接入不在当前范围。
+统一审计表当前只接入工牌照片准备与申请提交，既有能力保留原历史。暂停公开内容后，已交付的栏目创建组件继续保留，后续接入不在当前范围。
 
 后续范围与依赖见[剩余交付清单](engineering/delivery.md#剩余交付清单)。检查时机与连续交付见[开发协作与交接](engineering/delivery.md#开发协作与交接)，委派和上下文恢复见[模型政策](engineering/models.md)。[里程碑与生产准备](engineering/delivery.md#里程碑与生产准备)区分功能完成、隔离验收和真实部署证据。尚需业务决定的事项集中在[待确认事项](engineering/delivery.md#待确认事项)。
 

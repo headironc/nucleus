@@ -1,6 +1,8 @@
 //! Allocation, ordinary correction and current reading of permanent Workforce numbers.
 
+pub(super) mod application;
 pub(super) mod directory;
+pub(crate) mod settings;
 
 use axum::{
     body::Bytes,

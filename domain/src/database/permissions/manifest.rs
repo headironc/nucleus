@@ -17,6 +17,7 @@ pub(super) const MANIFEST: Manifest = Manifest {
         "center",
         "workforce",
         "content",
+        "audit",
     ],
     types: &[
         "identity.sealed",
@@ -24,7 +25,7 @@ pub(super) const MANIFEST: Manifest = Manifest {
         "identity.mobile",
         "workforce.number",
     ],
-    sequences: &["identity.ordinals"],
+    sequences: &["identity.ordinals", "audit.events_id_seq"],
     functions: &[
         "identity.cancelling(uuid)",
         "identity.lock_account(uuid)",
@@ -60,6 +61,10 @@ pub(super) const MANIFEST: Manifest = Manifest {
 };
 
 const TABLES: &[Table] = &[
+    table("workforce.resources", &[Select, Insert], "", ""),
+    table("workforce.photos", &[Select, Insert], "", ""),
+    table("workforce.applications", &[Select, Insert], "", ""),
+    table("audit.events", &[Select, Insert], "", ""),
     table(
         crate::content::column::COLUMNS,
         &[Select, Insert],

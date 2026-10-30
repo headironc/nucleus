@@ -456,7 +456,7 @@ fn http_validates_requests_before_business_work_and_describes_actual_routes() {
                     assert_eq!(value["components"]["schemas"][schema]["properties"]["code"]["pattern"], "^[0-9]{6}$");
                 }
                 let paths = value["paths"].as_object().expect("paths");
-                assert_eq!(paths.len(), 86);
+                assert_eq!(paths.len(), 93);
                 assert_eq!(paths["/api/v1/accounts/current/avatar"]["put"]["operationId"], "replaceAvatar");
                 assert_eq!(paths["/api/v1/replacements/{id}"]["get"]["operationId"], "avatarReplacement");
                 let upload_content = paths["/api/v1/accounts/current/avatar"]["put"]["requestBody"]["content"].as_object().expect("raw upload media");

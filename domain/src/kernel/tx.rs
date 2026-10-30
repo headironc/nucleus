@@ -32,6 +32,12 @@ pub(crate) async fn begin(
     family: &[u8],
     operation: operation::Id,
 ) -> Result<(), Error> {
+    begin_current(context, client).await?;
+    object(client, family, operation.as_bytes()).await
+}
+
+/// Current-state writes retain the runtime fence without an original-operation identity.
+pub(crate) async fn begin_current(context: &Context, client: &Client) -> Result<(), Error> {
     client.batch_execute("BEGIN ISOLATION LEVEL READ COMMITTED; SET LOCAL statement_timeout = '10s'; SET LOCAL idle_in_transaction_session_timeout = '10s'").await?;
     client
         .batch_execute("SELECT pg_catalog.pg_advisory_xact_lock_shared(1314210636, 1)")
@@ -54,7 +60,7 @@ pub(crate) async fn begin(
         client.batch_execute("ROLLBACK").await?;
         return Err(Error::Superseded);
     }
-    object(client, family, operation.as_bytes()).await
+    Ok(())
 }
 
 pub(crate) async fn object(
