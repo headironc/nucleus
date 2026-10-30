@@ -4,6 +4,7 @@ import { truthy } from "@actions/expressions/result";
 import { spawnSync } from "node:child_process";
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -86,6 +87,13 @@ test("only manual dev work can enter the dedicated runner job", () => {
           required: true,
           type: "string",
         },
+        fail_after_checks: {
+          description:
+            "Fail after successful platform checks to verify runner reclamation",
+          required: false,
+          type: "boolean",
+          default: false,
+        },
       },
     },
   });
@@ -134,7 +142,10 @@ test("only manual dev work can enter the dedicated runner job", () => {
   ])
     expect(allowed(extra)).toBe(false);
   expect(Object.keys(workflow.jobs)).toEqual(["platform"]);
-  expect(job["runs-on"]).toBe("nucleus-standard-probe");
+  expect(job["runs-on"]).toBe("nucleus-runners");
+  expect(
+    Bun.YAML.parse(readFileSync(join(root, ".github/actionlint.yaml"), "utf8")),
+  ).toEqual({ "self-hosted-runner": { labels: ["nucleus-runners"] } });
   expect(job["timeout-minutes"]).toBe(45);
   expect(workflow.concurrency).toEqual({
     group: "nucleus-runner-first-consumer",
@@ -275,6 +286,76 @@ test("actual logged commands preserve failures and call the complete consumer in
     expect(
       readFileSync(join(path, `runner-probe-${name}.log`), "utf8"),
     ).toContain("probe output");
+});
+
+test("only an explicit failure request after successful checks emits the bound marker", () => {
+  const failure = step("Fail after successful platform checks");
+  const platform = step("Check complete platform package");
+  const cleanup = step("Check and clean private PostgreSQL scope");
+  expect(job.steps.indexOf(failure)).toBe(job.steps.indexOf(platform) + 1);
+  expect(job.steps.indexOf(cleanup)).toBe(job.steps.indexOf(failure) + 1);
+  expect(failure.run).not.toContain("${{");
+  for (const successful of [false, true]) {
+    for (const requested of [undefined, false, true]) {
+      const path = temporary();
+      const functions = [
+        {
+          name: "success",
+          minArgs: 0,
+          maxArgs: 0,
+          call: () => new data.BooleanData(successful),
+        },
+      ];
+      const inputs = new data.Dictionary();
+      if (requested !== undefined)
+        inputs.add("fail_after_checks", new data.BooleanData(requested));
+      const enabled = truthy(
+        new Evaluator(
+          new Parser(
+            new Lexer(failure.if!).lex().tokens,
+            ["inputs"],
+            functions,
+          ).parse(),
+          new data.Dictionary({ key: "inputs", value: inputs }),
+          new Map(functions.map((fn) => [fn.name, fn])),
+        ).evaluate(),
+      );
+      expect(enabled).toBe(successful && requested === true);
+      if (enabled) {
+        const result = execute(failure, {
+          RUNNER_TEMP: path,
+          GITHUB_RUN_ID: "123456",
+          GITHUB_RUN_ATTEMPT: "1",
+          GITHUB_SHA: "a".repeat(40),
+        });
+        expect(result.status).toBe(42);
+        const expected =
+          `RUNNER_PROBE_EXPECTED_FAILURE run=123456 attempt=1 source=${"a".repeat(40)} ` +
+          "reason=runner-reclamation-check exit=42\n";
+        expect(result.stdout).toBe(expected);
+        expect(
+          readFileSync(join(path, "runner-probe-failure.log"), "utf8"),
+        ).toBe(expected);
+      } else {
+        expect(existsSync(join(path, "runner-probe-failure.log"))).toBe(false);
+      }
+    }
+  }
+});
+
+test("failure marker write errors remain failures instead of claiming exit 42", () => {
+  const path = temporary();
+  const result = execute(step("Fail after successful platform checks"), {
+    RUNNER_TEMP: join(path, "absent"),
+    GITHUB_RUN_ID: "123456",
+    GITHUB_RUN_ATTEMPT: "1",
+    GITHUB_SHA: "a".repeat(40),
+  });
+  expect(result.status).not.toBe(0);
+  expect(result.status).not.toBe(42);
+  expect(existsSync(join(path, "absent", "runner-probe-failure.log"))).toBe(
+    false,
+  );
 });
 
 test("cleanup and diagnostics remain eligible after failure or cancellation, which cannot pass", () => {
