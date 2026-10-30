@@ -188,10 +188,11 @@ pub(super) async fn readable_resource(
     person: person::Id,
     id: ResourceId,
     template: &Template,
-) -> Result<(u64, String), Error> {
-    let row = client.query_opt("SELECT resource.size,resource.media_type FROM workforce.resources resource WHERE resource.id=$1 AND (EXISTS (SELECT 1 FROM workforce.photos photo WHERE photo.resource_id=resource.id AND photo.person_id=$2) OR (resource.kind IN ('background','font') AND (resource.id=$3 OR resource.id=$4 OR EXISTS (SELECT 1 FROM workforce.applications application WHERE application.person_id=$2 AND (application.background_id=resource.id OR application.font_id=resource.id)))))", &[&id,&person,&template.background_id,&template.font_id]).await?.ok_or(Error::TargetUnavailable)?;
+) -> Result<(u64, String, Option<person::Id>), Error> {
+    let row = client.query_opt("SELECT resource.size,resource.media_type,CASE WHEN resource.kind='photo' THEN $2::uuid END FROM workforce.resources resource WHERE resource.id=$1 AND (EXISTS (SELECT 1 FROM workforce.photos photo WHERE photo.resource_id=resource.id AND photo.person_id=$2) OR (resource.kind IN ('background','font') AND (resource.id=$3 OR resource.id=$4 OR EXISTS (SELECT 1 FROM workforce.applications application WHERE application.person_id=$2 AND (application.background_id=resource.id OR application.font_id=resource.id)))))", &[&id,&person,&template.background_id,&template.font_id]).await?.ok_or(Error::TargetUnavailable)?;
     Ok((
         u64::try_from(row.try_get::<_, i64>(0)?).map_err(|_| Error::Configuration)?,
         row.try_get(1)?,
+        row.try_get(2)?,
     ))
 }

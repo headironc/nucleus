@@ -111,7 +111,7 @@ impl Service {
         self.app.registry().ready()?;
         let settings = self.settings()?.clone();
         // Establish eligibility before expensive image processing; repeat it at acceptance.
-        self.require_active(actor).await?;
+        let prepared_person = self.require_active(actor).await?;
         let permit = Arc::clone(&self.processing)
             .try_acquire_owned()
             .map_err(|_| Error::Busy)?;
@@ -119,7 +119,12 @@ impl Service {
         let (width, height, size) = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             let photo = photo::prepare(&media_type, &bytes)?;
-            settings::publish(&settings.directory, resource_id, &photo.bytes)?;
+            settings.photo_limits.publish(
+                &settings.directory,
+                prepared_person,
+                resource_id,
+                &photo.bytes,
+            )?;
             Ok::<_, Error>((photo.width, photo.height, photo.bytes.len()))
         })
         .await
@@ -130,7 +135,7 @@ impl Service {
             transaction::begin_current(self.app.context(), client).await?;
             self.lock(client, actor).await?;
             let (person, _, active, _) = self.identity(client, actor, Read::Shared).await?;
-            if !active {
+            if !active || person != prepared_person {
                 return Err(Error::Denied);
             }
             let id = PhotoId::allocate();
@@ -155,18 +160,19 @@ impl Service {
         finish(self, lease, result, true).await
     }
 
-    async fn require_active(&self, actor: &Actor) -> Result<(), Error> {
+    async fn require_active(&self, actor: &Actor) -> Result<person::Id, Error> {
         let lease = self.app.context().connections().lease().await?;
         let client = lease.client();
         let budget = self.app.context().read_budget();
         let result = timeout(
             Duration::from_secs(3),
             budget.run(client, self.app.anchors(), |view| async move {
-                let (_, _, active, _) = self.identity(client, actor, Read::Snapshot(view)).await?;
+                let (person, _, active, _) =
+                    self.identity(client, actor, Read::Snapshot(view)).await?;
                 if !active {
                     return Err(Error::Denied);
                 }
-                Ok(())
+                Ok(person)
             }),
         )
         .await
@@ -393,15 +399,22 @@ impl Service {
         )
         .await
         .map_err(|_| Error::Timeout)?;
-        let (size, media_type) = finish(self, lease, result, false).await?;
+        let (size, media_type, photo_person) = finish(self, lease, result, false).await?;
         let permit = Arc::clone(&self.processing)
             .try_acquire_owned()
             .map_err(|_| Error::Busy)?;
         let bytes = tokio::task::spawn_blocking(move || {
             let _permit = permit;
+            let person;
+            let segments: &[&str] = if let Some(photo_person) = photo_person {
+                person = photo_person.to_string();
+                &["workforce", "photos", &person]
+            } else {
+                &["workforce"]
+            };
             settings
                 .directory
-                .open(&["workforce"], &id.to_string())?
+                .open(segments, &id.to_string())?
                 .ok_or(Error::MissingFile)?
                 .read(size)
                 .map_err(Error::from)
@@ -477,6 +490,8 @@ pub enum Error {
     Encoding(#[from] serde_json::Error),
     #[error("application processing is busy")]
     Busy,
+    #[error("retained photograph capacity is exhausted")]
+    PhotoCapacity,
     #[error("application processing failed")]
     Worker,
     #[error("application read timed out")]
@@ -559,6 +574,7 @@ pub fn fixture_settings(storage: platform::files::Settings) -> Settings {
         background.into_inner(),
         include_bytes!("../../../tests/fixtures/fonts/SourceSans3-Regular.ttf").to_vec(),
         vec!["Fixture reception".to_owned()],
+        photo::Limits::new(100, 1 << 30, 1000, 10 << 30).expect("fixture capacity"),
     )
     .expect("legal fixture settings")
 }
@@ -864,6 +880,65 @@ mod tests {
     }
 
     #[test]
+    fn cancelled_photo_wait_retains_its_budget_until_physical_publication_finishes() {
+        let server = server();
+        Runtime::new().expect("runtime").block_on(Box::pin(async {
+            timeout(Duration::from_secs(60), Box::pin(async {
+                let database = Database::initialized(Arc::clone(&server)).await;
+                let mut supplier = Supplier::new().await;
+                let (root, mount, device) = server.files();
+                let storage = platform::files::Settings::new(root, mount, device).expect("storage");
+                let mut settings = fixture_settings(storage);
+                settings.photo_limits = photo::Limits::new(1, 1 << 20, 1, 1 << 20).expect("capacity");
+                let context = Context::new(database.connections(&database.user)).await.expect("context");
+                let services = Box::pin(Services::start(
+                    Barrier::begin(context.clone()).await.expect("barrier"),
+                    authentication::inventory(authentication::keys()),
+                    ServicesSettings::new(4, crate::identity::message::Limits::default(), authentication::session_settings(), crate::registration::Limits::default(), authentication::avatar_settings()).expect("settings").with_application(settings),
+                    supplier.client(), authentication::unused_client().await,
+                )).await.expect("services");
+                let institution = actor(&database, &services, &mut supplier).await;
+                let manager = Box::pin(register(&database, &services, &mut supplier)).await;
+                Box::pin(admit(&services, &institution, Entry::Institution, "13800000000", RoleKind::Full)).await;
+                let service = services.application();
+                let held = service.settings().expect("settings").directory.exclusive(&["workforce", "photos"]).expect("pause actual publication");
+                let mut image = Cursor::new(Vec::new());
+                image::DynamicImage::new_rgb8(4, 5).write_to(&mut image, image::ImageFormat::Png).expect("image");
+                let image = image.into_inner();
+                let preparing = {
+                    let service = service.clone();
+                    let manager = manager.clone();
+                    let image = image.clone();
+                    tokio::spawn(async move { service.prepare_photo(&manager, "image/png".into(), image).await })
+                };
+                timeout(Duration::from_secs(5), async {
+                    while service.processing.available_permits() != 1 { tokio::task::yield_now().await; }
+                }).await.expect("worker owns the permit before disconnect");
+                preparing.abort();
+                let Err(error) = preparing.await else { panic!("caller exited"); };
+                assert!(error.is_cancelled());
+                assert_eq!(service.processing.available_permits(), 1, "caller exit cannot release the worker's permit");
+                drop(held);
+                timeout(Duration::from_secs(5), async {
+                    while service.processing.available_permits() != 2 { tokio::task::yield_now().await; }
+                }).await.expect("actual worker ended");
+                let held = service.settings().expect("settings").directory.exclusive(&["workforce", "photos"]).expect("recount");
+                assert_eq!(held.usage(&[]).expect("orphan counted").files, 1);
+                drop(held);
+                assert!(matches!(service.prepare_photo(&manager, "image/png".into(), image).await, Err(Error::PhotoCapacity)));
+                let observer = database.connections(&database.user).recover().await.expect("observer");
+                assert_eq!(observer.client().query_one("SELECT count(*) FROM workforce.photos", &[]).await.expect("no accepted metadata").get::<_, i64>(0), 0);
+                assert_eq!(observer.client().query_one("SELECT count(*) FROM audit.events WHERE action='workforce.photo.prepared'", &[]).await.expect("no success audit").get::<_, i64>(0), 0);
+                observer.terminate().await.expect("observer ended");
+                services.close();
+                services.drain().await.expect("services drained");
+                context.stop().await.expect("services stopped");
+                supplier.stop().await;
+            })).await.expect("bounded cancelled preparation");
+        }));
+    }
+
+    #[test]
     fn fixed_submission_self_history_atomic_audit_and_directory_protection() {
         let server = server();
         Runtime::new().expect("runtime").block_on(Box::pin(async {
@@ -876,7 +951,7 @@ mod tests {
                 image::DynamicImage::new_rgb8(85,54).write_to(&mut background,image::ImageFormat::Png).expect("background");
                 let mut template = fixture_template();
                 template.font_id = ResourceId::allocate();
-                let settings = Settings::new(storage,template,"image/png",background.into_inner(),include_bytes!("../../../tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(),vec!["Fixture reception".to_owned()]).expect("CJK fixture");
+                let settings = Settings::new(storage,template,"image/png",background.into_inner(),include_bytes!("../../../tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(),vec!["Fixture reception".to_owned()], photo::Limits::new(1, 1 << 30, 2, 2 << 30).expect("fixture capacity")).expect("CJK fixture");
                 let proxy=fixture::database_proxy::Proxy::start(&server).await;
                 let context = Context::new(authentication::proxied(&database,&proxy)).await.expect("context");
                 let services = Box::pin(Services::start(Barrier::begin(context.clone()).await.expect("barrier"),authentication::inventory(authentication::keys()),ServicesSettings::new(4,crate::identity::message::Limits::default(),authentication::session_settings(),crate::registration::Limits::default(),authentication::avatar_settings()).expect("settings").with_application(settings),supplier.client(),authentication::unused_client().await)).await.expect("services");
@@ -917,11 +992,17 @@ mod tests {
                 assert!(matches!(services.application().resource(&institution,photo.resource_id).await,Err(Error::TargetUnavailable)));
                 let original_file=services.application().resource(&manager,photo.resource_id).await.expect("original private photo").bytes;
                 let private=&services.application().settings().expect("configured storage").directory;
-                assert!(settings::publish(private,photo.resource_id,b"replacement bytes").is_err(),"a retained resource cannot be overwritten");
+                let person: person::Id = observer.client().query_one("SELECT person_id FROM workforce.photos WHERE id=$1", &[&photo.photo_id]).await.expect("photo owner").get(0);
+                let person_path = person.to_string();
+                let segments = ["workforce", "photos", &person_path];
+                assert!(private.publish(&segments,&photo.resource_id.to_string(),&uuid::Uuid::new_v4().to_string(),b"replacement bytes").is_err(),"a retained resource cannot be overwritten");
                 assert_eq!(services.application().resource(&manager,photo.resource_id).await.expect("unchanged photo").bytes,original_file);
-                private.remove(&["workforce"],&photo.resource_id.to_string()).expect("isolated missing-file injection");
+                assert!(matches!(services.application().prepare_photo(&manager,"image/webp".to_owned(),original_file.clone()).await,Err(Error::PhotoCapacity)), "new preparation stops at the retained-file limit");
+                assert_eq!(observer.client().query_one("SELECT count(*) FROM workforce.photos",&[]).await.expect("no rejected photo metadata").get::<_,i64>(0),1);
+                assert_eq!(observer.client().query_one("SELECT count(*) FROM audit.events WHERE action='workforce.photo.prepared'",&[]).await.expect("no rejected photo audit").get::<_,i64>(0),1);
+                private.remove(&segments,&photo.resource_id.to_string()).expect("isolated missing-file injection");
                 assert!(matches!(services.application().resource(&manager,photo.resource_id).await,Err(Error::MissingFile)));
-                settings::publish(private,photo.resource_id,&original_file).expect("restore retained fixture bytes");
+                private.publish(&segments,&photo.resource_id.to_string(),&uuid::Uuid::new_v4().to_string(),&original_file).expect("restore retained fixture bytes");
                 let delete = serde_json::from_value::<directory::Delete<directory::department::Item>>(json!({"expected":department})).expect("confirmed department deletion").into_items();
                 assert!(matches!(Box::pin(services.directory().delete(manager.clone(),operation(),directory::Target::Department(department.id()),delete)).await,Err(crate::kernel::Error::Rejected(directory::Rejection::InUse))));
                 // A real runtime identity cannot rewrite snapshots, delete audit, or cross-bind a photo.

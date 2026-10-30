@@ -23,7 +23,7 @@ fn fixed_badges_use_trusted_preview_and_private_resources_without_request_dedupl
             template["fontId"]=json!(Uuid::new_v4());
             template["layout"]["department"]=json!({"area":{"xUm":4000,"yUm":30000,"widthUm":120,"heightUm":20000},"fontSizeUm":100,"lineHeightUm":140,"wrap":true});
             let pickup="P".repeat(4094);
-            let settings=domain::workforce::application::Settings::new(avatar_storage(),serde_json::from_value(template).expect("template values"),"image/png",background.into_inner(),include_bytes!("../../domain/tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(),vec![pickup.clone()]).expect("legal CJK fixture");
+            let settings=domain::workforce::application::Settings::new(avatar_storage(),serde_json::from_value(template).expect("template values"),"image/png",background.into_inner(),include_bytes!("../../domain/tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(),vec![pickup.clone()],domain::workforce::application::photo::Limits::new(1,1 << 30,2,2 << 30).expect("fixture capacity")).expect("legal CJK fixture");
             let application=Application::start(connections(&server,&name,"clerk"),keys(0),services(8).expect("services").with_application(settings),process::Settings::new(Duration::from_secs(10)).expect("stop"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("application");
             let (base,stop,task)=running(application).await;
             let institution=issued_session_for(&base,&mut sms,"13900000000").await;
@@ -58,9 +58,12 @@ fn fixed_badges_use_trusted_preview_and_private_resources_without_request_dedupl
             let photo=post("/api/v1/workforce/application-photos",&manager).header("content-type","image/png").body(image.clone()).send().await.expect("prepare photo");
             assert_eq!(photo.status(),201);
             let photo=photo.json::<Value>().await.expect("photo");
-            let other_photo=post("/api/v1/workforce/application-photos",&other).header("content-type","image/png").body(image).send().await.expect("another participant prepares a photo without a number");
+            let other_photo=post("/api/v1/workforce/application-photos",&other).header("content-type","image/png").body(image.clone()).send().await.expect("another participant prepares a photo without a number");
             assert_eq!(other_photo.status(),201);
             let other_photo=other_photo.json::<Value>().await.expect("other owned photo");
+            let full=post("/api/v1/workforce/application-photos",&manager).header("content-type","image/png").body(image).send().await.expect("retained photo capacity");
+            assert_eq!(full.status(),503);
+            assert_eq!(full.json::<Value>().await.expect("safe capacity error")["code"],"dependency_unavailable");
             assert_eq!((photo["width"].as_u64(),photo["height"].as_u64()),(Some(131),Some(127)));
             let selections=json!({"departmentId":department["id"],"rosterId":null,"titleId":null,"photoId":photo["photoId"],"pickup":pickup});
             assert_eq!(post("/api/v1/workforce/applications/preview",&manager).json(&json!({"kind":"issuance","selections":selections})).send().await.expect("incomplete rules").status(),503);

@@ -96,13 +96,16 @@ fn website_sms_session_creation_delivers_only_the_original_cookie_or_registratio
                     let response = client.request(method, format!("{base}{path}"))
                         .header("operation-id", OPERATION)
                         .header("authorization", format!("Bearer {token}"))
-                        .send().await.expect("unsupported proof rejected while session queries are blocked");
+                        .header("session-id", session["id"].as_str().expect("selected session"))
+                        .send().await.expect("mixed proof rejected while session queries are blocked");
                     assert_eq!(response.status(), 400);
                     assert!(!response.headers().contains_key("set-cookie"));
                     assert_eq!(response.json::<serde_json::Value>().await.expect("safe unsupported proof rejection"), serde_json::json!({"code":"invalid_input"}));
                 }
                 observer.client().batch_execute("ROLLBACK").await.expect("release session queries");
                 observer.terminate().await.expect("session query blocker ended");
+                let response = client.get(format!("{base}/api/v1/accounts/current")).header("operation-id", OPERATION).header("authorization", format!("Bearer {token}")).send().await.expect("website token cannot select mini transport");
+                assert_eq!(response.status(), 401);
             } else {
                 assert!(cookie.is_none());
                 if kind == "suspended" {
@@ -140,6 +143,8 @@ fn website_sms_session_creation_delivers_only_the_original_cookie_or_registratio
                     assert_eq!(observer.client().query_one("SELECT count(*) FROM identity.registrations", &[]).await.expect("credential retained").get::<_, i64>(0), 1);
                 }
                 let register = |body: serde_json::Value| client.post(format!("{base}/api/v1/registrations")).header("operation-id", OTHER).header("x-real-ip", "192.0.2.5").json(&body);
+                let response = register(registration.clone()).header("origin", "https://attacker.invalid").send().await.expect("verified website credential still requires Origin");
+                assert_eq!(response.status(), 403);
                 let blocker = connections(&server, &name, "postgres").recover().await.expect("credential blocker");
                 blocker.client().batch_execute("BEGIN").await.expect("blocker transaction");
                 let blocker_pid: i32 = blocker.client().query_one("SELECT pg_backend_pid() FROM identity.registrations WHERE id=$1::text::uuid FOR UPDATE", &[&registration["id"].as_str().expect("registration id")]).await.expect("credential row lock").get(0);
@@ -1146,7 +1151,7 @@ fn session_and_registration_routes_share_admission_and_reject_before_business_wo
                 for (operation, source, origin, status) in [
                     ("invalid", "invalid", "https://attacker.invalid",400),
                     (OPERATION, "invalid", "https://attacker.invalid",400),
-                    (OPERATION, "192.0.2.80", "https://attacker.invalid",403),
+                    (OPERATION, "192.0.2.80", "https://attacker.invalid",422),
                     (OPERATION, "192.0.2.80", "https://example.com",422),
                 ] {
                     let response = client.post(format!("{base}{path}")).header("operation-id",operation).header("x-real-ip",source).header("origin",origin).json(&serde_json::json!({})).send().await.expect("ordered boundary rejection");
@@ -1422,7 +1427,7 @@ pub(crate) async fn current_http(base: &str, cookie: &str, id: &str, suffix: &st
             ],
             400,
         ),
-        (vec![("authorization", format!("Bearer {token}"))], 400),
+        (vec![("authorization", format!("Bearer {token}"))], 401),
         (vec![("authorization", String::new())], 400),
         (vec![("authorization", "Basic rejected".into())], 400),
         (

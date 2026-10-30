@@ -10,6 +10,94 @@ use image::{
         webp::{WebPDecoder, WebPEncoder},
     },
 };
+use serde::Deserialize;
+
+use super::{Error as ApplicationError, ResourceId};
+use crate::identity::person;
+
+/// Deployment capacity for retained photographs, including unsuccessful preparations.
+#[derive(Clone, Copy, Deserialize)]
+#[serde(try_from = "LimitInput")]
+pub struct Limits {
+    person_files: u64,
+    person_bytes: u64,
+    total_files: u64,
+    total_bytes: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LimitInput {
+    person_files: u64,
+    person_bytes: u64,
+    total_files: u64,
+    total_bytes: u64,
+}
+
+impl TryFrom<LimitInput> for Limits {
+    type Error = ApplicationError;
+
+    fn try_from(input: LimitInput) -> Result<Self, Self::Error> {
+        Self::new(
+            input.person_files,
+            input.person_bytes,
+            input.total_files,
+            input.total_bytes,
+        )
+    }
+}
+
+impl Limits {
+    pub fn new(
+        person_files: u64,
+        person_bytes: u64,
+        total_files: u64,
+        total_bytes: u64,
+    ) -> Result<Self, ApplicationError> {
+        if person_files == 0
+            || person_bytes == 0
+            || person_files > total_files
+            || person_bytes > total_bytes
+        {
+            return Err(ApplicationError::Configuration);
+        }
+        Ok(Self {
+            person_files,
+            person_bytes,
+            total_files,
+            total_bytes,
+        })
+    }
+
+    pub(super) fn publish(
+        &self,
+        directory: &platform::files::Directory,
+        person: person::Id,
+        id: ResourceId,
+        bytes: &[u8],
+    ) -> Result<(), ApplicationError> {
+        let storage = directory.exclusive(&["workforce", "photos"])?;
+        let person = person.to_string();
+        let total = storage.usage(&[])?;
+        let owned = storage.usage(&[&person])?;
+        let size = u64::try_from(bytes.len()).map_err(|_| ApplicationError::Configuration)?;
+        for (usage, files, budget) in [
+            (total, self.total_files, self.total_bytes),
+            (owned, self.person_files, self.person_bytes),
+        ] {
+            if usage.files >= files || size > budget.saturating_sub(usage.bytes) {
+                return Err(ApplicationError::PhotoCapacity);
+            }
+        }
+        storage.publish(
+            &[&person],
+            &id.to_string(),
+            &uuid::Uuid::new_v4().to_string(),
+            bytes,
+        )?;
+        Ok(())
+    }
+}
 
 pub const INPUT_LIMIT: usize = 8 * 1024 * 1024;
 const OUTPUT_LIMIT: usize = 64 * 1024 * 1024 + 1024 * 1024;
@@ -129,11 +217,178 @@ pub enum Error {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
-    use std::io::Cursor;
+    use std::{
+        io::Cursor,
+        os::unix::fs::{MetadataExt, PermissionsExt},
+        sync::{Arc, Barrier},
+    };
 
     use image::{DynamicImage, ImageFormat};
 
-    use super::{INPUT_LIMIT, prepare};
+    use super::{INPUT_LIMIT, Limits, prepare};
+
+    fn storage() -> (tempfile::TempDir, platform::files::Settings) {
+        let directory = tempfile::Builder::new()
+            .permissions(std::fs::Permissions::from_mode(0o700))
+            .tempdir()
+            .expect("private photos");
+        let device = directory.path().metadata().expect("device").dev();
+        let mut mount = directory.path().to_path_buf();
+        while let Some(parent) = mount.parent() {
+            if parent.metadata().expect("ancestor").dev() != device {
+                break;
+            }
+            mount = parent.to_path_buf();
+        }
+        let settings =
+            platform::files::Settings::new(directory.path().to_path_buf(), mount, device)
+                .expect("storage");
+        (directory, settings)
+    }
+
+    #[test]
+    fn capacity_input_requires_all_positive_and_consistent_limits() {
+        for input in [
+            r#"{}"#,
+            r#"{"person_files":0,"person_bytes":1,"total_files":1,"total_bytes":1}"#,
+            r#"{"person_files":1,"person_bytes":0,"total_files":1,"total_bytes":1}"#,
+            r#"{"person_files":2,"person_bytes":1,"total_files":1,"total_bytes":1}"#,
+            r#"{"person_files":1,"person_bytes":2,"total_files":1,"total_bytes":1}"#,
+            r#"{"person_files":1,"person_bytes":1,"total_files":1,"total_bytes":1,"extra":1}"#,
+        ] {
+            assert!(serde_json::from_str::<Limits>(input).is_err());
+        }
+        assert!(
+            serde_json::from_str::<Limits>(
+                r#"{"person_files":1,"person_bytes":1,"total_files":1,"total_bytes":1}"#
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn retained_photos_and_incomplete_orphans_count_after_reopening_storage() {
+        let (root, settings) = storage();
+        let person = crate::identity::person::Id::allocate();
+        let other = crate::identity::person::Id::allocate();
+        let limits = Limits::new(2, 6, 4, 9).expect("capacity");
+        let directory = settings.open().expect("storage");
+        limits
+            .publish(&directory, person, super::ResourceId::allocate(), b"abc")
+            .expect("first photo");
+        assert!(
+            matches!(
+                limits.publish(&directory, person, super::ResourceId::allocate(), b"abcd"),
+                Err(super::ApplicationError::PhotoCapacity)
+            ),
+            "bytes are checked independently of file count"
+        );
+        // A failed file publication can leave a writable candidate without database metadata.
+        let candidate = root
+            .path()
+            .join("workforce/photos")
+            .join(person.to_string())
+            .join("incomplete");
+        std::fs::write(&candidate, b"xyz").expect("interrupted candidate");
+        std::fs::set_permissions(&candidate, std::fs::Permissions::from_mode(0o600))
+            .expect("private writable candidate");
+        drop(directory);
+        let directory = settings.open().expect("restarted storage");
+        assert!(matches!(
+            limits.publish(&directory, person, super::ResourceId::allocate(), b"a"),
+            Err(super::ApplicationError::PhotoCapacity)
+        ));
+        limits
+            .publish(&directory, other, super::ResourceId::allocate(), b"abc")
+            .expect("another member's remaining capacity");
+        assert!(matches!(
+            limits.publish(&directory, other, super::ResourceId::allocate(), b"a"),
+            Err(super::ApplicationError::PhotoCapacity)
+        ));
+        assert!(
+            matches!(
+                Limits::new(2, 99, 4, 99).expect("file limits").publish(
+                    &directory,
+                    person,
+                    super::ResourceId::allocate(),
+                    b"a"
+                ),
+                Err(super::ApplicationError::PhotoCapacity)
+            ),
+            "per-person file count is independent of bytes"
+        );
+        assert!(
+            matches!(
+                Limits::new(3, 99, 3, 99).expect("file limits").publish(
+                    &directory,
+                    other,
+                    super::ResourceId::allocate(),
+                    b"a"
+                ),
+                Err(super::ApplicationError::PhotoCapacity)
+            ),
+            "total file count is independent of bytes"
+        );
+        let held = directory
+            .exclusive(&["workforce", "photos"])
+            .expect("accounting lock");
+        assert_eq!(
+            held.usage(&[]).expect("all physical files"),
+            platform::files::Usage { files: 3, bytes: 9 }
+        );
+    }
+
+    #[test]
+    fn two_members_and_independent_instances_compete_for_one_total_slot() {
+        let (_root, settings) = storage();
+        let limits = Limits::new(1, 3, 1, 3).expect("capacity");
+        let ready = Arc::new(Barrier::new(3));
+        let (send, receive) = std::sync::mpsc::channel();
+        let tasks: Vec<_> = (0..2)
+            .map(|_| {
+                let directory = settings.open().expect("independent instance");
+                let ready = Arc::clone(&ready);
+                let send = send.clone();
+                std::thread::spawn(move || {
+                    ready.wait();
+                    let result = limits.publish(
+                        &directory,
+                        crate::identity::person::Id::allocate(),
+                        super::ResourceId::allocate(),
+                        b"abc",
+                    );
+                    send.send(result).expect("result receiver");
+                })
+            })
+            .collect();
+        ready.wait();
+        let results: Vec<_> = (0..2)
+            .map(|_| {
+                receive
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .expect("bounded publishers")
+            })
+            .collect();
+        for task in tasks {
+            task.join().expect("publisher ended");
+        }
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert_eq!(
+            results
+                .iter()
+                .filter(|result| matches!(result, Err(super::ApplicationError::PhotoCapacity)))
+                .count(),
+            1
+        );
+        let directory = settings.open().expect("reopened storage");
+        let held = directory
+            .exclusive(&["workforce", "photos"])
+            .expect("accounting lock");
+        assert_eq!(
+            held.usage(&[]).expect("only the accepted file"),
+            platform::files::Usage { files: 1, bytes: 3 }
+        );
+    }
 
     #[test]
     fn preserves_rectangular_pixels_and_removes_original_container() {

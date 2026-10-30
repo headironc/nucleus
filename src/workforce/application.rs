@@ -181,7 +181,7 @@ async fn template(
     responses((status = 201, body = Photo, description = "Prepared immutable photograph"),
         (status = 400, description = "invalid_input", body = Failure), (status = 413, description = "invalid_input", body = Failure), (status = 415, description = "invalid_input", body = Failure), (status = 429, description = "rate_limited", body = Failure, headers(("Retry-After" = u64, description = "Wait seconds before another attempt"))), (status = 500, description = "internal_error", body = Failure),
         (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"),
-        (status = 422, body = Failure, description = "invalid_input"), (status = 503, body = Failure, description = "dependency_unavailable or outcome_unknown")))]
+        (status = 422, body = Failure, description = "invalid_input"), (status = 503, body = Failure, description = "dependency_unavailable or outcome_unknown; retained photo capacity exhaustion is dependency_unavailable")))]
 async fn photo(
     State(service): State<application::Service>,
     Extension(actor): Extension<Actor>,

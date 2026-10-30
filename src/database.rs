@@ -119,6 +119,10 @@ mod tests {
                 r#"["Fixture reception"]"#,
             )
             .env(
+                "NUCLEUS_WORKFORCE__APPLICATION__PHOTO_LIMITS",
+                r#"{"person_files":100,"person_bytes":1073741824,"total_files":1000,"total_bytes":10737418240}"#,
+            )
+            .env(
                 "NUCLEUS_WORKFORCE__APPLICATION__TEMPLATE",
                 serde_json::to_string(&domain::workforce::application::fixture_template())
                     .expect("fixture template"),
