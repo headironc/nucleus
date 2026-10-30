@@ -24,7 +24,7 @@ const variants = {
   account: { title: "个人账户", message: "", content: panel("account").replace(/<image[^>]+\/>/, "").replace(/<view class="small-copy" wx:if="{{avatarFailed}}">[^<]+<\/view>/, "") },
   pending: { title: "个人账户", message: "暂时无法确认注册结果。请继续检查本次注册，暂时不要再次提交。",
     content: source.match(/<button class="secondary" wx:if="{{canRecover}}"[^>]*>[\s\S]*?<\/button>/)![0]
-      .replace("{{logoutPending ? '查看本次退出结果' : '检查本次办理结果'}}", "检查本次办理结果") },
+      .replace("{{logoutPending ? '查看退出结果' : '检查本次办理结果'}}", "检查本次办理结果") },
 };
 const browser = await chromium.launch();
 try {
