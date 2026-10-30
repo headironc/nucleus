@@ -6,7 +6,7 @@
 
 C1 的调用链依次经过共同操作标识中间件、可信来源提取、入口预算、Origin 检查和 JSON 提取，再调用业务服务。操作标识和可信来源均从已建立的 extensions 读取；`Input` 只描述 `{ mobile, token }` 正文。处理函数把独立取得的标识、来源和值组成领域输入。可信来源及预算归[入口资源预算](admission.md)，JSON 和 Extension 的自定义 rejection 归[共同提取边界](api.md#提取与错误归属)。
 
-正文字段在反序列化时直接按所属受控值校验，秘密文本由可清零缓冲接收；处理函数只组合已验证值、操作标识和适用来源，不叠加第二套校验。来源、预算及 Origin 检查在正文之前完成，来源不重复解析，入口额度不重复扣减。R1/R2 从业务事实继承认证来源，不把网络来源当作应用身份。
+正文字段在反序列化时直接按所属受控值校验，秘密文本由可清零缓冲接收；处理函数只组合已验证值、操作标识和适用来源。网络来源及共享预算在正文前取得一次。R1 解码实际凭据后，只对网站短信检查 Origin。R2 先用原证明取得可信来源，再对网站来源检查 Origin。正文均只读取一次，入口额度不重复扣减；网络来源不是应用身份。
 
 `POST /api/v1/codes` 面向网站短信办理，必须携带唯一且逐字节匹配配置 HTTPS origin 的 `Origin`。缺失、空值、`null`、重复、多值或不匹配均返回 403 `permission_denied`，不创建 Challenge 或调用供应商。它是匿名入口自身的浏览器来源限制，不依赖当前会话；附带 Authorization 不能绕过。该要求不证明客户端身份，非浏览器客户端可以自行构造 Origin。小程序手机号认证使用所属授权入口，不据此扩展 C1 的来源范围。
 
@@ -22,11 +22,11 @@ C1 的 HTTP 适配区分业务拒绝、额度限制、结果未知和依赖不�
 | `POST /api/v1/sessions`      | `{ secret, credential }`；`credential` 使用本节封闭联合。         | HTTP 200 的 `session`、`registration` 或 `progress`；网站微信首次授权为 HTTP 201 的 `authorization`，原等待授权回读为 HTTP 200。 |
 | `POST /api/v1/registrations` | `{ id, token, name, idNumber }`；`id` 和 `token` 来自待注册凭据。 | 首次成功为 HTTP 201 的 `session`，原成功交接为 HTTP 200 的同一 `session`；可靠在途为 HTTP 200 的 `progress`。                    |
 
-入口只在对应能力及真实依赖交付时装配；未装配的凭据分支作为无效输入拒绝，不发起供应商调用。Router 和 OpenAPI 只声明实际装配的分支。网站短信凭据 `message` 固定网站 AppID 和 cookie。小程序手机号、微信身份和网站授权各自的来源与业务结果见所属文档。
+当前 R1 装配 `message` 和 `mobile` 两种凭据。`message` 固定网站 AppID 和 cookie，`mobile` 固定服务器配置的小程序 AppID 和 Bearer。小程序设置整组缺席时，`mobile` 返回 `503 dependency_unavailable`，不占用 code 或外呼。`wechat` 和 `website` 是后续设计，当前作为无效输入拒绝。Router 和 OpenAPI 只声明当前两种分支。
 
-R1 在读取正文前检查可信来源、共享入口预算和 Origin。Origin 规则与 C1 相同。网站短信来源固定交接 cookie，额外的客户端传递头不改变来源或结果。有效 Check 猜错返回 `403 verification_invalid`；暂停账户的原认证返回固定 `403 permission_denied`。正确原请求只交接原 Session cookie 或 Registration；只有 Session 成功设置 cookie，JSON 不含 Session token。
+R1 在读取正文前检查可信来源和共享入口预算。网站短信的 Origin 规则与 C1 相同，`mobile` 不要求网站 Origin。额外传递头不改变可信来源。有效短信 Check 猜错返回 `403 verification_invalid`，确定无效的手机号授权 code 返回 `401 authentication_invalid`；暂停账户返回 `403 permission_denied`。重放只交接原结果。网站 Session 成功设置原 cookie，小程序 Session 只通过 JSON 交付 Bearer token。
 
-R2 复用同一个来源桶、Origin 检查和 `identity::session` cookie 编码。首次正常创建返回 201，原成功交接返回 200；两者使用同一 Session 投影，失败不设置 cookie。三个入口都通过原 POST 重放，不提供历史完成查询。
+R2 复用同一个来源桶，按已验证的原来源选择 Origin 规则和会话交付方式。首次正常创建返回 201，原成功交接返回 200；两者交付同一原 Session。小程序结果和全部失败均不设置 cookie。三个入口都通过原 POST 重放，不提供历史完成查询。当前手机号 R1/R2 等待原 Work 或返回终态，不以待决行构造 `progress`。
 
 ## 请求字段
 
@@ -47,7 +47,7 @@ R2 复用同一个来源桶、Origin 检查和 `identity::session` cookie 编码
 | `wechat`  | `code`                 | 小程序微信身份登录的 `LoginCode`。                               |
 | `website` | 无                     | 网站微信授权发起；OAuth code 由回调提供，本请求不接收 `code`。   |
 
-短信验证码必须作为 JSON 字符串传入，不能使用数字、空白或其他位数；消息 ID 按[项目标识](../identifiers.md)解析。小程序手机号、微信登录和网站 OAuth 的 code 属于不同协议，不能交换用途。`website` 仅是 HTTP 分支名；已建立的微信身份认证及会话方法仍为 `wechat`。绑定入口的合法凭据范围由[微信身份登录](../identity/wechat.md)拥有，不能把本表四种登录凭据一并接纳。
+短信验证码必须作为 JSON 字符串传入，不能使用数字、空白或其他位数；消息 ID 按[项目标识](../identifiers.md)解析。`mobile.code` 只接收 `getPhoneNumber` 的手机号授权 code，保持原字符串，不修剪或规范化。本地输入上限为 2048 个 Unicode 字符，这是资源边界，不声明微信固定长度。它与 `wx.login`、网站 OAuth 的 code 属于不同协议。后两种尚未装配。绑定入口范围由[微信身份登录](../identity/wechat.md)拥有。
 
 `POST /api/v1/registrations` 使用独立于原登录的操作标识。`id`、`token` 来自原 `registration`；原 R2 重试保留二者及原姓名、身份证号和可信传递方式。姓名、身份证号的规范化与办理日边界由[正式注册](../identity/registration.md#业务边界与不变量)拥有。HTTP 不接受已验证手机号、账户 ID 或由客户端选择的认证来源。注册成功不提供历史完成查询，也不增加凭 Bearer 读取旧完成的分支。
 
@@ -57,7 +57,7 @@ JSON 请求遵守共同的 8 KiB 上限，拒绝未知、重复、缺失、`null
 
 成功 JSON 使用共同的 `code: "ok"`，并且仅包含一项适用的具名结果，不回显请求标识。`message` 为 `{ id, delivery, expiresAt }`；`delivery` 取 `sending`、`sent`、`failed` 或 `unknown`。它表示本地消息与供应商受理进度，`sent` 不证明送达，`unknown` 不等于数据库提交的 `outcome_unknown`。可靠在途使用 `progress: { status: "pending", retryAfterSeconds }`；暂时查到未完成行不足以证明仍在执行。
 
-无账户的手机号认证返回 `registration: { id, token, expiresAt }`，不建立正式账户或会话。`id` 定位待注册凭据，`token` 是注册证明；两者不能代替新 R2 的操作标识。有账户的认证和正式注册成功返回原会话。小程序 Bearer 结果为 `session: { token, expiresAt }`；网站结果为 `session: { id, expiresAt }` 并按原会话设置 cookie，JSON 不含会话 token。token 使用规范无填充 Base64url，解码后为 32 字节。时间使用 UTC RFC 3339。
+无账户的手机号认证返回 `registration: { id, token, expiresAt }`，不建立正式账户或会话。`id` 定位待注册凭据，`token` 是注册证明；两者不能代替新 R2 的操作标识。有账户的认证和正式注册成功返回原会话。小程序结果为 `session: { id, token, expiresAt }`，`id` 用于退出的原发起会话关联，普通认证只使用 Bearer token。网站结果保持 `session: { id, expiresAt }` 和原 cookie。token 使用规范无填充 Base64url，解码后为 32 字节。时间使用 UTC RFC 3339。
 
 网站微信授权返回 `authorization: { id, href, expiresAt }`，仅表示可继续浏览器授权，不表示登录成功。授权开始后的其他分支及回调结果由[微信身份登录](../identity/wechat.md#入口与结果)拥有。任何 `session` 响应都不附带完整本人资料；客户端另用 `GET /api/v1/accounts/current` 验证当前身份。`message`、`registration`、`session`、`authorization` 与 `progress` 不在同一响应中并列。
 

@@ -3,7 +3,7 @@
 use std::{fmt, net::SocketAddr, time::Duration};
 
 use config::{Config, Environment};
-use domain::identity::{authentication, challenge, message};
+use domain::identity::{authentication, challenge, message, mini};
 use ipnet::IpNet;
 use nonempty::NonEmpty;
 use platform::database;
@@ -16,6 +16,7 @@ pub struct Settings {
     pub(crate) database: crate::database::Settings,
     pub(crate) challenge: challenge::settings::Settings,
     pub(crate) message: message::settings::Settings,
+    pub(crate) mini: Option<mini::AppId>,
     pub(crate) listen: SocketAddr,
     pub(crate) source: crate::source::Settings,
     pub(crate) requests: crate::identity::Settings,
@@ -114,6 +115,21 @@ fn default_avatar_hourly() -> usize {
 #[serde(deny_unknown_fields)]
 struct Wechat {
     website: Website,
+    mini_program: Option<MiniProgram>,
+}
+
+#[serde_as]
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MiniProgram {
+    app_id: String,
+    #[serde_as(as = "DisplayFromStr")]
+    #[serde(default = "default_mobile_seconds")]
+    session_seconds: u64,
+}
+
+fn default_mobile_seconds() -> u64 {
+    domain::identity::session::settings::DEFAULT_MOBILE_SECONDS
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -235,6 +251,7 @@ impl Identity {
     fn parse(
         self,
         app_id: domain::identity::website::AppId,
+        mini: Option<(mini::AppId, u64)>,
         storage: Storage,
     ) -> Result<domain::startup::Settings, Error> {
         let input = self;
@@ -257,6 +274,10 @@ impl Identity {
             input.registration.lifetime_seconds,
             input.authentication_recovery_seconds,
         )?;
+        let session = match mini {
+            Some((app_id, seconds)) => session.with_mini(app_id, seconds)?,
+            None => session,
+        };
         Ok(domain::startup::Settings::new(
             input.authentication.capacity,
             limits,
@@ -346,6 +367,13 @@ impl TryFrom<Input> for Settings {
     type Error = Error;
 
     fn try_from(input: Input) -> Result<Self, Error> {
+        let mini = input
+            .wechat
+            .mini_program
+            .map(|input| {
+                Ok::<_, Error>((input.app_id.parse::<mini::AppId>()?, input.session_seconds))
+            })
+            .transpose()?;
         Ok(Self {
             database: input.database.try_into()?,
             challenge: challenge::settings::Settings::new(
@@ -354,12 +382,15 @@ impl TryFrom<Input> for Settings {
                 )?,
             ),
             message: input.message.try_into()?,
+            mini: mini.as_ref().map(|(app_id, _)| app_id.clone()),
             listen: input.http.listen,
             source: crate::source::Settings::new(input.http.trusted_proxies)?,
             requests: crate::identity::Settings::new(input.http.origin, input.challenge.site_key)?,
-            services: input
-                .identity
-                .parse(input.wechat.website.app_id.parse()?, input.storage)?,
+            services: input.identity.parse(
+                input.wechat.website.app_id.parse()?,
+                mini,
+                input.storage,
+            )?,
             process: crate::process::Settings::new(Duration::from_secs(
                 input.process.stop_seconds,
             ))?,
@@ -525,6 +556,56 @@ mod tests {
             Ok(_) => panic!("invalid input must fail"),
             Err(error) => error,
         }
+    }
+
+    #[test]
+    fn mini_program_group_is_optional_but_complete_and_separate_when_supplied() {
+        assert!(load(input()).expect("website-only settings").mini.is_none());
+        let mut configured = input();
+        configured.push((
+            "NUCLEUS_WECHAT__MINI_PROGRAM__APP_ID".into(),
+            "mini-fixture".into(),
+        ));
+        let raw = Input::load(
+            Environment::default().source(Some(configured.clone().into_iter().collect())),
+        )
+        .expect("mini input");
+        assert_eq!(
+            raw.wechat
+                .mini_program
+                .as_ref()
+                .expect("configured mini group")
+                .session_seconds,
+            2_592_000
+        );
+        assert_eq!(
+            Settings::try_from(raw)
+                .expect("mini settings")
+                .mini
+                .expect("mini identity")
+                .as_ref(),
+            "mini-fixture"
+        );
+        let mut missing_identity = input();
+        missing_identity.push((
+            "NUCLEUS_WECHAT__MINI_PROGRAM__SESSION_SECONDS".into(),
+            "3600".into(),
+        ));
+        assert!(load(missing_identity).is_err());
+        for seconds in ["", "0", "3599", "2592001", "3600.0", " 3600"] {
+            let mut invalid = configured.clone();
+            invalid.push((
+                "NUCLEUS_WECHAT__MINI_PROGRAM__SESSION_SECONDS".into(),
+                seconds.into(),
+            ));
+            assert!(load(invalid).is_err(), "invalid mini lifetime {seconds:?}");
+        }
+        let mut same_identity = input();
+        same_identity.push((
+            "NUCLEUS_WECHAT__MINI_PROGRAM__APP_ID".into(),
+            "website-fixture".into(),
+        ));
+        assert!(load(same_identity).is_err());
     }
 
     #[test]

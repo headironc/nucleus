@@ -746,22 +746,20 @@ pub(crate) mod tests {
         else {
             panic!("new manager");
         };
-        let issued = Box::pin(
-            services
-                .registration()
-                .register(crate::registration::Input::new(
-                    Uuid::new_v4().to_string().parse().expect("operation"),
-                    credential.id(),
-                    credential.token().text().parse().expect("proof"),
-                    "Account Manager".parse().expect("name"),
-                    "000000200002290029".parse().expect("number"),
-                )),
-        )
+        let issued = Box::pin(services.registration().register_input_for_test(
+            crate::registration::Input::new(
+                Uuid::new_v4().to_string().parse().expect("operation"),
+                credential.id(),
+                credential.token().text().parse().expect("proof"),
+                "Account Manager".parse().expect("name"),
+                "000000200002290029".parse().expect("number"),
+            ),
+        ))
         .await
         .expect("manager registration");
         let actor = services
             .current()
-            .authenticate(current::Proof {
+            .authenticate(current::Proof::Cookie {
                 id: issued.id(),
                 token: issued.token().text().parse().expect("token"),
             })
@@ -1231,7 +1229,7 @@ pub(crate) mod tests {
                 let code = message(&database, services.authentication(), &mut supplier, "13800000000").await;
                 let session_operation = Uuid::new_v4();
                 let Receipt::Session(issued) = services.authentication().create_session(session_input(session_operation, code, "13800000000", CODE)).await.expect("new R1 session") else { panic!("existing account"); };
-                let target = services.current().authenticate(current::Proof { id: issued.id(), token: issued.token().text().parse().expect("token") }).await.expect("new current session");
+                let target = services.current().authenticate(current::Proof::Cookie { id: issued.id(), token: issued.token().text().parse().expect("token") }).await.expect("new current session");
                 let account = services.current().read(&target).await.expect("real R2 account");
                 let observer = database.connections(&database.user).recover().await.expect("independent runtime observer");
                 let records = "SELECT jsonb_build_array((SELECT count(*) FROM identity.authentications), (SELECT count(*) FROM identity.attempts), (SELECT count(*) FROM identity.checks), (SELECT count(*) FROM identity.messages), (SELECT count(*) FROM identity.claims), (SELECT count(*) FROM identity.revisions), (SELECT count(*) FROM access.appointments), (SELECT count(*) FROM access.changes))::text";

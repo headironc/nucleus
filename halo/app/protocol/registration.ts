@@ -1,11 +1,11 @@
 import { decode, registry, retryAfter } from "./response";
 import type { paths } from "./generated/types";
-import type { Failure } from "./session";
+import { validSession, type Failure, type Session } from "./session";
 
 type Registration = paths["/api/v1/registrations"]["post"];
 type Receipt = Registration["responses"][201]["content"]["application/json"];
 export type Input = Registration["requestBody"]["content"]["application/json"];
-export type Result = { kind: "session"; session: Receipt["session"] } | Failure;
+export type Result = { kind: "session"; session: Session } | Failure;
 
 export function validInput(value: unknown): value is Input {
   return registry.register_input(value);
@@ -32,8 +32,12 @@ export async function register(
     });
     const value = await decode(response, "POST /api/v1/registrations");
     if (!value) return { kind: "untrusted" };
-    if (response.status === 200 || response.status === 201)
-      return { kind: "session", session: (value as Receipt).session };
+    if (response.status === 200 || response.status === 201) {
+      const session = (value as Receipt).session;
+      return validSession(session)
+        ? { kind: "session", session }
+        : { kind: "untrusted" };
+    }
     return {
       kind: "failure",
       status: response.status,

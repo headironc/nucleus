@@ -46,8 +46,9 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** @description Message credentials require the configured website Origin and deliver a cookie. Mobile credentials contain a getPhoneNumber code, use the configured mini-program identity, require no website Origin, and deliver an opaque Bearer token. Missing mini-program configuration returns dependency_unavailable without claiming or exchanging the code. */
         post: operations["createSession"];
-        /** @description Revokes all retained unrevoked sessions of the currently authenticated account, including expired sessions, and returns the permanent logout ID, count and time for that fixed set. Requires a current valid website session and exact Origin. Any supplied Sec-Fetch-Site must be same-origin. Success clears only the authenticated session cookie. Later sessions are not added to the original set; a new valid session of the same account can read it with GET /revocations. */
+        /** @description Revokes every retained unrevoked session of the authenticated account across website and mini-program sources, including expired sessions. Accepts a selected website cookie with exact Origin, or a unique mini-program Bearer token without website Origin. Mixed credentials are rejected. Only website success clears its selected cookie. Later sessions are not added; a new valid session of the same account can read the original with GET /revocations. */
         delete: operations["revokeAllSessions"];
         options?: never;
         head?: never;
@@ -63,6 +64,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
+        /** @description The verified original credential or receipt determines the source. Website sources require the configured Origin and deliver the original cookie; mini-program phone sources require no website Origin and deliver session id, opaque Bearer token and expiry. Failed responses never set a cookie. */
         post: operations["register"];
         delete?: never;
         options?: never;
@@ -77,7 +79,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Website same-origin read. Origin must match the configured origin when supplied; absent Origin requires Sec-Fetch-Site: same-origin. Any supplied Sec-Fetch-Site must be same-origin. */
+        /** @description Accepts a selected website cookie with same-origin checks, or a unique opaque mini-program Bearer token. Bearer must not be mixed with Session-Id or any session cookie and does not require website Origin. Website Origin must match when supplied; absent Origin requires Sec-Fetch-Site: same-origin. */
         get: operations["currentAccount"];
         put?: never;
         post?: never;
@@ -285,7 +287,7 @@ export interface paths {
         get?: never;
         put?: never;
         post?: never;
-        /** @description Revokes the currently authenticated website session and returns its permanent logout ID, count and time. Requires a current valid website session and exact Origin. Any supplied Sec-Fetch-Site must be same-origin. Success clears only the authenticated session cookie. The revoked session cannot replay DELETE; a new valid session of the same account can read the original result with GET /revocations. */
+        /** @description Revokes the currently authenticated session. Website cookies require exact Origin and same-origin Sec-Fetch-Site when supplied. Mini-program Bearer requires no website Origin and cannot be mixed with Session-Id or a session cookie. Only website success clears its selected cookie. A revoked proof cannot replay DELETE; a new session of the same account can read the original with GET /revocations. */
         delete: operations["revokeCurrentSession"];
         options?: never;
         head?: never;
@@ -299,7 +301,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** @description Requires a current valid website session of the original account. Reads the permanent original logout's scope, initiatorId and complete fixed session set ordered by session ID, even after short-term session cleanup. The required original object binds scope and initiatorId for a nonempty set; missing and other-account operations return original: null and an empty list. This read neither executes logout nor sets a cookie. Origin must match the configured origin when supplied; absent Origin requires Sec-Fetch-Site: same-origin. Any supplied Sec-Fetch-Site must be same-origin. */
+        /** @description Requires a valid website cookie or mini-program Bearer session of the original account. Reads the permanent logout scope, initiatorId and fixed session set in session-ID order, even after session cleanup. Missing and other-account operations return original: null and an empty list. This read never executes logout or sets a cookie. Website Origin must match when supplied; absent Origin requires same-origin Sec-Fetch-Site. Bearer does not require website Origin and cannot be mixed with website credentials. */
         get: operations["readRevocations"];
         put?: never;
         post?: never;
@@ -448,14 +450,19 @@ export interface components {
             mobile: string;
             /** @enum {string} */
             type: "message";
+        } | {
+            code: string;
+            /** @enum {string} */
+            type: "mobile";
         };
         "session.Receipt": {
             code: string;
-            session: components["schemas"]["session.Session"];
+            session: components["schemas"]["session.Delivery"];
         } | {
             code: string;
             registration: components["schemas"]["session.Registration"];
         };
+        "session.Delivery": components["schemas"]["session.Session"] | components["schemas"]["session.Mini"];
         "session.Session": {
             /** Format: date-time */
             expiresAt: string;
@@ -463,6 +470,12 @@ export interface components {
         };
         /** Format: uuid */
         "session.Id": string;
+        "session.Mini": {
+            /** Format: date-time */
+            expiresAt: string;
+            id: components["schemas"]["session.Id"];
+            token: string;
+        };
         "session.Registration": {
             /** Format: date-time */
             expiresAt: string;
@@ -497,7 +510,7 @@ export interface components {
         "person.Name": string;
         "registration.Receipt": {
             code: string;
-            session: components["schemas"]["session.Session"];
+            session: components["schemas"]["session.Delivery"];
         };
         "current.Receipt": {
             account: components["schemas"]["current.Account"];
@@ -1036,8 +1049,6 @@ export interface operations {
             header: {
                 /** @description Original R1 operation UUID */
                 "Operation-Id": string;
-                /** @description Required configured HTTPS origin */
-                Origin: string;
             };
             path?: never;
             cookie?: never;
@@ -1048,12 +1059,12 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Original session cookie or pending registration */
+            /** @description Source-specific original session or pending registration */
             200: {
                 headers: {
                     /** @description no-store */
                     "Cache-Control"?: string;
-                    /** @description Only a session result sets its original secure cookie */
+                    /** @description Only a website session result sets its original secure cookie */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
@@ -1083,7 +1094,7 @@ export interface operations {
                     "application/json": components["schemas"]["Failure"];
                 };
             };
-            /** @description verification_invalid or permission_denied */
+            /** @description verification_invalid, permission_denied or mobile_unsupported */
             403: {
                 headers: {
                     /** @description no-store */
@@ -1190,10 +1201,10 @@ export interface operations {
             header: {
                 /** @description Original logout operation UUID */
                 "Operation-Id": string;
-                /** @description Selects the website session cookie */
-                "Session-Id": string;
-                /** @description Required exact configured origin */
-                Origin: string;
+                /** @description Website cookie mode only */
+                "Session-Id"?: string | null;
+                /** @description Opaque mini-program Bearer token; exclusive with website credentials */
+                Authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -1311,8 +1322,6 @@ export interface operations {
             header: {
                 /** @description Original R2 operation UUID */
                 "Operation-Id": string;
-                /** @description Required configured HTTPS origin */
-                Origin: string;
             };
             path?: never;
             cookie?: never;
@@ -1328,7 +1337,7 @@ export interface operations {
                 headers: {
                     /** @description no-store */
                     "Cache-Control"?: string;
-                    /** @description The same original secure session cookie */
+                    /** @description Website mode only: the same original secure session cookie */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
@@ -1336,12 +1345,12 @@ export interface operations {
                     "application/json": components["schemas"]["registration.Receipt"];
                 };
             };
-            /** @description Account created; original session cookie */
+            /** @description Account created; source-specific original session */
             201: {
                 headers: {
                     /** @description no-store */
                     "Cache-Control"?: string;
-                    /** @description Original secure session cookie */
+                    /** @description Website mode only: original secure session cookie */
                     "Set-Cookie"?: string;
                     [name: string]: unknown;
                 };
@@ -1480,8 +1489,10 @@ export interface operations {
             header: {
                 /** @description Required request UUID; no persistent read operation */
                 "Operation-Id": string;
-                /** @description Required website session UUID; selects its canonical cookie name; Authorization is rejected */
-                "Session-Id": string;
+                /** @description Required only for website cookie mode */
+                "Session-Id"?: string | null;
+                /** @description Bearer plus a canonical 32-byte opaque token; mini-program mode only */
+                Authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -3075,10 +3086,10 @@ export interface operations {
             header: {
                 /** @description Original logout operation UUID */
                 "Operation-Id": string;
-                /** @description Selects the website session cookie */
-                "Session-Id": string;
-                /** @description Required exact configured origin */
-                Origin: string;
+                /** @description Website cookie mode only */
+                "Session-Id"?: string | null;
+                /** @description Opaque mini-program Bearer token; exclusive with website credentials */
+                Authorization?: string | null;
             };
             path?: never;
             cookie?: never;
@@ -3199,8 +3210,10 @@ export interface operations {
             header: {
                 /** @description This read request UUID */
                 "Operation-Id": string;
-                /** @description Selects a currently valid website session cookie */
-                "Session-Id": string;
+                /** @description Website cookie mode only */
+                "Session-Id"?: string | null;
+                /** @description Opaque mini-program Bearer token; exclusive with website credentials */
+                Authorization?: string | null;
             };
             path?: never;
             cookie?: never;

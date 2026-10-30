@@ -5,6 +5,7 @@ use std::fmt::{self, Formatter};
 use domain::identity::{
     challenge,
     message::{self, credentials::AccessKey},
+    mini,
 };
 use serde::Deserialize;
 use thiserror::Error;
@@ -12,6 +13,25 @@ use zeroize::Zeroizing;
 
 use crate::credentials::{self, Filename, deserialize_version, read};
 
+pub(crate) fn mini(app_id: mini::AppId) -> Result<mini::client::Client, Error> {
+    let directory = credentials::directory()?;
+    let Mini {
+        version: (),
+        secret,
+    } = read::<Mini>(&directory, Filename::Mini)?;
+    Ok(mini::client::Client::new(
+        app_id,
+        mini::client::Secret::new(secret)?,
+    )?)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Mini {
+    #[serde(deserialize_with = "deserialize_version")]
+    version: (),
+    secret: Zeroizing<String>,
+}
 /// Reusable clients returned only after both suppliers initialize successfully.
 #[derive(Debug)]
 pub struct Clients {
@@ -86,6 +106,10 @@ struct Message {
 /// Startup failure with controlled diagnostics; source details must not be logged.
 #[derive(Error)]
 pub enum Error {
+    #[error("{0}")]
+    MiniSecret(#[from] mini::client::SecretError),
+    #[error("mini-program supplier initialization failed")]
+    Mini(#[from] mini::client::BuildError),
     #[error("{0}")]
     ChallengeSecret(#[from] challenge::credentials::ParseError),
     #[error("{0}")]

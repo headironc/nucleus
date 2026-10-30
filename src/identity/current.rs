@@ -34,7 +34,7 @@ pub(super) fn router(context: &Context) -> OpenApiRouter<Context> {
     OpenApiRouter::new().routes(routes!(read).map(|router| {
         router.route_layer(middleware::from_fn_with_state(
             context.clone(),
-            authenticate,
+            authenticate_mobile,
         ))
     }))
 }
@@ -78,7 +78,7 @@ async fn authenticate_at(
     deadline: Instant,
     writing: bool,
 ) -> Result<(), Error> {
-    let proof = proof(request.headers())?;
+    let proof = proof(request.headers(), false)?;
     if writing && !request.headers().contains_key("origin") {
         return Err(Error::Origin);
     }
@@ -103,7 +103,7 @@ pub(crate) async fn authenticate(
     } else {
         context.admission.read(source.address())?;
     }
-    authenticate_request(context, request, next).await
+    authenticate_request(context, request, next, false).await
 }
 
 pub(crate) async fn authenticate_code(
@@ -114,23 +114,43 @@ pub(crate) async fn authenticate_code(
 ) -> Result<Response, impl IntoResponse> {
     context.admission.accept(source.address())?;
     request.extensions_mut().insert(source);
-    authenticate_request(context, request, next).await
+    authenticate_request(context, request, next, false).await
+}
+
+pub(super) async fn authenticate_mobile(
+    State(context): State<Context>,
+    source: source::Source,
+    request: Request,
+    next: Next,
+) -> Result<Response, Error> {
+    if matches!(
+        *request.method(),
+        Method::DELETE | Method::POST | Method::PUT
+    ) {
+        context.admission.write(source.address())?;
+    } else {
+        context.admission.read(source.address())?;
+    }
+    authenticate_request(context, request, next, true).await
 }
 
 async fn authenticate_request(
     context: Context,
     mut request: Request,
     next: Next,
+    mobile: bool,
 ) -> Result<Response, Error> {
     let writing = matches!(
         *request.method(),
         Method::DELETE | Method::POST | Method::PUT
     );
-    let proof = proof(request.headers())?;
-    if writing && !request.headers().contains_key("origin") {
-        return Err(Error::Origin);
+    let proof = proof(request.headers(), mobile)?;
+    if matches!(proof, Proof::Cookie { .. }) {
+        if writing && !request.headers().contains_key("origin") {
+            return Err(Error::Origin);
+        }
+        origin(request.headers(), &context)?;
     }
-    origin(request.headers(), &context)?;
     let actor = timeout(
         Duration::from_secs(30),
         context.services.current().authenticate(proof),
@@ -140,9 +160,26 @@ async fn authenticate_request(
     Ok(next.run(request).await)
 }
 
-fn proof(headers: &HeaderMap) -> Result<Proof, Error> {
+fn proof(headers: &HeaderMap, mobile: bool) -> Result<Proof, Error> {
     if headers.contains_key("authorization") {
-        return Err(Error::Input);
+        if !mobile
+            || headers.contains_key("session-id")
+            || crate::identity::session::present(headers)?
+        {
+            return Err(Error::Input);
+        }
+        let mut values = headers.get_all("authorization").iter();
+        let value = values.next().ok_or(Error::Input)?;
+        if values.next().is_some() {
+            return Err(Error::Input);
+        }
+        let (scheme, token) = value.to_str()?.split_once(' ').ok_or(Error::Input)?;
+        if !scheme.eq_ignore_ascii_case("Bearer") {
+            return Err(Error::Input);
+        }
+        return Ok(Proof::Bearer {
+            token: token.parse().map_err(invalid_token)?,
+        });
     }
     let mut values = headers.get_all("session-id").iter();
     let value = values.next().ok_or(Error::Missing)?;
@@ -150,10 +187,14 @@ fn proof(headers: &HeaderMap) -> Result<Proof, Error> {
         return Err(Error::Input);
     }
     let id: session::Id = value.to_str()?.parse()?;
-    Ok(Proof {
+    Ok(Proof::Cookie {
         id,
         token: crate::identity::session::read(headers, id)?,
     })
+}
+
+fn invalid_token(_: session::ParseError) -> Error {
+    Error::Input
 }
 
 fn origin(headers: &HeaderMap, context: &Context) -> Result<(), Error> {
@@ -207,9 +248,10 @@ struct Binding {
 }
 
 #[utoipa::path(get, path = "/accounts/current", operation_id = "currentAccount",
-    description = "Website same-origin read. Origin must match the configured origin when supplied; absent Origin requires Sec-Fetch-Site: same-origin. Any supplied Sec-Fetch-Site must be same-origin.",
+    description = "Accepts a selected website cookie with same-origin checks, or a unique opaque mini-program Bearer token. Bearer must not be mixed with Session-Id or any session cookie and does not require website Origin. Website Origin must match when supplied; absent Origin requires Sec-Fetch-Site: same-origin.",
     params(("Operation-Id" = Uuid, Header, description = "Required request UUID; no persistent read operation"),
-        ("Session-Id" = Uuid, Header, description = "Required website session UUID; selects its canonical cookie name; Authorization is rejected")),
+        ("Session-Id" = Option<Uuid>, Header, description = "Required only for website cookie mode"),
+        ("Authorization" = Option<String>, Header, description = "Bearer plus a canonical 32-byte opaque token; mini-program mode only")),
     responses((status = 200, description = "Complete current account; no session refresh", body = Receipt),
         (status = 400, description = "invalid_input", body = Failure), (status = 401, description = "authentication_invalid", body = Failure),
         (status = 403, description = "permission_denied", body = Failure), (status = 429, description = "rate_limited", body = Failure, headers(("Retry-After" = u64, description = "Wait seconds before another attempt"))),
