@@ -19,7 +19,7 @@
 | 空库初始化与停机指派                      | 已交付   | [Access 初始化与指派](operations/access.md)                                                                                                                                |
 | 个人 main 固定发布候选与可信晋级工具      | 已退役   | [历史晋级契约](engineering/review-gate.md#个人-main-固定发布候选)；自动程序和专属回归已移除；历史源码与外部原操作材料保留                                                  |
 | 个人 dev 独立 PR 准入与可信 squash        | 已退役   | [历史 dev 契约](engineering/review-gate.md#个人-dev-严格同步-pr)；自动程序和专属回归已移除；历史源码与外部原操作材料保留                                                   |
-| 普通开发 PR 审查自动核验与 App 批准       | 目标     | [审查与批准目标](engineering/delivery.md#审查关卡与证据复用)；显式请求审查并采用共享额度兜底，App 程序、机器解析合同与部署尚未交付，不恢复旧控制器                         |
+| 普通开发 PR 审查自动核验与 App 批准       | 目标     | [机器合同与源码](engineering/review-approval.md)已具备本地模拟；真实凭据、批准、撤回及部署待验收，不恢复旧控制器                                                           |
 | 网站当前身份、本人资料与账户会话封印      | 已交付   | [当前身份](identity/current.md)、[账户](identity/account.md)、[会话事实](identity/session.md)                                                                              |
 | Halo 网站本人姓名与身份证尾号摘要         | 已交付   | [当前身份](identity/current.md#本人账户投影)、[页面](client/pages.md#网站本人账户设计稿)                                                                                   |
 | Halo 网站本人微信绑定事实摘要             | 已交付   | [当前身份](identity/current.md#本人账户投影)、[页面](client/pages.md#网站本人账户设计稿)                                                                                   |
@@ -86,26 +86,27 @@
 
 [Rust 规范](engineering/rust.md)与 [SQL 规范](engineering/sql.md)是仓库维护的语言、依赖、数据与失败处理规则。[模型政策](engineering/models.md)维护模型选择与协作要求。这些规则保留上游来源，采用新版本前审阅差异；团队和托管审查不依赖个人 Codex 目录。工具链和测试命令见 [Rust 工作区验证](engineering/rust.md#workspace-validation)。工具选型、源码检查方法、自动化范围与证据要求见[验证边界](engineering/verification.md)。
 
-| 文档                                           | 独立职责                                                                                |
-| ---------------------------------------------- | --------------------------------------------------------------------------------------- |
-| [完整架构](architecture.md)                    | 事实所有权、共同事务、并发、原操作、恢复、文件后果、类型、crate、PostgreSQL、启动和停止 |
-| [业务交付顺序](engineering/delivery.md)        | 实施切片、开发循环、持续授权、审查与 App 批准目标、分支提升、剩余范围与依赖及验收       |
-| [审查关卡契约](engineering/review-gate.md)     | 退役部署的身份、候选及基线绑定，以及保留的原操作历史与恢复解释                          |
-| [模型选择与协作](engineering/models.md)        | 模型默认值与升级、运行限制、委派接纳和上下文接续                                        |
-| [模型行为场景](engineering/model-scenarios.md) | 模型与交付流程的验收输入、可观察预期与失败条件                                          |
-| [Claude Code 调用](engineering/claude-code.md) | 经官方 DeepSeek 或 OpenCode 的只读、有界执行调用、工具审批、输出与失败恢复边界          |
-| [项目标识](identifiers.md)                     | UUIDv4 服务端生成、客户端值解析、披露及非时间语义                                       |
-| [数据库](database.md)                          | 连接、TLS、登录身份、运行权限和现有连接库                                               |
-| [部署设置](settings.md)                        | 环境键、输入规则、默认值与消费所有者                                                    |
-| [密钥材料](keys.md)                            | 用途、格式、受控编码、密码信封与持久元数据                                              |
-| [凭据文件](platform/credentials.md)            | 入口秘密文件格式、装载和脱敏                                                            |
-| [部署工具](engineering/deployment.md)          | 现有迁移与初始化命令及原结果回读                                                        |
-| [密钥维护](operations/keys.md)                 | 停机换钥及材料切换                                                                      |
-| [密钥引用范围](operations/key-scope.md)        | 各用途退役前的实际持久引用                                                              |
-| [停机维护](operations/maintenance.md)          | 实例互斥、运行身份、原输入重放与未知结局恢复                                            |
-| [Access 初始化与指派](operations/access.md)    | 空库建立首个管理员、系统角色及停机指派                                                  |
-| [容量输入](engineering/capacity.md)            | 已有规模估算及证据限制                                                                  |
-| [设计证据](engineering/evidence.md)            | 外部来源及其核验边界                                                                    |
+| 文档                                                    | 独立职责                                                                                |
+| ------------------------------------------------------- | --------------------------------------------------------------------------------------- |
+| [完整架构](architecture.md)                             | 事实所有权、共同事务、并发、原操作、恢复、文件后果、类型、crate、PostgreSQL、启动和停止 |
+| [业务交付顺序](engineering/delivery.md)                 | 实施切片、开发循环、持续授权、审查与 App 批准目标、分支提升、剩余范围与依赖及验收       |
+| [审查关卡契约](engineering/review-gate.md)              | 退役部署的身份、候选及基线绑定，以及保留的原操作历史与恢复解释                          |
+| [Cladiron 批准机器合同](engineering/review-approval.md) | 普通开发 PR 的机器证据、额度选择输入、批准原操作及未知结果恢复                          |
+| [模型选择与协作](engineering/models.md)                 | 模型默认值与升级、运行限制、委派接纳和上下文接续                                        |
+| [模型行为场景](engineering/model-scenarios.md)          | 模型与交付流程的验收输入、可观察预期与失败条件                                          |
+| [Claude Code 调用](engineering/claude-code.md)          | 经官方 DeepSeek 或 OpenCode 的只读、有界执行调用、工具审批、输出与失败恢复边界          |
+| [项目标识](identifiers.md)                              | UUIDv4 服务端生成、客户端值解析、披露及非时间语义                                       |
+| [数据库](database.md)                                   | 连接、TLS、登录身份、运行权限和现有连接库                                               |
+| [部署设置](settings.md)                                 | 环境键、输入规则、默认值与消费所有者                                                    |
+| [密钥材料](keys.md)                                     | 用途、格式、受控编码、密码信封与持久元数据                                              |
+| [凭据文件](platform/credentials.md)                     | 入口秘密文件格式、装载和脱敏                                                            |
+| [部署工具](engineering/deployment.md)                   | 现有迁移与初始化命令及原结果回读                                                        |
+| [密钥维护](operations/keys.md)                          | 停机换钥及材料切换                                                                      |
+| [密钥引用范围](operations/key-scope.md)                 | 各用途退役前的实际持久引用                                                              |
+| [停机维护](operations/maintenance.md)                   | 实例互斥、运行身份、原输入重放与未知结局恢复                                            |
+| [Access 初始化与指派](operations/access.md)             | 空库建立首个管理员、系统角色及停机指派                                                  |
+| [容量输入](engineering/capacity.md)                     | 已有规模估算及证据限制                                                                  |
+| [设计证据](engineering/evidence.md)                     | 外部来源及其核验边界                                                                    |
 
 ## HTTP 与客户端
 
