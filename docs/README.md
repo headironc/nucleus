@@ -19,7 +19,7 @@
 | 空库初始化与停机指派                           | 已交付 | [Access 初始化与指派](operations/access.md)                                                                                                          |
 | 个人 main 固定发布候选与可信晋级工具           | 已退役 | [历史晋级契约](engineering/review-gate.md#个人-main-固定发布候选)；自动程序和专属回归已移除；历史源码与外部原操作材料保留                            |
 | 个人 dev 独立 PR 准入与可信 squash             | 已退役 | [历史 dev 契约](engineering/review-gate.md#个人-dev-严格同步-pr)；自动程序和专属回归已移除；历史源码与外部原操作材料保留                             |
-| 普通开发 PR 双提供方自动核验与 App 批准        | 目标   | [审查与批准目标](engineering/delivery.md#审查关卡与证据复用)；手动请求两方审查，App 程序、机器解析合同与部署尚未交付，不恢复旧控制器                 |
+| 普通开发 PR 审查自动核验与 App 批准            | 目标   | [审查与批准目标](engineering/delivery.md#审查关卡与证据复用)；显式请求审查并采用共享额度兜底，App 程序、机器解析合同与部署尚未交付，不恢复旧控制器   |
 | 网站当前身份、本人资料与账户会话封印           | 已交付 | [当前身份](identity/current.md)、[账户](identity/account.md)、[会话事实](identity/session.md)                                                        |
 | Halo 网站本人姓名与身份证尾号摘要              | 已交付 | [当前身份](identity/current.md#本人账户投影)、[页面](client/pages.md#网站本人账户设计稿)                                                             |
 | Halo 网站本人微信绑定事实摘要                  | 已交付 | [当前身份](identity/current.md#本人账户投影)、[页面](client/pages.md#网站本人账户设计稿)                                                             |

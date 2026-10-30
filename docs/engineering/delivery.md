@@ -98,7 +98,7 @@
 
 ### 审查关卡与证据复用
 
-旧 CI、Cladiron 关卡和自动准入工作流已退役。当前平台采用[普通分支保护](#普通分支保护)，强制当前候选的四项原生 CI 检查通过。交付负责人另行验收适用本地检查和业务结果。普通开发 PR 按下文完成 Cubic 与 Codex 双提供方审查，并以仓库自有 App 核验后批准为交付目标。晋级的 AI 审查例外由[项目指令](../../AGENTS.md#commits-and-review)拥有，不将双提供方审查或其 App 批准条件扩大到 `dev`→`main` 提升。审查通过本身仍不授权合并。旧部署协议与原操作恢复由[历史关卡契约](review-gate.md)解释，不恢复旧流程。
+旧 CI、Cladiron 关卡和自动准入工作流已退役。当前平台采用[普通分支保护](#普通分支保护)，强制当前候选的四项原生 CI 检查通过。交付负责人另行验收适用本地检查和业务结果。普通开发 PR 按下文请求 Cubic 与 Codex，提供方选择和额度兜底遵守采用的共享规则。仓库自有 App 核验适用审查路线后批准仍为交付目标。晋级的 AI 审查例外由[项目指令](../../AGENTS.md#commits-and-review)拥有，不将本节审查或其 App 批准条件扩大到 `dev`→`main` 提升。审查通过本身仍不授权合并。旧部署协议与原操作恢复由[历史关卡契约](review-gate.md)解释，不恢复旧流程。
 
 每个 PR 的唯一执行者绑定 PR、完整 head 提交和目标分支基线，完成[适用本地检查](verification.md#检查范围)及适用审查。发现处理者核对已出现的具体缺陷，在原线程记录修复及验证，或非阻塞建议的延期理由、拒绝依据，再解决线程。保留原严重度及处置原因；解决线程不能代替缺陷修复。候选或相关基线变化后补齐受影响覆盖，输入未变的证据继续复用。保留旧轮发现及处置，不以新轮无发现抹去旧缺陷。
 
@@ -106,17 +106,19 @@
 
 #### 普通开发 PR 的手动审查
 
-普通开发 PR 由负责人显式请求两方审查，不等待自动触发或自动轮次超时。写前先回读同一 PR、head 和基线的有效请求与结果，复用已有覆盖，不重复请求。按 [Cubic 官方调用](https://docs.cubic.dev/ai-review/introduction)，发表评论 `@cubic-dev-ai review this PR`；按 [Codex 官方调用](https://learn.chatgpt.com/docs/third-party/github)，发表评论 `@codex review`。这两个首次请求属于正常交付流程，不属于异常恢复。
+提供方选择及额度兜底采用 [agents 审查规则（36d239e）](https://github.com/headironc/agents/blob/36d239ead2ea214e720e3ae555226beb4d81ba36/delivery/policy/review.md#review-provider-selection)。本仓库普通开发 PR 正常显式请求两方；证实 Cubic 额度不足时，按该规则由 Codex 完成适用代码与安全审查，不把 Cubic 未执行记录为通过。额度判断、账号与用量池绑定及恢复边界由共享源拥有。
+
+负责人不等待自动触发或自动轮次超时。写前先回读同一 PR、head 和基线的有效请求与结果，复用已有覆盖，不重复请求。按 [Cubic 官方调用](https://docs.cubic.dev/ai-review/introduction)，发表评论 `@cubic-dev-ai review this PR`；按 [Codex 官方调用](https://learn.chatgpt.com/docs/third-party/github)，发表评论 `@codex review`。所选路线的首次请求属于正常交付流程，不属于异常恢复。
 
 Cubic 的[普通 PR 审查包含安全范围](https://docs.cubic.dev/ai-review/key-features)，不虚构独立的 security 触发命令。Codex 则分别核对 Code Review 与 Security Review 的完成结果。先确认代码请求是否已实际联动安全审查；已有有效安全请求或结果时沿原句柄接续，仅在未覆盖时补发 `@codex security review`。联动设置及两种命令的契约见上述 Codex 官方文档。[Cubic 手动请求](https://docs.cubic.dev/ai-review/ai-review-settings)仍受文件忽略规则和实际限制约束；手动请求回执不证明全部必要材料已审。
 
-每方证据绑定请求 ID、对应运行和完成结果，并保留提供方身份、PR、完整 head、目标基线、实际范围与未覆盖材料。核对真实报告、完成语义及全部结果面上的发现。接受无发现结论时，确认提供方的完成报告明确覆盖所绑定的候选及范围。单独的 `SUCCESS`、summary、反应图标或零线程不证明审查执行。明确跳过、仅合并而未审、额度耗尽、未运行、失败或未知均不算通过；一方成功不能替代另一方。可选或为 `null` 的报告字段不推定为“无问题”，应从对应完整报告或独立完成回执核实；结果仍未知时保持批准依赖未完成。
+各方证据绑定请求 ID、对应运行和完成结果，并保留提供方身份、PR、完整 head、目标基线、实际范围与未覆盖材料。核对真实报告、完成语义及全部结果面上的发现。接受无发现结论时，确认提供方的完成报告明确覆盖所绑定的候选及范围。单独的 `SUCCESS`、summary、反应图标或零线程不证明审查执行。明确跳过、仅合并而未审、额度耗尽、未运行、失败或未知均不算该方通过。Cubic 额度兜底只改变适用路线，不伪造其成功结果。可选或为 `null` 的报告字段不推定为“无问题”，应从对应完整报告或独立完成回执核实；结果仍未知时保持批准依赖未完成。
 
-原负责人沿现有句柄观察两方完成结果与发现。审查异常时保留原轮次及未知写入，按[审查恢复场景](model-scenarios.md#审查恢复)与已采用的[有界恢复规则](https://github.com/silence-force/agents/blob/739680761c13dcb3e3d2bb216360dfe453a89d07/delivery/policy/review.md#stalled-review-recovery)处理。任一方受限时只阻塞依赖该审查的批准，继续独立获准工作，不更换账号、修改配置或用另一方兜底。晋级已有的 AI 请求和报告保留真实状态，不因例外而删除证据，也不为取得审查绿灯重新触发。
+原负责人沿现有句柄观察所选路线的完成结果与发现。审查异常时保留原轮次及未知写入，按[审查恢复场景](model-scenarios.md#审查恢复)与已采用的[有界恢复规则](https://github.com/silence-force/agents/blob/739680761c13dcb3e3d2bb216360dfe453a89d07/delivery/policy/review.md#stalled-review-recovery)处理。适用路线仍缺覆盖时只阻塞依赖该审查的批准，继续独立获准工作，不更换账号或修改配置。晋级已有的 AI 请求和报告保留真实状态，不因例外而删除证据，也不为取得审查绿灯重新触发。
 
 #### App 核验与批准目标
 
-普通开发 PR 的批准目标由仓库自有 Cladiron App 执行：两方审查均通过且覆盖适用的代码与安全范围、发现处置完成、无未解决 inline review thread，并且当前候选的适用 CI 全部成功后，才发布 `APPROVE`。读取 inline 状态时完整分页查询 GitHub `reviewThreads`，逐项确认 `isResolved`。曾有评论且已处置、resolve 的线程符合要求；`isOutdated` 不代替解决。REST comments 列表为空、计数为零或只读取第一页都不证明全部线程已解决。没有 inline thread 的报告或其他结果面上的阻塞发现仍须处置。
+普通开发 PR 的批准目标由仓库自有 Cladiron App 执行：所选路线的代码与安全审查全部通过、发现处置完成、无未解决 inline review thread，并且当前候选的适用 CI 全部成功后，才发布 `APPROVE`。采用 Cubic 额度兜底时保留共享规则要求的证据，核实 Codex 的两类完成结果，不再等待 Cubic 通过。读取 inline 状态时完整分页查询 GitHub `reviewThreads`，逐项确认 `isResolved`。曾有评论且已处置、resolve 的线程符合要求；`isOutdated` 不代替解决。REST comments 列表为空、计数为零或只读取第一页都不证明全部线程已解决。没有 inline thread 的报告或其他结果面上的阻塞发现仍须处置。
 
 CI 的候选绑定遵守[触发与选检](verification.md#ci-触发与选检)，按[普通分支保护](#普通分支保护)核验各适用 workflow 最新有效 run/attempt。四项稳定 required checks 与受影响的专用 CI 都成功才满足批准条件。批准前回读候选、相关基线、审查、线程与 CI，发生变化时补齐受影响证据。
 
