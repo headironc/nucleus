@@ -15,6 +15,7 @@ export type Registration = Extract<Receipt, { registration: unknown }>["registra
 export type RegistrationInput = paths["/api/v1/registrations"]["post"]["requestBody"]["content"]["application/json"];
 export type Account = paths["/api/v1/accounts/current"]["get"]["responses"][200]["content"]["application/json"]["account"];
 export type Collection = paths["/api/v1/revocations"]["get"]["responses"][200]["content"]["application/json"];
+export type OwnSession = paths["/api/v1/sessions"]["get"]["responses"][200]["content"]["application/json"]["sessions"][number];
 type Endpoint = keyof typeof contracts;
 export type Result = { status: number; value: Record<string, any>; retryAfter: number };
 
@@ -79,4 +80,10 @@ export function matchesLogout(collection: Collection, scope: "current" | "all", 
   const ids = collection.revocations.map(item => item.id);
   return ids.includes(initiator) && ids.every((id, index) => index === 0 || id > ids[index - 1]) &&
     collection.revocations.every(item => item.revokedAt === collection.revocations[0].revokedAt);
+}
+
+export function validSessions(sessions: OwnSession[], selected: string): boolean {
+  return sessions.filter(item => item.current).length === 1 &&
+    sessions.every((item, index) => item.current === (item.id === selected) &&
+      (index === 0 || item.id > sessions[index - 1].id));
 }

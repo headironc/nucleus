@@ -5,7 +5,8 @@ import openapiTS, { astToString } from "openapi-typescript";
 import { selectDocument, compile, type Method } from "../../halo/tools/protocol.ts";
 
 export const endpoints: Record<string, readonly Method[]> = {
-  "/api/v1/sessions": ["post", "delete"],
+  "/api/v1/sessions": ["get", "post", "delete"],
+  "/api/v1/sessions/{id}": ["delete"],
   "/api/v1/registrations": ["post"],
   "/api/v1/accounts/current": ["get"],
   "/api/v1/sessions/current": ["delete"],

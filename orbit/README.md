@@ -1,6 +1,6 @@
 # Orbit 小程序
 
-原生页面入口是公开简介与个人账户。源码位于 `src/`，包内 JavaScript、WXML、WXSS 与项目配置由构建器生成。能力状态统一见[文档索引](../docs/README.md#能力状态)；手机号、实名注册、本人及退出契约分别由[手机号认证](../docs/identity/mini-mobile.md)、[正式注册](../docs/identity/registration.md)、[当前身份](../docs/identity/current.md)和[会话撤销](../docs/identity/revocation.md)拥有。
+原生页面入口是公开简介、个人账户与独立登录管理。源码位于 `src/`，包内 JavaScript、WXML、WXSS 与项目配置由构建器生成。能力状态统一见[文档索引](../docs/README.md#能力状态)；手机号、实名注册、本人及退出契约分别由[手机号认证](../docs/identity/mini-mobile.md)、[正式注册](../docs/identity/registration.md)、[当前身份](../docs/identity/current.md)和[会话撤销](../docs/identity/revocation.md)拥有。
 
 ## 本地检查
 
@@ -48,9 +48,13 @@ ORBIT_API_ORIGIN="$APPROVED_API_ORIGIN" ORBIT_APP_ID="$APPROVED_MINI_APP_ID" \
 
 当前与全部退出保存原范围、发起会话和账户。401 不证明原退出结果；同账户重新登录后只读原撤销证明，核对原范围与发起会话，不用新会话重放旧 DELETE。另一账户的未明退出不阻止当前账户正常退出。恢复期限结束只保留不含秘密的未知标记，不声明退出失败。
 
+登录管理消费正式快照中的 `GET /api/v1/sessions` 与 `DELETE /api/v1/sessions/{id}`，来源仍为唯一共同 OpenAPI。列表按服务端 ID 顺序呈现网站或小程序来源、建立时间与本次登录标记，不保存设备、位置或活跃时间。当前项不提供行内退出；确认同时绑定原会话、代次和所选目标。成功只移除该目标，保留发起者。单条结果未知后只由用户明确刷新列表，不自动重发、不查询原结果，不以刷新后的存在或消失推断此前结果。当前及全部退出继续使用原恢复协议。新增页面仍由应用唯一 `Controller` 管理会话与资料寿命。
+
 ## 静态视觉材料
 
 `tools/snapshots.ts` 读取实际 WXML 的具名区段与 WXSS，在禁网络的 Chromium 中生成 320、390 像素的登录、注册、账户和结果待确认截图。输出位置由 `ORBIT_VISUAL_OUTPUT` 显式指定；浏览器在 `finally` 关闭。它不实现 WXML 运行框架，也不模拟微信导航、授权窗口或原生输入行为。
+
+`tools/session-snapshots.ts` 读取登录管理 WXML 的具体行、全部退出区域与共享 WXSS，结合实际控制器的受控列表、单条未知、刷新及完成状态生成同样两种宽度的像素。确认窗口只作静态内容示意，实际原生弹窗事件由导出包宿主回归核对。工具禁止网络，并在结束时关闭浏览器和控制器计时；不证明微信原生渲染。
 
 ```bash
 ORBIT_VISUAL_OUTPUT="$EVIDENCE_DIRECTORY" bun tools/snapshots.ts

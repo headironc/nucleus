@@ -1,5 +1,5 @@
 {
-  "pages": ["pages/home/index", "pages/account/index"],
+  "pages": ["pages/home/index", "pages/account/index", "pages/sessions/index"],
   "window": {
     "navigationBarTitleText": "司籍处",
     "navigationBarBackgroundColor": "#f8f6ef",
