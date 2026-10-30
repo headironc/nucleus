@@ -202,6 +202,10 @@ test("account entry, four states, keyboard, responsive long name and read-only m
     }
   }
   await page.keyboard.press("Tab");
+  const applications = page.getByRole("link", { name: "我的工牌申请" });
+  await expect(applications).toBeFocused();
+  await expect(applications).toHaveAttribute("href", "/workforce/applications");
+  await page.keyboard.press("Tab");
   await expect(
     page.getByRole("button", { name: "刷新服务状态" }),
   ).toBeFocused();
@@ -370,14 +374,20 @@ test("number refresh is independent and null never guesses a reason", async ({
   await page.getByRole("button", { name: "刷新工号", exact: true }).focus();
   await page.keyboard.press("Enter");
   await expect(page.getByText("当前没有工号。", { exact: true })).toBeVisible();
-  expect(reads).toEqual(["/api/v1/workforce/current/numbers"]);
   await expect(page.getByText(name, { exact: true })).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "员工服务已开通" }),
   ).toBeVisible();
-  expect(await page.locator("main").innerText()).not.toMatch(
-    /从未|已被撤销|申请工号|查看工号|工牌/,
-  );
+  expect(
+    await page.getByRole("region", { name: "我的工号" }).innerText(),
+  ).not.toMatch(/从未|已被撤销|申请工号|查看工号|工牌/);
+  const applications = page.getByRole("link", { name: "我的工牌申请" });
+  await expect(applications).toBeVisible();
+  await expect(applications).toHaveAttribute("href", "/workforce/applications");
+  await page.getByRole("button", { name: "刷新工号", exact: true }).focus();
+  await page.keyboard.press("Tab");
+  await expect(applications).toBeFocused();
+  expect(reads).toEqual(["/api/v1/workforce/current/numbers"]);
 });
 
 for (const failure of ["503", "offline", "limited"])
