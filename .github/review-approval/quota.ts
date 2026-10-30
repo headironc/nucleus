@@ -366,7 +366,7 @@ export async function readQuota(
 ): Promise<QuotaEvidence | undefined> {
   const request = latestCodeRequest(comments, b);
   if (!request) return undefined;
-  const statements = comments.filter(
+  const candidates = comments.filter(
     (c) =>
       c.user?.id === ownerId &&
       c.user?.type === "User" &&
@@ -374,12 +374,20 @@ export async function readQuota(
         (typeof c.body === "string" &&
           c.body.startsWith(
             `${requestMarker(b)}\n\n<!-- cladiron-cubic-quota:v1 `,
-          ) &&
-          Date.parse(c.created_at) >= Date.parse(request.created_at))),
+          ))),
   );
   requireThat(
-    statements.every((c) => Number.isFinite(Date.parse(c.created_at))),
-    "Quota statement timestamp unavailable",
+    candidates.every(
+      (c) =>
+        Number.isFinite(Date.parse(c.created_at)) &&
+        Date.parse(c.created_at) <= now,
+    ),
+    "Quota statement timestamp unavailable or future",
+  );
+  const statements = candidates.filter(
+    (c) =>
+      c.id === request.id ||
+      Date.parse(c.created_at) >= Date.parse(request.created_at),
   );
   statements.sort(
     (a, b) => Date.parse(b.created_at) - Date.parse(a.created_at),
@@ -387,7 +395,8 @@ export async function readQuota(
   const statement = statements[0];
   if (!statement) return undefined;
   requireThat(
-    statements.length < 2 || statements[1].created_at !== statement.created_at,
+    statements.length < 2 ||
+      Date.parse(statements[1].created_at) !== Date.parse(statement.created_at),
     "Ambiguous quota routing statement",
   );
   requireThat(uneditedOwner(statement), "Quota routing statement was edited");
@@ -408,11 +417,26 @@ export async function readQuota(
     selectedAt >= Date.parse(request.created_at),
     "Quota selection predates its referenced Code request",
   );
-  const laterChoice = comments.some(
-    (c) =>
-      uneditedOwner(c) &&
-      c.body === requestBodies(b)[0] &&
-      Date.parse(c.created_at) > selectedAt,
+  const choices = comments.filter(
+    (c) => uneditedOwner(c) && c.body === requestBodies(b)[0],
+  );
+  const withdrawals = comments.filter(
+    (c) => uneditedOwner(c) && c.body === quotaWithdrawal(b),
+  );
+  requireThat(
+    [...choices, ...withdrawals].every(
+      (c) =>
+        Number.isFinite(Date.parse(c.created_at)) &&
+        Date.parse(c.created_at) <= now,
+    ),
+    "Quota control timestamp unknown or future",
+  );
+  requireThat(
+    !choices.some((c) => Date.parse(c.created_at) === selectedAt),
+    "Ambiguous same-time quota routing choice",
+  );
+  const laterChoice = choices.some(
+    (c) => Date.parse(c.created_at) > selectedAt,
   );
   if (laterChoice) return undefined;
   const original = await api.get(
@@ -436,11 +460,8 @@ export async function readQuota(
     reviews,
     selectedAt,
   );
-  const withdrawn = comments.some(
-    (c) =>
-      uneditedOwner(c) &&
-      c.body === quotaWithdrawal(b) &&
-      Date.parse(c.created_at) > selectedAt,
+  const withdrawn = withdrawals.some(
+    (c) => Date.parse(c.created_at) >= selectedAt,
   );
   requireThat(!withdrawn, "Owner withdrew the quota selection");
   return {

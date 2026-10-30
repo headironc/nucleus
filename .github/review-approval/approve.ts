@@ -6,6 +6,7 @@ import type { Intent } from "./intent.ts";
 
 export type Snapshot = Awaited<ReturnType<typeof snapshot>>;
 export type OperationOutcome = {
+  // This records only APPROVE POST, not token creation or dismissal PUT.
   attempted: boolean;
   resolved: boolean;
   reviews: number[];

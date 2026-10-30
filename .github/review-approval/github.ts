@@ -59,20 +59,35 @@ export class Github implements Api {
   }
   async pages(path: string, key?: string): Promise<Record[]> {
     const all: Record[] = [];
+    let total: number | undefined;
     // An incomplete page or API error never becomes an empty success.
     for (let page = 1; ; page++) {
       const result = await this.get(
         `${path}${path.includes("?") ? "&" : "?"}per_page=100&page=${page}`,
       );
+      if (key)
+        requireThat(
+          result !== null &&
+            typeof result === "object" &&
+            !Array.isArray(result),
+          "Missing keyed collection response",
+        );
       const items = key ? result[key] : result;
       requireThat(Array.isArray(items), `Missing page array ${key ?? path}`);
+      if (key) {
+        requireThat(
+          Number.isSafeInteger(result.total_count) && result.total_count >= 0,
+          "Missing collection total_count",
+        );
+        requireThat(
+          total === undefined || total === result.total_count,
+          "Collection total_count changed between pages",
+        );
+        total = result.total_count;
+      }
       all.push(...items);
       if (items.length < 100) {
-        if (key && typeof result.total_count === "number")
-          requireThat(
-            all.length === result.total_count,
-            "Truncated collection",
-          );
+        if (key) requireThat(all.length === total, "Truncated collection");
         const identities = all.map((v) => v.id ?? v.filename);
         requireThat(
           identities.every((v) =>

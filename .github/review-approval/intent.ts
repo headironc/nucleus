@@ -6,6 +6,7 @@ import {
   type Binding,
 } from "./identity.ts";
 import type { Api } from "./github.ts";
+import type { Record } from "./providers.ts";
 import type { QuotaEvidence } from "./quota.ts";
 import type { ReviewStarts, StartSelection } from "./review-start.ts";
 export type Intent = {
@@ -19,6 +20,42 @@ export type Intent = {
   startArtifacts?: StartSelection;
   reviewStarts?: ReviewStarts;
 };
+async function unstartedRun(api: Api, run: Record) {
+  const path = `/repos/${repository}/actions/runs/${run.id}`;
+  const same = (value: Record) =>
+    value.id === run.id &&
+    value.path === ".github/workflows/review-approval.yml" &&
+    value.repository?.id === repositoryId &&
+    value.event === "workflow_dispatch" &&
+    value.head_branch === "dev" &&
+    value.run_attempt === 1 &&
+    value.status === run.status &&
+    value.conclusion === null;
+  requireThat(
+    same(await api.get(path)),
+    "Unstarted approval run identity/state changed",
+  );
+  const jobs = await api.pages(`${path}/attempts/1/jobs`, "jobs");
+  const unstarted = (value: Record) =>
+    value.status === "queued" &&
+    value.started_at === null &&
+    value.completed_at === null &&
+    value.conclusion === null;
+  requireThat(
+    jobs.every(
+      (job) =>
+        job.run_id === run.id &&
+        unstarted(job) &&
+        Array.isArray(job.steps) &&
+        job.steps.every((step: Record) => unstarted(step)),
+    ),
+    "Queued approval execution has started or lacks complete state",
+  );
+  requireThat(
+    same(await api.get(path)),
+    "Queued approval run changed during audit",
+  );
+}
 export async function uncertainIntents(
   api: Api,
   pr: number,
@@ -38,6 +75,15 @@ export async function uncertainIntents(
         run.repository?.id === repositoryId,
       "Unexpected previous approval executor",
     );
+    if (
+      !current &&
+      run.run_attempt === 1 &&
+      ["queued", "pending"].includes(run.status) &&
+      run.conclusion === null
+    ) {
+      await unstartedRun(api, run);
+      continue;
+    }
     requireThat(
       current || run.status === "completed",
       `Previous approval executor ${run.id} has not terminated`,

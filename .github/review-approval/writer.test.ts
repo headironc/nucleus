@@ -18,7 +18,11 @@ import { EvidenceApi } from "./evidence.test.ts";
 import { b } from "./fixtures.ts";
 import { snapshot } from "./evidence.ts";
 import { approvalBody } from "./approve.ts";
-import { approveCandidate, invalidateCandidate } from "./main.ts";
+import {
+  approveCandidate,
+  invalidateCandidate,
+  prepareIntent,
+} from "./main.ts";
 import type { Intent } from "./intent.ts";
 
 const bot = { id: 300000001, type: "Bot", login: "cladiron[bot]" };
@@ -185,6 +189,107 @@ test("executor changes block both writer and dedicated withdrawal before token c
   expect(f.counts().minted).toBe(0);
   expect(f.api.posts).toBe(0);
   expect(f.api.puts).toEqual([]);
+});
+for (const field of ["head", "merge"])
+  test(`trusted ${field} drift invalidates evidence before mint and withdraws only prior App approval`, async () => {
+    const f = await fixture();
+    const changed = "3".repeat(40);
+    if (field === "head") f.api.state.head.sha = changed;
+    else {
+      f.api.state.merge_commit_sha = changed;
+      const get = f.api.get.bind(f.api);
+      f.api.get = async (path) =>
+        path.endsWith(`/git/commits/${changed}`)
+          ? {
+              ...(await get(`/repos/headironc/nucleus/git/commits/${b.merge}`)),
+              sha: changed,
+            }
+          : get(path);
+    }
+    await expect(
+      approveCandidate(f.api, f.planned, b.base, {}, f.controls),
+    ).rejects.toThrow("Candidate changed");
+    expect(f.counts()).toEqual({
+      invalidation: true,
+      minted: 0,
+      revoked: 0,
+      persisted: 1,
+    });
+    expect(fallback(f.counts().invalidation)).toBe(true);
+    expect(
+      await invalidateCandidate(f.api, b.pr, b.base, f.controls.mint),
+    ).toEqual([901]);
+    expect(f.api.puts).toEqual([901]);
+    expect(f.api.posts).toBe(0);
+    expect(f.counts().revoked).toBe(1);
+  });
+test("changed baseline or failed trust reread never delegates cleanup", async () => {
+  for (const cause of ["base", "reread"] as const) {
+    const f = await fixture();
+    if (cause === "base") f.api.state.base.sha = "3".repeat(40);
+    else {
+      f.api.state.head.sha = "3".repeat(40);
+      const get = f.api.get.bind(f.api);
+      let reads = 0;
+      f.api.get = async (path) => {
+        if (path.endsWith(`/pulls/${b.pr}`) && ++reads === 2)
+          throw new Error("Trust read unavailable");
+        return get(path);
+      };
+    }
+    await expect(
+      approveCandidate(f.api, f.planned, b.base, {}, f.controls),
+    ).rejects.toThrow();
+    expect(f.counts().invalidation).toBe(false);
+    expect(f.counts().minted).toBe(0);
+    expect(f.api.puts).toEqual([]);
+  }
+});
+test("intent identity failure is outside evidence invalidation, while evidence failure signals trusted cleanup", async () => {
+  const f = await fixture();
+  f.api.f.comments[2].body += "\nUnknown provider finding";
+  await expect(
+    prepareIntent(f.api, b.pr, b.base, {}, 0, 1, f.controls.invalidate),
+  ).rejects.toThrow("Invalid operation intent run");
+  expect(f.counts().invalidation).toBe(false);
+  await expect(
+    prepareIntent(f.api, b.pr, b.base, {}, 700, 1, f.controls.invalidate),
+  ).rejects.toThrow();
+  expect(f.counts().invalidation).toBe(true);
+  expect(f.counts().minted).toBe(0);
+  expect(f.api.posts).toBe(0);
+});
+test("unknown historical executions block a new approval without an evidence-invalidation signal", async () => {
+  for (const cause of ["unavailable", "unterminated"] as const) {
+    const f = await fixture();
+    const pages = f.api.pages.bind(f.api);
+    f.api.pages = async (path, key) => {
+      if (path.includes("/actions/workflows/review-approval.yml/")) {
+        if (cause === "unavailable")
+          throw new Error("Historical audit unavailable");
+        return [
+          {
+            id: 699,
+            path: ".github/workflows/review-approval.yml",
+            repository: { id: 1432619931 },
+            status: "in_progress",
+            run_attempt: 1,
+          },
+        ];
+      }
+      return pages(path, key);
+    };
+    await expect(
+      approveCandidate(f.api, f.planned, b.base, {}, f.controls),
+    ).rejects.toThrow();
+    expect(f.counts()).toEqual({
+      invalidation: false,
+      minted: 0,
+      revoked: 0,
+      persisted: 1,
+    });
+    expect(f.api.puts).toEqual([]);
+  }
 });
 for (const mutation of [
   "push workflow",

@@ -48,6 +48,8 @@ Codex 使用 App `1144995`、bot `199175422` 的完整状态 marker，分别核�
 
 PR reviews、issue comments、inline comments、review threads 和嵌套 comments 都完整分页。GraphQL comment 使用 `fullDatabaseId`，拒绝无法精确表示的数字 ID。每个 inline comment 必须归属已完整读取的 thread，每个 thread 须为 `isResolved=true`。`isOutdated=true` 不能替代解决；已处理且 resolved 的线程可以接受。部分 GraphQL 数据、重复页面、读取失败与缺失游标均失败。完整 receipt 与 summary 只接受固定的说明、表格和链接区块，追加或嵌入的未知正文均拒绝。仓库夹具使用去标识数据，原始私有报告链接保留在仓库外。
 
+REST 的 jobs、artifacts、workflow_runs 和 check_runs 每页均要求对象、对应数组及非负安全整数 `total_count`。跨页总数变化、最终累计不足和重复身份均失败；总数为零且数组明确为空才是空集合。数组端点不套用该对象合同。这些条件不提供 API 原子快照，也不证明不存在同数量内容漂移，批准仍核对后续完整证据读取。
+
 REST PR reviews 中尚无已接纳的 Codex 正文合同，因此该 bot 在此表面的报告保守阻塞，等待真实样本及可核处置合同。现有 issue summary 的无未解决发现状态不能代替未知 formal-review 正文的解析，也不能消除更晚的 threadless 报告。
 
 ## Cubic 额度选择输入
@@ -67,6 +69,8 @@ App 验证数字身份 `19648989`、未编辑状态和源原件。声明时间�
 选择及有效覆盖仅限当时绑定的 `H/B` 和轮次。后来的周期结束或恢复不强制重做这一轮已有效的 Codex 审查。新输入或新选择继续核实来源、周期和已知反证。该声明不是 App 对当前账单余额的证明；负责人承担跨 pool 的已知恢复判断，不宣称排除了不可见付款，也不扫描整个账户。
 
 `prepare` 同时输出绑定 `H/B` 的 `cladiron-cubic-quota-withdraw:v1` 撤回正文。负责人发布未编辑的撤回 marker 后，旧选择不能继续用于该轮批准。Timeout、429、普通失败、未知 neutral、无来源声明和未解析报告均不能取得 quota 资格。审计输出和 operation intent 保存 `quota-unavailable` 及来源、声明和请求 ID。
+
+声明及路由控制事件先按身份和正文归集，再校验有效且非未来的时间；独立声明不能先因坏时间被过滤。所有时间比较使用解析后的时间值。同秒或更晚的撤回阻止旧选择，较早撤回允许后续明确的新选择。同秒 Cubic 请求与 quota 选择有歧义，直接拒绝；只有严格更晚的 Cubic 请求才转入正常路线。不按评论数字 ID 推测先后。
 
 ## CI receipt
 
@@ -88,9 +92,15 @@ OCI 工作流保持原状。本合同未把 Docker 链路迁移到宿主机，�
 
 写入程序另保留绑定同一 intent 的 outcome，区分未尝试 POST、已确认原操作和仍未知的写入。只读 prepare 和批准使用不同步骤；prepare 失败不构成未知 POST。后续 dispatch 及 rerun 逐个核对每个已启动写入的 attempt，旧 attempt 的安全原件不能掩盖新 attempt 丢失的原件。没有可信终态时，原目标存在唯一、绑定原操作身份的 `APPROVED` 或 `DISMISSED` review 才能解除该项未知。同绑定的更早已撤回 review 不能充当后来写入的回执。intent 过期或写入步骤已开始但 intent 丢失时，停止并报告原 run/attempt，交所有者调查。
 
+历史审计针对原批准 POST。outcome 的 `attempted=false` 只表示尚未尝试该 POST，不证明旧 review 的撤回 PUT 已成功或全部外写已终结。原执行仍保留每个撤回 ID、读回、未知及失败，不把此字段当作跨 dispatch 自动重试撤回的协议。
+
+全局串行组内，另一个尚未执行的首次 queued/pending run 不属于历史写入。例外只接受 attempt 1、null conclusion，并独立 GET 绑定同仓库、workflow、dispatch 事件、`dev`、run/attempt 和排队状态。完整读取该 attempt 的 jobs；结果明确为空，或所有 job/step 均明确 queued、开始与完成时间及 conclusion 均为 null，才证明尚未执行。随后再次 GET 核同一状态。缺字段、已开始、未知、读取失败、分页不完整或状态变化均拒绝例外。queued rerun 仍阻塞，当前 run 的旧 attempt 仍逐个审计。不以 run ID、列表顺序或 `run_started_at` 推定 writer 先后。该例外依赖已冻结的串行组，真实排队行为仍须上线验收。
+
 写后再次读取完整快照。`H/B/M`、报告、线程或 CI 漂移即撤回自己准确的批准并读回 `DISMISSED`。执行输入信任检查通过后，其他前置证据核验失败才通过专用失败标志尝试撤回该 App 的旧批准。执行输入未知或变化时不申请 App 令牌。只读 prepare 或无关准备失败不撤回有效批准。写入阶段自行处理精确 review 的撤回，不通过通用失败步骤再次发送未知撤回。不撤回人工或其他 App 的 review。撤回失败保留 review ID 并失败，不宣称批准已失效。令牌申请、批准和撤回均不进行传输重试。
 
-intent 成功后，writer 在申请令牌前再次读取完整证据。该次读取失败时重新核对执行输入信任，再发出 writer 专用失败标志。工作流消费 intent 或 writer 的标志，专用 invalidate 入口另行重核信任后撤回旧自有批准。预检成功即结束 writer 标志的有效窗口；申请令牌、批准、撤回、令牌撤销及 outcome 保存失败均不能重新打开通道。后续批准内的恢复继续由原操作负责，避免重复撤回。
+运行及操作身份、输入和可信 intent 先校验。历史执行审计未结束、原批准结果未知或审计读取失败时，停止新批准并保留当前 attempt 的真实 outcome；这些失败不产生证据失效标志。执行输入的初次信任核验失败，也不申请令牌或产生标志。
+
+初次信任核验成功后，从候选与 intent 的比较开始，直到完整证据的绑定、摘要、报告、线程和 CI 核验结束，属于同一证据有效性检查。该范围失败时重新核对执行信任，再发出 intent 或 writer 专用失败标志。专用 invalidate 入口另行重核信任后撤回旧自有批准。证据检查成功即结束通用标志窗口；申请令牌、批准、撤回、令牌撤销及 outcome 保存失败均不能重新打开通道。后续批准内的恢复继续由原操作负责，避免重复撤回。收尾失败也不能清掉此前合法产生的失效标志。
 
 手动入口没有持续监听，写后复核与异步撤回不能消除 TOCTOU。作业硬终止可能阻止撤回和令牌主动撤销；原 token 到期、后续 intent 调查和平台人工处理仍是实际恢复边界。上线前须在真实权限下核实批准、撤回、取消与未知回执；本地模拟不建立这些平台结论。
 

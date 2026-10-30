@@ -56,6 +56,85 @@ export async function trustedCandidate(
   return candidate;
 }
 type Credential = { client: Api; revoke: () => Promise<void> };
+async function boundEvidence(
+  api: Api,
+  pr: number,
+  revision: string | undefined,
+  startArtifacts: StartSelection,
+  planned?: Intent,
+) {
+  const s = await snapshot(api, pr, Date.now(), startArtifacts);
+  requireThat(s.b.base === revision, "Dev moved during evidence read");
+  if (planned)
+    requireThat(
+      s.digest === planned.digest &&
+        JSON.stringify(s.b) === JSON.stringify(planned.b),
+      "Evidence differs from persisted operation intent",
+    );
+  return s;
+}
+async function candidateEvidence(
+  api: Api,
+  pr: number,
+  revision: string | undefined,
+  startArtifacts: StartSelection,
+  invalidate: () => void,
+  planned?: Intent,
+) {
+  const candidate = await trustedCandidate(api, pr, revision);
+  try {
+    if (planned)
+      requireThat(
+        JSON.stringify(candidate) === JSON.stringify(planned.b),
+        "Candidate changed before credential creation",
+      );
+    return await boundEvidence(api, pr, revision, startArtifacts, planned);
+  } catch (error) {
+    // Evidence invalidation starts only after trust and ends before credentials.
+    await trustedCandidate(api, pr, revision);
+    invalidate();
+    throw error;
+  }
+}
+export async function prepareIntent(
+  api: Api,
+  pr: number,
+  revision: string | undefined,
+  startArtifacts: StartSelection,
+  run: number,
+  attempt: number,
+  invalidate: () => void,
+): Promise<Intent> {
+  requireThat(
+    Number.isSafeInteger(run) &&
+      run > 0 &&
+      Number.isSafeInteger(attempt) &&
+      attempt > 0,
+    "Invalid operation intent run",
+  );
+  const s = await candidateEvidence(
+    api,
+    pr,
+    revision,
+    startArtifacts,
+    invalidate,
+  );
+  return {
+    version: 1,
+    repositoryId,
+    run,
+    attempt,
+    b: s.b,
+    digest: s.digest,
+    startArtifacts,
+    ...(s.evidence.reviewStarts
+      ? { reviewStarts: s.evidence.reviewStarts }
+      : {}),
+    ...(s.evidence.providers.quota
+      ? { quota: s.evidence.providers.quota }
+      : {}),
+  };
+}
 export async function invalidateCandidate(
   api: Api,
   pr: number,
@@ -95,29 +174,16 @@ export async function approveCandidate(
       planned.run,
       planned.attempt,
     );
-    const candidate = await trustedCandidate(api, pr, revision);
-    requireThat(
-      JSON.stringify(candidate) === JSON.stringify(planned.b),
-      "Candidate changed before credential creation",
+    await candidateEvidence(
+      api,
+      pr,
+      revision,
+      startArtifacts,
+      controls.invalidate,
+      planned,
     );
-    const load = async (client: Api, number: number) => {
-      const s = await snapshot(client, number, Date.now(), startArtifacts);
-      requireThat(
-        s.b.base === revision &&
-          s.digest === planned.digest &&
-          JSON.stringify(s.b) === JSON.stringify(planned.b),
-        "Evidence differs from persisted operation intent",
-      );
-      return s;
-    };
-    try {
-      await load(api, pr);
-    } catch (error) {
-      // Only this pre-mint window delegates cleanup; approve owns later failures.
-      await trustedCandidate(api, pr, revision);
-      controls.invalidate();
-      throw error;
-    }
+    const load = (client: Api, number: number) =>
+      boundEvidence(client, number, revision, startArtifacts, planned);
     credential = await controls.mint();
     return await approve(
       credential.client,
@@ -181,34 +247,17 @@ if (import.meta.main) {
         event.inputs?.mode === "approve",
         "Intent requires approve mode",
       );
-      await trustedCandidate(api, pr, process.env.GITHUB_WORKFLOW_SHA);
-      invalidate = true;
-      const s = await snapshot(api, pr, Date.now(), startArtifacts);
-      requireThat(
-        s.b.base === process.env.GITHUB_WORKFLOW_SHA,
-        "Dev moved during intent read",
-      );
-      const intent: Intent = {
-        version: 1,
-        repositoryId,
-        run: Number(process.env.GITHUB_RUN_ID),
-        attempt: Number(process.env.GITHUB_RUN_ATTEMPT),
-        b: s.b,
-        digest: s.digest,
+      const intent = await prepareIntent(
+        api,
+        pr,
+        process.env.GITHUB_WORKFLOW_SHA,
         startArtifacts,
-        ...(s.evidence.reviewStarts
-          ? { reviewStarts: s.evidence.reviewStarts }
-          : {}),
-        ...(s.evidence.providers.quota
-          ? { quota: s.evidence.providers.quota }
-          : {}),
-      };
-      requireThat(
-        Number.isSafeInteger(intent.run) &&
-          Number.isSafeInteger(intent.attempt),
-        "Invalid operation intent run",
+        Number(process.env.GITHUB_RUN_ID),
+        Number(process.env.GITHUB_RUN_ATTEMPT),
+        () => {
+          invalidate = true;
+        },
       );
-      invalidate = false;
       await Bun.write(
         process.env.APPROVAL_INTENT_PATH!,
         JSON.stringify(intent) + "\n",

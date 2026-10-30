@@ -308,6 +308,111 @@ test("later source-head completion and prior-head report preserve an existing se
   );
   await expect(prepareQuota(f.api, b, 601, now)).rejects.toThrow("contradicts");
 });
+for (const standalone of [false, true])
+  for (const id of [50, 502])
+    test(`same-second withdrawal blocks selection without inferring ID order, standalone=${standalone}, id=${id}`, async () => {
+      const f = await fixture();
+      const selectedAt = standalone
+        ? "2026-10-30T13:08:00Z"
+        : "2026-10-30T10:33:50Z";
+      if (standalone) {
+        f.api.f.comments.find((c) => c.id === 101).body = requestBodies(b)[1];
+        f.api.f.comments.push({
+          id: 501,
+          node_id: "statement-501",
+          user: { id: 19648989, type: "User" },
+          lastEditedAt: null,
+          body: quotaDeclaration(b, f.selection, 101),
+          created_at: selectedAt,
+          updated_at: selectedAt,
+        });
+      }
+      f.api.f.comments.push({
+        id,
+        node_id: `withdraw-${id}`,
+        user: { id: 19648989, type: "User" },
+        lastEditedAt: null,
+        body: quotaWithdrawal(b),
+        created_at: selectedAt,
+        updated_at: selectedAt,
+      });
+      await expect(snapshot(f.api, b.pr, now)).rejects.toThrow("withdrew");
+    });
+for (const timestamp of ["invalid", "2026-10-30T14:00:01Z"])
+  test(`unknown withdrawal time ${timestamp} cannot silently preserve quota routing`, async () => {
+    const f = await fixture();
+    f.api.f.comments.push({
+      id: 501,
+      node_id: "withdraw-501",
+      user: { id: 19648989, type: "User" },
+      lastEditedAt: null,
+      body: quotaWithdrawal(b),
+      created_at: timestamp,
+      updated_at: timestamp,
+    });
+    await expect(snapshot(f.api, b.pr, now)).rejects.toThrow(
+      "control timestamp",
+    );
+  });
+test("an earlier withdrawal does not prevent a later explicit quota selection", async () => {
+  const f = await fixture();
+  const timestamp = "2026-10-30T10:33:49Z";
+  f.api.f.comments.push({
+    id: 99,
+    node_id: "withdraw-99",
+    user: { id: 19648989, type: "User" },
+    lastEditedAt: null,
+    body: quotaWithdrawal(b),
+    created_at: timestamp,
+    updated_at: timestamp,
+  });
+  expect((await snapshot(f.api, b.pr, now)).evidence.providers.cubic).toBe(
+    "quota-unavailable",
+  );
+});
+for (const timestamp of [
+  "2026-10-30T10:33:49Z",
+  "2026-10-30T10:33:50.000Z",
+  "2026-10-30T10:33:51Z",
+  "invalid",
+  "2026-10-30T14:00:01Z",
+])
+  test(`Cubic routing control at ${timestamp} is validated before ordering`, async () => {
+    const f = await fixture();
+    f.api.f.comments.push({
+      id: 501,
+      node_id: "cubic-501",
+      user: { id: 19648989, type: "User" },
+      lastEditedAt: null,
+      body: requestBodies(b)[0],
+      created_at: timestamp,
+      updated_at: timestamp,
+    });
+    const result = readQuota(f.api, b, f.api.f.comments, [], now);
+    if (timestamp.endsWith("49Z")) expect(await result).toBeDefined();
+    else if (timestamp.endsWith("51Z")) expect(await result).toBeUndefined();
+    else await expect(result).rejects.toThrow();
+  });
+for (const timestamp of [
+  "invalid",
+  "2026-10-30T14:00:01Z",
+  "2026-10-30T10:33:50.000Z",
+])
+  test(`standalone quota statement at ${timestamp} cannot be lost by timestamp filtering`, async () => {
+    const f = await fixture();
+    f.api.f.comments.push({
+      id: 501,
+      node_id: "statement-501",
+      user: { id: 19648989, type: "User" },
+      lastEditedAt: null,
+      body: quotaDeclaration(b, f.selection, 101),
+      created_at: timestamp,
+      updated_at: timestamp,
+    });
+    await expect(
+      readQuota(f.api, b, f.api.f.comments, [], now),
+    ).rejects.toThrow();
+  });
 test("owner can explicitly withdraw quota routing and a later normal request cannot revive it", async () => {
   const f = await fixture();
   f.api.f.comments.push({
