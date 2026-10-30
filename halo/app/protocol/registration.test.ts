@@ -27,6 +27,18 @@ function response(status: number, body: unknown, type = "application/json") {
 }
 describe("registration wire contract", () => {
   it.each([200, 201])(
+    "refuses a mini Bearer session in website registration (%i)",
+    async (status) => {
+      response(status, {
+        code: "ok",
+        session: { ...session, token: "A".repeat(43) },
+      });
+      expect(
+        await register(operation, input, new AbortController().signal),
+      ).toEqual({ kind: "untrusted" });
+    },
+  );
+  it.each([200, 201])(
     "accepts the actual %i session and sends the original input once",
     async (status) => {
       response(status, { code: "ok", session });

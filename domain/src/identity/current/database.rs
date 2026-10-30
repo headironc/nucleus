@@ -11,7 +11,6 @@ use crate::{
         keys::Keys,
         person::{self, revision},
         session::{self, state::State as Session},
-        website::AppId,
     },
     kernel::App,
 };
@@ -59,8 +58,8 @@ impl State {
         self.observed_at
     }
 
-    pub(super) fn validate(&self, app_id: &AppId) -> Result<(), Error> {
-        if self.session.app_id() != app_id {
+    pub(super) fn validate(&self, settings: &session::settings::Settings) -> Result<(), Error> {
+        if !settings.accepts(self.session.origin()) {
             return Err(Error::Facts {
                 rule: "session application is the configured website",
             });
@@ -85,6 +84,19 @@ pub(super) async fn find_session_by_id(
 ) -> Result<Option<State>, Error> {
     let now = app.context().now(client).await?;
     find_at(client, app, read, id, now).await
+}
+
+pub(super) async fn find_session_by_token(
+    client: &Client,
+    app: &App,
+    read: Read,
+    token: &session::Token,
+) -> Result<Option<State>, Error> {
+    let option = session::state::find_by_hash(client, &token.0.hash()).await?;
+    match option {
+        Some(id) => find_session_by_id(client, app, read, id).await,
+        None => Ok(None),
+    }
 }
 
 /// The executor already obtained this decisive time after taking the object locks.

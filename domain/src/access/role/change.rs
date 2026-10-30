@@ -874,8 +874,8 @@ mod tests {
                 assert_eq!(page.count(),2); assert!(page.changes().is_empty());
                 let id = message(&database, services.authentication(), &mut supplier, "13800138000").await;
                 let Receipt::Registration(credential) = Box::pin(services.authentication().create_session(input(Uuid::new_v4(), id, "13800138000", CODE))).await.expect("R1") else { panic!("registration"); };
-                let issued = Box::pin(services.registration().register(crate::registration::Input::new(Uuid::new_v4().to_string().parse().expect("operation"),credential.id(),credential.token().text().parse().expect("token"),"Reader".parse().expect("name"),"00000020000229007X".parse().expect("number")))).await.expect("R2");
-                let reader = services.current().authenticate(Proof { id:issued.id(),token:issued.token().text().parse().expect("token") }).await.expect("reader actor");
+                let issued = Box::pin(services.registration().register_input_for_test(crate::registration::Input::new(Uuid::new_v4().to_string().parse().expect("operation"),credential.id(),credential.token().text().parse().expect("token"),"Reader".parse().expect("name"),"00000020000229007X".parse().expect("number")))).await.expect("R2");
+                let reader = services.current().authenticate(Proof::Cookie { id:issued.id(),token:issued.token().text().parse().expect("token") }).await.expect("reader actor");
                 assert!(matches!(services.role().changes(&reader, filter()).await,Err(kernel::Error::Denied)));
                 let assignments = insert_role(owner.client(), services.role(), &administrator, "Assignments", 200, &["institution.assignments"]).await;
                 assign_role(owner.client(), services.role(), &reader, assignments).await;

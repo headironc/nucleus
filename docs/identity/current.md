@@ -8,15 +8,17 @@
 
 根 HTTP 对要求登录的普通路由先解析明确选中的会话凭据，并检查适用同源条件。Identity 核对原会话、账户和来源后，才产生本次请求的受控 Actor。Actor 只固定原账户 ID、Session ID 和可信应用来源；不携带 token、实名、领域权限或可跨请求复用的有效状态。客户端不能提交 Actor、账户 ID、应用身份或认证方法来改变操作者。普通业务写入仍在适用对象协调之后，以 Actor 固定的原会话和账户重新读取当前资格。
 
-网站认证只读取选定 Session 的 cookie，并检查同源条件；下游不重复读取凭据。小程序 Bearer 来源随其首次会话消费者接入，此前出现 Bearer 按下节拒绝。
+网站认证只读取选定 Session 的 cookie，并检查同源条件。小程序在本人账户、当前退出、全部退出和原退出读取使用 Bearer；其他现有网站入口保持网站凭据范围。下游不重复读取凭据。
 
 ## 凭据选择与来源
 
 网站会话以必需的 `Session-Id` 头选定会话 ID，按[项目标识](../identifiers.md)解析 UUID 值，不强制输入规范文本。服务端用该值的小写、带连字符形式定位对应名称的受保护 cookie。同值的不同 UUID 文本选择同一 cookie；不直接拼接原始头值。cookie 保存服务端随机会话 token；ID 本身不构成登录证明。目标 cookie 缺失时不搜索其他有效 cookie，也不选择最近登录。重复目标 cookie 拒绝；其他会话 cookie 与微信授权流程 cookie 不参与本次选择。Cookie 读取、设置和删除共用同一名称规则，迟到响应仍只影响原 Session。
 
-出现 `Authorization` 即返回 400 `invalid_input`，包含单独提供、混用、空值和重复头；不解析内容，不进入领域认证。重复、空值、多值或格式错误的 `Session-Id` 同样拒绝。缺少 `Session-Id` 或目标 cookie 时，返回 401 `authentication_invalid`。匿名入口不会因附带凭据而自动进入当前会话认证；其同源和原证明要求仍由所属路由决定。
+支持小程序的入口接收唯一的 `Authorization: Bearer {token}`，token 是规范编码的 32 字节随机秘密。重复头、空值、非法格式，以及同时携带 `Session-Id` 或会话 cookie 都返回 `400 invalid_input`，不回退到其他凭据。Bearer 不要求网站 Origin，缺少 Origin 也不会选择 Bearer。其他网站入口继续拒绝 Authorization。
 
-会话保存创建时固定的实际 AppID 和认证方法。当前认证按选定 Session ID 定位，再核对 token、网站 AppID 和认证方法。未知 AppID 或非法方法组合是持久事实错误，不能默认采用另一来源；矛盾时拒绝开放相关入口，不改写旧来源。短期请求和交接记录合法清理后，仍依据会话自身来源验证有效会话。其他来源的签发与接入仍属[会话目标设计](session.md)。
+网站模式继续拒绝重复、空值、多值或非法的 `Session-Id`；缺少选择或目标 cookie 返回 `401 authentication_invalid`。合法小程序 token 通过网站 cookie 呈递同样返回 401，保持共同接纳。匿名入口不会因附带凭据而进入当前会话认证。
+
+会话保存创建时固定的实际 AppID 和认证方法。Cookie 按选定 Session ID 定位，Bearer 按唯一 token 摘要定位；随后核对 token、配置来源、账户与期限。来源只允许网站短信或小程序手机号，传递方式从来源派生。未知 AppID 或非法方法组合是持久事实错误，拒绝开放相关入口。短期认证及交接合法清理后，仍依据 Session 自身来源认证。
 
 网站 cookie 模式的非安全方法要求唯一、准确匹配固定 HTTPS origin 的 `Origin`。GET 没有 `Origin` 时仅接受 `Sec-Fetch-Site: same-origin`；有 `Origin` 时它必须准确匹配，若同时有 `Sec-Fetch-Site`，其值也必须为 `same-origin`。`null`、重复、多值、同站子域和跨来源均拒绝，不用 `Referer`、`Host` 或转发头补足。缺少 Origin 不会选择另一种认证来源。普通请求的 Operation-Id 不作为会话证明，也不创建读操作的原请求记录；响应关联使用[客户端保存的请求上下文](../client/protocol.md#响应可信性)。
 
@@ -54,7 +56,7 @@ Actor 产生后，具体用例须按自己的决定性时点复查。本人读�
 
 | 情形                                                                                  | HTTP 与 code                 | 边界                                                 |
 | ------------------------------------------------------------------------------------- | ---------------------------- | ---------------------------------------------------- |
-| 出现 Authorization，头、cookie 或 token 结构错误，重复目标 cookie                     | 400 `invalid_input`          | 拒绝本次请求，不改会话或回退到其他凭据。             |
+| 凭据混用、头或 token 结构错误、重复头或重复目标 cookie                                | 400 `invalid_input`          | 拒绝本次请求，不改会话或回退到其他凭据。             |
 | 网站同源条件不成立                                                                    | 403 `permission_denied`      | 不读取本人资料或执行业务。                           |
 | 缺少认证选择或目标 cookie、秘密错误、来源不符、到期、撤销、账户不可用、原微信关联失效 | 401 `authentication_invalid` | 不泄露是哪项失败，也不判断此前写入是否成功。         |
 | 数据库或可信时钟不可用、存储来源异常、必要关系损坏、解密或头像签名失败                | 503 `dependency_unavailable` | 不返回部分资料，不伪造成退出、正常未绑定或默认头像。 |

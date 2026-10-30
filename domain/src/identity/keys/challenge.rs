@@ -36,6 +36,10 @@ impl Key {
     pub fn verify(&self, token: &Token, proof: &Proof) -> Result<bool, cryptography::Error> {
         proof.verify(&self.material, token)
     }
+
+    pub(crate) fn phone_code(&self, input: &cryptography::Encoded) -> hmac::Tag {
+        self.material.sign(input)
+    }
 }
 
 /// The active key and every retained version, immutable after loading.

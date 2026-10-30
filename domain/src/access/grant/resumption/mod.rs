@@ -343,8 +343,8 @@ mod tests {
                 let (manager, institution, _) = Box::pin(participants(&database, &services, &mut supplier)).await;
                 let message_id = authentication::session::tests::message(&database, services.authentication(), &mut supplier, "13700000000").await;
                 let authentication::session::Receipt::Registration(credential) = Box::pin(services.authentication().create_session(authentication::session::tests::input(Uuid::new_v4(), message_id, "13700000000", authentication::session::tests::CODE))).await.expect("R1") else { panic!("registration credential"); };
-                let registered = Box::pin(services.registration().register(crate::registration::Input::new(operation(), credential.id(), credential.token().text().parse().expect("proof"), "Other Member".parse().expect("name"), "000000200002290088".parse().expect("id number")))).await.expect("R2");
-                let target = services.current().authenticate(current::Proof { id: registered.id(), token: registered.token().text().parse().expect("token") }).await.expect("target actor");
+                let registered = Box::pin(services.registration().register_input_for_test(crate::registration::Input::new(operation(), credential.id(), credential.token().text().parse().expect("proof"), "Other Member".parse().expect("name"), "000000200002290088".parse().expect("id number")))).await.expect("R2");
+                let target = services.current().authenticate(current::Proof::Cookie { id: registered.id(), token: registered.token().text().parse().expect("token") }).await.expect("target actor");
                 let candidate = services.grant().candidate(&manager, Entry::Domain, "13700000000".parse().expect("mobile"), crate::pagination::Pagination::new(1, 20).expect("pagination")).await.expect("admission confirmation");
                 let (grant, _) = Box::pin(services.grant().create(manager.clone(), operation(), admission(&candidate, "domain", "13700000000", 0))).await.expect("ordinary member");
                 let candidate = services.grant().suspension_candidate(&manager, "13700000000".parse().expect("mobile")).await.expect("suspension confirmation");

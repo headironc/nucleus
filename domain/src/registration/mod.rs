@@ -30,7 +30,7 @@ use crate::{
         mobile::Mobile,
         operation,
         person::{name::Name, number::IdNumber},
-        registration, session, website,
+        registration, session,
     },
     kernel::App,
     runtime::{
@@ -46,10 +46,10 @@ pub(crate) async fn verify(
     client: &Client,
     app: &App,
     keys: &Keys,
-    app_id: &website::AppId,
+    settings: &session::settings::Settings,
     now: DateTime<Utc>,
 ) -> Result<(), Error> {
-    database::verify_all(client, app, keys, app_id, now).await
+    database::verify_all(client, app, keys, settings, now).await
 }
 
 pub(crate) async fn ready(client: &Client, app: &App, now: DateTime<Utc>) -> Result<(), Error> {
@@ -94,6 +94,7 @@ pub struct Input {
     token: registration::Token,
     name: Name,
     id_number: IdNumber,
+    transport: &'static str,
 }
 
 impl Input {
@@ -110,6 +111,7 @@ impl Input {
             token,
             name,
             id_number,
+            transport: "cookie",
         }
     }
 
@@ -125,11 +127,23 @@ impl cryptography::Input<8> for Input {
             b"POST",
             b"/registrations",
             self.operation_id.as_bytes(),
-            b"cookie",
+            self.transport.as_bytes(),
             self.credential_id.as_bytes(),
             self.name.as_ref().as_bytes(),
             self.id_number.as_ref().as_bytes(),
         ]
+    }
+}
+
+/// Original proof and source checked in one read-only snapshot before HTTP applies Origin.
+pub struct Prepared {
+    input: Input,
+    origin: session::Origin,
+}
+
+impl Prepared {
+    pub fn origin(&self) -> &session::Origin {
+        &self.origin
     }
 }
 
@@ -221,7 +235,7 @@ impl Service {
         Ok(())
     }
 
-    pub(crate) fn prepare(
+    pub(crate) fn assemble(
         app: App,
         keys: Arc<Keys>,
         settings: session::settings::Settings,
@@ -240,7 +254,27 @@ impl Service {
         }))
     }
 
-    pub async fn register(&self, input: Input) -> Result<Receipt, Error> {
+    pub async fn prepare(&self, mut input: Input) -> Result<Prepared, Error> {
+        let result = self.0.preflight(&mut input).await;
+        match result {
+            Ok(origin) => Ok(Prepared { input, origin }),
+            Err(error) => {
+                if work::Failure::unreliable(&error) {
+                    self.0.registry.close();
+                }
+                work::Failure::report(&error, input.operation_id);
+                Err(error)
+            }
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) async fn register_input_for_test(&self, input: Input) -> Result<Receipt, Error> {
+        self.register(self.prepare(input).await?).await
+    }
+
+    pub async fn register(&self, prepared: Prepared) -> Result<Receipt, Error> {
+        let Prepared { input, .. } = prepared;
         loop {
             self.0.work.ready(&self.0.registry).await?;
             {
@@ -252,13 +286,6 @@ impl Service {
                     let _ = completion.changed().await;
                     continue;
                 }
-            }
-            if let Err(error) = self.0.preflight(&input).await {
-                if work::Failure::unreliable(&error) {
-                    self.0.registry.close();
-                }
-                work::Failure::report(&error, input.operation_id);
-                return Err(error);
             }
             let encoded = input.encoded()?;
             let key = self.0.keys.input.active();
@@ -301,14 +328,7 @@ impl Service {
 
     #[cfg(test)]
     pub(crate) async fn verify(&self, client: &Client, now: DateTime<Utc>) -> Result<(), Error> {
-        verify(
-            client,
-            &self.0.app,
-            &self.0.keys,
-            self.0.settings.app_id(),
-            now,
-        )
-        .await
+        verify(client, &self.0.app, &self.0.keys, &self.0.settings, now).await
     }
 }
 
@@ -394,27 +414,37 @@ struct Admission<'a> {
 }
 
 impl Inner {
-    async fn preflight(&self, input: &Input) -> Result<(), Error> {
+    async fn preflight(&self, input: &mut Input) -> Result<session::Origin, Error> {
         let lease = self.context.connections().lease().await?;
         let result = timeout(BUDGET, async {
             // One read-only snapshot cannot miss both a just-consumed credential and its receipt.
             // No original-operation lock is taken before an in-flight proof has been checked.
             lease.client().batch_execute("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY; SET LOCAL statement_timeout = '10s'; SET LOCAL idle_in_transaction_session_timeout = '10s'").await?;
-            match database::find_by_operation(lease.client(), input.operation_id).await? {
-                Some(database::Original::Receipt(receipt)) => receipt.verify(lease.client(), self.app.keys(), self.settings.app_id(), input).await?,
-                Some(database::Original::Attempt(attempt)) => attempt.verify(&self.keys.input, self.settings.app_id(), input)?,
+            let origin = match database::find_by_operation(lease.client(), input.operation_id).await? {
+                Some(database::Original::Receipt(receipt)) => {
+                    input.transport = receipt.origin().transport();
+                    receipt.verify(lease.client(), self.app.keys(), &self.settings, input).await?;
+                    receipt.origin().clone()
+                },
+                Some(database::Original::Attempt(attempt)) => {
+                    input.transport = attempt.origin().transport();
+                    attempt.verify(&self.keys.input, &self.settings, input)?;
+                    attempt.origin().clone()
+                },
                 None => {
                     let credential = database::find_credential(lease.client(), input.credential_id).await?.ok_or(Error::Verification)?;
-                    credential.verify(&self.keys.credential, &self.keys.encryption, &self.keys.mobile, self.settings.app_id(), input)?;
+                    input.transport = credential.source.origin.transport();
+                    credential.verify(&self.keys.credential, &self.keys.encryption, &self.keys.mobile, &self.settings, input)?;
+                    credential.source.origin.clone()
                 }
-            }
+            };
             lease.client().batch_execute("COMMIT").await?;
-            Ok::<_, Error>(())
+            Ok::<_, Error>(origin)
         }).await;
         match result {
-            Ok(Ok(())) => {
+            Ok(Ok(origin)) => {
                 lease.release();
-                Ok(())
+                Ok(origin)
             }
             Ok(Err(error)) if error.rejected() => Err(Self::rollback(lease, error).await.0),
             Ok(Err(error)) => Err(error.combine(lease.discard().await)),
@@ -579,7 +609,7 @@ impl Inner {
                 &self.keys.credential,
                 &self.keys.encryption,
                 &self.keys.mobile,
-                self.settings.app_id(),
+                &self.settings,
                 input,
             )?;
             let mobile_hash = self.keys.mobile.hash(&mobile)?;
@@ -610,7 +640,7 @@ impl Inner {
                 &self.keys.credential,
                 &self.keys.encryption,
                 &self.keys.mobile,
-                self.settings.app_id(),
+                &self.settings,
                 input,
             )?;
             if current_mobile.as_bytes() != mobile.as_bytes() {
@@ -729,12 +759,12 @@ impl Inner {
     ) -> Result<Outcome, Error> {
         match original {
             database::Original::Attempt(attempt) => {
-                attempt.verify(&self.keys.input, self.settings.app_id(), input)?;
+                attempt.verify(&self.keys.input, &self.settings, input)?;
                 attempt.validate(
                     &self.keys.input,
                     &self.keys.encryption,
                     &self.keys.mobile,
-                    self.settings.app_id(),
+                    &self.settings,
                     self.now(client).await?,
                 )?;
                 match attempt.status {
@@ -745,7 +775,7 @@ impl Inner {
             }
             database::Original::Receipt(receipt) => {
                 receipt
-                    .verify(client, self.app.keys(), self.settings.app_id(), input)
+                    .verify(client, self.app.keys(), &self.settings, input)
                     .await?;
                 database::lock_account(client, receipt.account_id).await?;
                 let now = self.now(client).await?;
@@ -753,14 +783,14 @@ impl Inner {
                     .await?
                     .ok_or(Error::Verification)?;
                 receipt
-                    .verify(client, self.app.keys(), self.settings.app_id(), input)
+                    .verify(client, self.app.keys(), &self.settings, input)
                     .await?;
                 let account = receipt
                     .validate(
                         client,
                         &self.app,
                         crate::history::Read::Shared,
-                        self.settings.app_id(),
+                        &self.settings,
                         now,
                     )
                     .await?;
@@ -774,11 +804,11 @@ impl Inner {
                 .await?
                 .ok_or(Error::Verification)?;
                 receipt.validate_session(&session, &account)?;
-                let token = session::handoff::deliver(
+                let token = session::handoff::deliver_origin(
                     client,
                     &session,
                     &self.keys.credential,
-                    self.settings.app_id(),
+                    receipt.origin(),
                     now,
                 )
                 .await?;
@@ -993,6 +1023,7 @@ impl Inner {
                     authentication_id: admission.credential.source.authentication_id,
                     receipt_id: admission.id,
                 },
+                origin: admission.credential.source.origin.clone(),
                 account_id: identity.account_id,
                 operation_id: input.operation_id,
                 created_at: admission.accepted_at,
@@ -1101,7 +1132,7 @@ pub(crate) mod tests {
                     let Receipt::Registration(credential) = services.authentication().create_session(input(Uuid::new_v4(), message_id, "13800000000", CODE)).await.expect("R1 credential") else { panic!("unregistered mobile") };
                     let operation = Uuid::new_v4().to_string().parse().expect("operation");
                     let number = if created { "00000020000229007X" } else { "000000200002290010" };
-                    let original = services.registration().register(registration_input(operation, &credential, number)).await;
+                    let original = services.registration().register_input_for_test(registration_input(operation, &credential, number)).await;
                     if !created { assert!(matches!(original, Err(super::Error::IdNumberTaken))); }
                     let observer = database.connections(&database.user).recover().await.expect("independent observer");
                     let sql = "SELECT attempt.id, attempt.status, attempt.accepted_at, (SELECT count(*) FROM identity.receipts WHERE operation_id=$1) AS receipts, (SELECT count(*) FROM identity.registrations WHERE id=$2) AS credentials, (SELECT count(*) FROM identity.sessions session JOIN identity.receipts receipt ON session.receipt_id=receipt.id WHERE receipt.operation_id=$1) AS sessions, (SELECT count(*) FROM identity.handoffs handoff JOIN identity.sessions session ON session.id=handoff.id JOIN identity.receipts receipt ON session.receipt_id=receipt.id WHERE receipt.operation_id=$1) AS handoffs FROM identity.attempts attempt WHERE attempt.operation_id=$1";
@@ -1113,7 +1144,7 @@ pub(crate) mod tests {
                     proxy.arm(Fault::StalledReadCommit);
                     let service = services.registration().clone();
                     let command = registration_input(operation, &credential, number);
-                    let task = tokio::spawn(async move { service.register(command).await });
+                    let task = tokio::spawn(async move { service.register_input_for_test(command).await });
                     timeout(Duration::from_secs(3), proxy.intercepted()).await.expect("first original result read and COMMIT completed");
                     proxy.arm(Fault::RejectedBegin);
                     proxy.release();
@@ -1170,7 +1201,7 @@ pub(crate) mod tests {
                     let registration=services.registration().clone(); let authentication=services.authentication().clone();
                     let command=registration_input(Uuid::new_v4().to_string().parse().expect("R2 operation"),&credential,"00000020000229007X");
                     let r1=async move { authentication.create_session(input(Uuid::new_v4(),next_message,"13800000000",CODE)).await };
-                    let r2=async move { registration.register(command).await };
+                    let r2=async move { registration.register_input_for_test(command).await };
                     let first=if replacement_first { tokio::spawn(async move { r1.await.expect("first R1 replacement succeeds"); }) } else { tokio::spawn(async move { r2.await.expect("first R2 creation succeeds"); }) };
                     timeout(Duration::from_secs(5),async { loop {
                         if observer.client().query_one("SELECT count(*) FROM pg_catalog.pg_stat_activity WHERE $1=ANY(pg_catalog.pg_blocking_pids(pid))",&[&pid]).await.expect("first caller queued").get::<_,i64>(0)==1 { break; }
@@ -1178,7 +1209,7 @@ pub(crate) mod tests {
                     }}).await.expect("first real mobile waiter");
                     let authentication=services.authentication().clone(); let registration=services.registration().clone();
                     let command=registration_input(Uuid::new_v4().to_string().parse().expect("other R2 operation"),&credential,"00000020000229007X");
-                    let second=if replacement_first { tokio::spawn(async move { assert!(matches!(registration.register(command).await,Err(super::Error::Verification))); }) } else { tokio::spawn(async move { authentication.create_session(input(Uuid::new_v4(),next_message,"13800000000",CODE)).await.expect("R1 discovers the new account and retries its complete lock set"); }) };
+                    let second=if replacement_first { tokio::spawn(async move { assert!(matches!(registration.register_input_for_test(command).await,Err(super::Error::Verification))); }) } else { tokio::spawn(async move { authentication.create_session(input(Uuid::new_v4(),next_message,"13800000000",CODE)).await.expect("R1 discovers the new account and retries its complete lock set"); }) };
                     timeout(Duration::from_secs(5),async { loop {
                         if observer.client().query_one("SELECT count(*) FROM pg_catalog.pg_stat_activity WHERE $1=ANY(pg_catalog.pg_blocking_pids(pid))",&[&pid]).await.expect("both family callers queued").get::<_,i64>(0)==2 { break; }
                         tokio::task::yield_now().await;
@@ -1208,7 +1239,7 @@ pub(crate) mod tests {
                 let operation=owner.client().query_one("SELECT operation_id FROM access.appointments WHERE source='initialization'",&[]).await.expect("same UUID in separate initialization family").get(0);
                 let message_id=message(&database,services.authentication(),&mut supplier,"13800000000").await;
                 let credential=match services.authentication().create_session(input(Uuid::new_v4(),message_id,"13800000000",CODE)).await.expect("R1") { Receipt::Registration(value)=>value,Receipt::Session(_)=>panic!("unregistered") };
-                let original=services.registration().register(registration_input(operation,&credential,"00000020000229007X")).await.expect("initial R2");
+                let original=services.registration().register_input_for_test(registration_input(operation,&credential,"00000020000229007X")).await.expect("initial R2");
                 let row=owner.client().query_one("SELECT receipt.account_id,receipt.person_id,receipt.revision_id,handoff.token,handoff.expires_at FROM identity.receipts receipt JOIN identity.sessions session ON session.receipt_id=receipt.id JOIN identity.handoffs handoff ON handoff.id=session.id WHERE receipt.operation_id=$1",&[&operation]).await.expect("original immutable relationships");
                 let account_id:crate::identity::account::Id=row.get("account_id");
                 let person_id:crate::identity::person::Id=row.get("person_id");
@@ -1230,14 +1261,14 @@ pub(crate) mod tests {
                     Uuid::new_v4().to_string().parse().expect("system operation"),
                     system_input(serde_json::json!({"action": "grant"})), false,
                 ).await.expect("later system administrator assignment");
-                let replay=services.registration().register(registration_input(operation,&credential,"00000020000229007X")).await.expect("original first identity remains the recovery proof");
+                let replay=services.registration().register_input_for_test(registration_input(operation,&credential,"00000020000229007X")).await.expect("original first identity remains the recovery proof");
                 assert_eq!(replay.id(),original.id()); assert_eq!(replay.token().text(),original.token().text()); assert_eq!(replay.expires_at(),original.expires_at());
                 let mut changed=registration_input(operation,&credential,"00000020000229007X");changed.name="Corrected Operator".parse().expect("current name");
-                assert!(matches!(services.registration().register(changed).await,Err(super::Error::Mismatch)));
+                assert!(matches!(services.registration().register_input_for_test(changed).await,Err(super::Error::Mismatch)));
                 assert_eq!(owner.client().query_one("SELECT revision_id FROM identity.receipts WHERE operation_id=$1",&[&operation]).await.expect("receipt retains original revision").get::<_,crate::identity::person::revision::Id>(0),original_revision);
-                let actor=services.current().authenticate(crate::identity::current::Proof {id:original.id(),token:original.token().text().parse().expect("original session token")}).await.expect("current registration session");
+                let actor=services.current().authenticate(crate::identity::current::Proof::Cookie {id:original.id(),token:original.token().text().parse().expect("original session token")}).await.expect("current registration session");
                 services.revocation().revoke(actor,Uuid::new_v4().to_string().parse().expect("logout operation"),crate::identity::revocation::Scope::Current).await.expect("actual later revocation");
-                assert!(matches!(services.registration().register(registration_input(operation,&credential,"00000020000229007X")).await,Err(super::Error::Verification)));
+                assert!(matches!(services.registration().register_input_for_test(registration_input(operation,&credential,"00000020000229007X")).await,Err(super::Error::Verification)));
                 services.registration().retention().run().await.expect("revoked handoff cleanup");
                 let runtime=database.connections(&database.user).recover().await.expect("runtime reconstruction challenge");
                 let error=runtime.client().execute("INSERT INTO identity.handoffs (id,token,expires_at) VALUES ($1,$2,$3)",&[&original.id(),&sealed,&expires_at]).await.expect_err("old Session cannot recreate its credential");
@@ -1258,7 +1289,7 @@ pub(crate) mod tests {
                         "personId": person_id, "revisionId": revision_id, "mobile": "13800000000"
                     })).expect("cancellation input"),
                 ).await.expect("actual cancellation retains a Holder tombstone");
-                assert!(matches!(services.registration().register(registration_input(operation,&credential,"00000020000229007X")).await,Err(super::Error::Verification)));
+                assert!(matches!(services.registration().register_input_for_test(registration_input(operation,&credential,"00000020000229007X")).await,Err(super::Error::Verification)));
                 assert_eq!(count(&database,"SELECT count(*) FROM identity.attempts").await,1);
                 assert!(owner.client().query_one(
                     "SELECT NOT EXISTS(SELECT 1 FROM identity.receipts WHERE operation_id=$1)
@@ -1284,7 +1315,7 @@ pub(crate) mod tests {
                 assert_eq!(count(&database,"SELECT count(*) FROM identity.attempts").await,0);
                 let new_message=message(&database,services.authentication(),&mut supplier,"13800000000").await;
                 let new_credential=match services.authentication().create_session(input(Uuid::new_v4(),new_message,"13800000000",CODE)).await.expect("fresh verification") { Receipt::Registration(value)=>value,Receipt::Session(_)=>panic!("released mobile") };
-                let renewed=services.registration().register(registration_input(operation,&new_credential,"00000020000229007X")).await.expect("the cleaned operation can qualify again");
+                let renewed=services.registration().register_input_for_test(registration_input(operation,&new_credential,"00000020000229007X")).await.expect("the cleaned operation can qualify again");
                 assert_ne!(renewed.id(),original.id());
                 assert_eq!(count(&database,"SELECT count(*) FROM identity.persons").await,3);
                 assert_eq!(owner.client().query_one("SELECT count(DISTINCT person_id) FROM access.appointments WHERE operation_id=$1",&[&operation]).await.expect("initialization and both registrations retain independent histories").get::<_,i64>(0),3);
@@ -1354,7 +1385,7 @@ pub(crate) mod tests {
                     assert!(matches!(
                         services
                             .registration()
-                            .register(registration_input(
+                            .register_input_for_test(registration_input(
                                 operation,
                                 &credential,
                                 "000000200002290010"
@@ -1370,7 +1401,7 @@ pub(crate) mod tests {
                 assert!(matches!(
                     services
                         .registration()
-                        .register(registration_input(
+                        .register_input_for_test(registration_input(
                             Uuid::new_v4().to_string().parse().expect("third operation"),
                             &credential,
                             "00000020000229007X"
@@ -1381,7 +1412,7 @@ pub(crate) mod tests {
                 assert!(matches!(
                     services
                         .registration()
-                        .register(registration_input(
+                        .register_input_for_test(registration_input(
                             operation,
                             &credential,
                             "000000200002290010"
@@ -1420,7 +1451,7 @@ pub(crate) mod tests {
                     let pid: i32 = owner.client().query_one("SELECT pg_backend_pid()", &[]).await.expect("blocker pid").get(0);
                     let worker = services.registration().clone();
                     let command = registration_input(operation, &credential, "00000020000229007X");
-                    let task = tokio::spawn(async move { worker.register(command).await });
+                    let task = tokio::spawn(async move { worker.register_input_for_test(command).await });
                     let observer = database.connections(&database.user).recover().await.expect("independent observer");
                     timeout(Duration::from_secs(5), async { loop {
                         if observer.client().query_one("SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity WHERE $1=ANY(pg_catalog.pg_blocking_pids(pid)))", &[&pid]).await.expect("registration reached actual account insert").get::<_,bool>(0) { break; }
@@ -1446,7 +1477,7 @@ pub(crate) mod tests {
                     for field in ["persons", "revisions", "accounts", "avatars", "appointments", "credentials"] { assert_eq!(row.get::<_,i64>(field),1,"{occupied}: {field}"); }
                     assert_eq!(row.get::<_,i64>("receipts"),0); assert_eq!(row.get::<_,i64>("sessions"),0);
                     assert_eq!(row.get::<_,&str>("status"), if occupied=="mobile" { "mobile_taken" } else { "id_number_taken" });
-                    let replay = services.registration().register(registration_input(operation, &credential, "00000020000229007X")).await;
+                    let replay = services.registration().register_input_for_test(registration_input(operation, &credential, "00000020000229007X")).await;
                     if occupied == "mobile" { assert!(matches!(replay, Err(super::Error::MobileTaken))); } else { assert!(matches!(replay, Err(super::Error::IdNumberTaken))); }
                     services.ready().await.expect("confirmed savepoint rollback settles the new Person candidate and preserves admission");
                     owner.client().batch_execute("DROP TRIGGER pause_creation ON identity.accounts; DROP FUNCTION identity.pause_creation()").await.expect("remove isolated gate");
@@ -1455,7 +1486,7 @@ pub(crate) mod tests {
                         Receipt::Registration(value) => value,
                         Receipt::Session(_) => panic!("new mobile"),
                     };
-                    services.registration().register(registration_input(
+                    services.registration().register_input_for_test(registration_input(
                         Uuid::new_v4().to_string().parse().expect("new operation"), &credential, "000000200002290029",
                     )).await.expect("an independent creation succeeds after the settled refusal");
                     owner.terminate().await.expect("fixture ended"); observer.terminate().await.expect("observer ended"); services.drain().await.expect("drained"); context.stop().await.expect("stopped"); supplier.stop().await;
@@ -1482,7 +1513,7 @@ pub(crate) mod tests {
                     let (context, services) = registration_services(database.connections(&database.user), &supplier, 4).await;
                     let message_id = message(&database, services.authentication(), &mut supplier, "13800000000").await;
                     let credential = match services.authentication().create_session(input(Uuid::new_v4(), message_id, "13800000000", CODE)).await.expect("R1") { Receipt::Registration(value) => value, Receipt::Session(_) => panic!("unregistered") };
-                    services.registration().register(registration_input(Uuid::new_v4().to_string().parse().expect("operation"), &credential, "00000020000229007X")).await.expect("R2");
+                    services.registration().register_input_for_test(registration_input(Uuid::new_v4().to_string().parse().expect("operation"), &credential, "00000020000229007X")).await.expect("R2");
                     age_facts(&database, &services, TimeDelta::minutes(16)).await;
                     services.registration().retention().run().await.expect("expired handoff cleanup");
                     assert_eq!(count(&database,"SELECT count(*) FROM identity.handoffs").await,0);
@@ -1662,6 +1693,9 @@ pub(crate) mod tests {
                                             authentication_id: source.source.authentication_id,
                                             receipt_id: admission.id,
                                         },
+                                        origin: crate::identity::session::Origin::WebsiteMessage(
+                                            settings.app_id().clone(),
+                                        ),
                                         account_id: identity.account_id,
                                         operation_id: command.operation_id,
                                         created_at: now,
@@ -1721,7 +1755,7 @@ pub(crate) mod tests {
                 }
                 services
                     .registration()
-                    .register(command)
+                    .register_input_for_test(command)
                     .await
                     .expect("the unchanged credential still completes normally");
                 for sql in [
@@ -1774,18 +1808,18 @@ pub(crate) mod tests {
                 };
                 let operation = Uuid::new_v4().to_string().parse().expect("original operation");
                 let wrong = crate::registration::Input::new(operation, credential.id(), "__________________________________________8".parse().expect("wrong valid token"), "Different Name".parse().expect("name"), "000000200002290010".parse().expect("number"));
-                assert!(matches!(services.registration().register(wrong).await, Err(super::Error::Proof)));
-                assert!(matches!(services.registration().register(registration_input(operation, &credential, "000000210003010016")).await, Err(super::Error::Date(crate::identity::person::number::ParseError::Future))));
+                assert!(matches!(services.registration().register_input_for_test(wrong).await, Err(super::Error::Proof)));
+                assert!(matches!(services.registration().register_input_for_test(registration_input(operation, &credential, "000000210003010016")).await, Err(super::Error::Date(crate::identity::person::number::ParseError::Future))));
                 assert_eq!(count(&database, "SELECT count(*) FROM identity.attempts").await, 0);
                 for index in 0..5 {
                     let operation = if index == 0 { operation } else { Uuid::new_v4().to_string().parse().expect("new operation") };
-                    assert!(matches!(services.registration().register(registration_input(operation, &credential, "000000200002290010")).await, Err(super::Error::IdNumberTaken)));
+                    assert!(matches!(services.registration().register_input_for_test(registration_input(operation, &credential, "000000200002290010")).await, Err(super::Error::IdNumberTaken)));
                 }
                 let observer = database.connections(&database.user).recover().await.expect("observer");
                 let row = observer.client().query_one("SELECT count(*) AS admissions, count(DISTINCT operation_id) AS originals, bool_and(status='id_number_taken' AND credential_id=$1) AS refusal FROM identity.attempts", &[&credential.id()]).await.expect("independent quota before replay");
                 assert_eq!(row.get::<_,i64>("admissions"),5); assert_eq!(row.get::<_,i64>("originals"),5); assert!(row.get::<_,bool>("refusal"));
-                assert!(matches!(services.registration().register(registration_input(Uuid::new_v4().to_string().parse().expect("sixth operation"), &credential, "00000020000229007X")).await, Err(super::Error::Quota { .. })));
-                assert!(matches!(services.registration().register(registration_input(operation, &credential, "000000200002290010")).await, Err(super::Error::IdNumberTaken)));
+                assert!(matches!(services.registration().register_input_for_test(registration_input(Uuid::new_v4().to_string().parse().expect("sixth operation"), &credential, "00000020000229007X")).await, Err(super::Error::Quota { .. })));
+                assert!(matches!(services.registration().register_input_for_test(registration_input(operation, &credential, "000000200002290010")).await, Err(super::Error::IdNumberTaken)));
                 age(&database, services.authentication(), TimeDelta::seconds(61)).await;
                 let next_message = message(&database, services.authentication(), &mut supplier, "13800000000").await;
                 let replacement = match services.authentication().create_session(input(Uuid::new_v4(), next_message, "13800000000", CODE)).await.expect("R1 replacement") {
@@ -1793,9 +1827,9 @@ pub(crate) mod tests {
                     Receipt::Session(_) => panic!("mobile is still unregistered"),
                 };
                 assert_ne!(credential.id(), replacement.id());
-                assert!(matches!(services.registration().register(registration_input(operation, &credential, "000000200002290010")).await, Err(super::Error::IdNumberTaken)));
-                assert!(matches!(services.registration().register(registration_input(Uuid::new_v4().to_string().parse().expect("old credential attempt"), &credential, "00000020000229007X")).await, Err(super::Error::Verification)));
-                assert!(matches!(services.registration().register(registration_input(Uuid::new_v4().to_string().parse().expect("replacement attempt"), &replacement, "00000020000229007X")).await, Err(super::Error::Quota { .. })));
+                assert!(matches!(services.registration().register_input_for_test(registration_input(operation, &credential, "000000200002290010")).await, Err(super::Error::IdNumberTaken)));
+                assert!(matches!(services.registration().register_input_for_test(registration_input(Uuid::new_v4().to_string().parse().expect("old credential attempt"), &credential, "00000020000229007X")).await, Err(super::Error::Verification)));
+                assert!(matches!(services.registration().register_input_for_test(registration_input(Uuid::new_v4().to_string().parse().expect("replacement attempt"), &replacement, "00000020000229007X")).await, Err(super::Error::Quota { .. })));
                 assert_eq!(count(&database, "SELECT count(*) FROM identity.attempts").await, 5);
                 assert_eq!(count(&database, "SELECT count(*) FROM identity.receipts").await, 0);
                 observer.terminate().await.expect("observer ended"); services.drain().await.expect("drained"); context.stop().await.expect("stopped"); supplier.stop().await;
@@ -1845,7 +1879,7 @@ pub(crate) mod tests {
                     ),
                 ).await.expect("mobile becomes occupied after the original R1");
                 let operation = Uuid::new_v4().to_string().parse().expect("operation");
-                assert!(matches!(services.registration().register(registration_input(operation, &credential, "000000200002290029")).await, Err(super::Error::MobileTaken)));
+                assert!(matches!(services.registration().register_input_for_test(registration_input(operation, &credential, "000000200002290029")).await, Err(super::Error::MobileTaken)));
                 let observer = database.connections(&database.user).recover().await.expect("observer");
                 let row = observer.client().query_one("SELECT attempt.status='mobile_taken' AND attempt.credential_id=registration.id AND attempt.authentication_id=registration.authentication_id AND (attempt.mobile).hash=(registration.mobile).hash AND EXISTS (SELECT 1 FROM identity.accounts account JOIN identity.suspensions suspension ON suspension.id=account.suspension_id WHERE account.id=$2 AND (account.mobile).hash=(attempt.mobile).hash) AS paired FROM identity.attempts attempt JOIN identity.registrations registration ON registration.id=attempt.credential_id WHERE attempt.operation_id=$1", &[&operation, &account.id()]).await.expect("independent suspended occupancy refusal");
                 assert!(row.get::<_,bool>("paired"));
@@ -1856,7 +1890,7 @@ pub(crate) mod tests {
                     })).expect("current cancellation confirmation"),
                 ).await.expect("lawful cancellation releases the occupied phone");
                 assert!(observer.client().query_one("SELECT cancellation_id=$2 AND mobile IS NULL FROM identity.accounts WHERE id=$1", &[&account.id(), &cancellation.id()]).await.expect("released occupancy and permanent tombstone").get::<_, bool>(0));
-                assert!(matches!(services.registration().register(registration_input(operation, &credential, "000000200002290029")).await, Err(super::Error::MobileTaken)));
+                assert!(matches!(services.registration().register_input_for_test(registration_input(operation, &credential, "000000200002290029")).await, Err(super::Error::MobileTaken)));
                 assert_eq!(count(&database, "SELECT count(*) FROM identity.attempts").await, previous_attempts + 1);
                 assert_eq!(count(&database, "SELECT count(*) FROM identity.registrations").await, 1);
                 observer.terminate().await.expect("observer ended"); services.drain().await.expect("drained"); context.stop().await.expect("stopped"); sms.stop().await; supplier.stop().await;
@@ -1885,8 +1919,8 @@ pub(crate) mod tests {
                     crate::database::transaction::object(blocker.client(), b"identity/id_number", b"00000020000229007X").await.expect("hold competing number");
                     let pid: i32 = blocker.client().query_one("SELECT pg_backend_pid()", &[]).await.expect("blocker pid").get(0);
                     let first_service = services.registration().clone(); let second_service = services.registration().clone();
-                    let first_task = tokio::spawn(async move { first_service.register(first_command).await });
-                    let second_task = tokio::spawn(async move { second_service.register(second_command).await });
+                    let first_task = tokio::spawn(async move { first_service.register_input_for_test(first_command).await });
+                    let second_task = tokio::spawn(async move { second_service.register_input_for_test(second_command).await });
                     let observer = database.connections(&database.user).recover().await.expect("observer");
                     timeout(Duration::from_secs(5), async {
                         loop {
@@ -1953,7 +1987,8 @@ pub(crate) mod tests {
                         Fault::DelayedCommit
                     });
                     let worker = services.registration().clone();
-                    let caller = tokio::spawn(async move { worker.register(command).await });
+                    let caller =
+                        tokio::spawn(async move { worker.register_input_for_test(command).await });
                     timeout(Duration::from_secs(5), proxy.intercepted())
                         .await
                         .expect("original commit held");
@@ -1985,23 +2020,25 @@ pub(crate) mod tests {
                         count(&database, "SELECT count(*) FROM identity.attempts").await,
                         0
                     );
-                    let valid = services.registration().register(registration_input(
-                        operation,
-                        &credential,
-                        "00000020000229007X",
-                    ));
-                    let invalid =
+                    let valid =
                         services
                             .registration()
-                            .register(crate::registration::Input::new(
+                            .register_input_for_test(registration_input(
                                 operation,
-                                credential.id(),
-                                "__________________________________________8"
-                                    .parse()
-                                    .expect("wrong valid token"),
-                                "Different Operator".parse().expect("other name"),
-                                "000000200002290010".parse().expect("other number"),
+                                &credential,
+                                "00000020000229007X",
                             ));
+                    let invalid = services.registration().register_input_for_test(
+                        crate::registration::Input::new(
+                            operation,
+                            credential.id(),
+                            "__________________________________________8"
+                                .parse()
+                                .expect("wrong valid token"),
+                            "Different Operator".parse().expect("other name"),
+                            "000000200002290010".parse().expect("other number"),
+                        ),
+                    );
                     assert!(matches!(
                         timeout(Duration::from_secs(2), invalid)
                             .await
@@ -2015,7 +2052,7 @@ pub(crate) mod tests {
                         assert!(matches!(
                             timeout(
                                 Duration::from_secs(2),
-                                services.registration().register(changed)
+                                services.registration().register_input_for_test(changed)
                             )
                             .await
                             .expect("different input rejected before original commit is released"),
@@ -2061,7 +2098,7 @@ pub(crate) mod tests {
                             .await;
                     let replay = services
                         .registration()
-                        .register(registration_input(
+                        .register_input_for_test(registration_input(
                             operation,
                             &credential,
                             "00000020000229007X",
@@ -2106,7 +2143,7 @@ pub(crate) mod tests {
                     Receipt::Session(_) => panic!("unregistered mobile"),
                 };
                 let operation = Uuid::new_v4().to_string().parse().expect("original operation");
-                assert!(matches!(services.registration().register(registration_input(operation, &credential, "000000200002290010")).await, Err(super::Error::IdNumberTaken)));
+                assert!(matches!(services.registration().register_input_for_test(registration_input(operation, &credential, "000000200002290010")).await, Err(super::Error::IdNumberTaken)));
                 let observer = database.connections(&database.user).recover().await.expect("independent observer");
                 let held = context.connections().lease().await.expect("occupy the other pool slot");
                 let lease = context.connections().lease().await.expect("only available pool backend");
@@ -2122,7 +2159,7 @@ pub(crate) mod tests {
                             _ => { command.operation_id = Uuid::new_v4().to_string().parse().expect("new operation"); command.id_number = "000000210003010016".parse().expect("future date"); super::Failure::InvalidDate }
                         };
                         if failed { proxy.arm(Fault::RejectedRollback); }
-                        let error = services.registration().register(command).await.err().expect("rejected request");
+                        let error = services.registration().register_input_for_test(command).await.err().expect("rejected request");
                         if failed {
                             timeout(Duration::from_secs(2), proxy.intercepted()).await.expect("actual rejection ROLLBACK interrupted");
                             assert_eq!(error.failure(), super::Failure::Unavailable);
@@ -2186,7 +2223,7 @@ pub(crate) mod tests {
                     let command = registration_input(operation, &credential, "00000020000229007X");
                     proxy.arm(Fault::DelayedRollback);
                     let worker = services.registration().clone();
-                    let task = tokio::spawn(async move { worker.register(command).await });
+                    let task = tokio::spawn(async move { worker.register_input_for_test(command).await });
                     timeout(Duration::from_secs(5), proxy.intercepted()).await.expect("write commit held before rollback");
                     let observer = database.connections(&database.user).recover().await.expect("independent observer");
                     let gate = database.connections(&database.user).recover().await.expect("test operation gate");
@@ -2256,7 +2293,7 @@ pub(crate) mod tests {
                             tokio::task::yield_now().await;
                         }
                     }).await.expect("both actual backends ended");
-                    let replay = services.registration().register(registration_input(operation, &credential, "00000020000229007X")).await.expect("reliable later retry creates once");
+                    let replay = services.registration().register_input_for_test(registration_input(operation, &credential, "00000020000229007X")).await.expect("reliable later retry creates once");
                     assert!(replay.created());
                     assert_eq!(count(&database, "SELECT count(*) FROM identity.attempts").await, 1);
                     observer.terminate().await.expect("observer ended");
@@ -2293,7 +2330,7 @@ pub(crate) mod tests {
                 let command = registration_input(operation, &credential, "00000020000229007X");
                 proxy.arm(Fault::DelayedCommit);
                 let worker = services.registration().clone();
-                let task = tokio::spawn(async move { worker.register(command).await });
+                let task = tokio::spawn(async move { worker.register_input_for_test(command).await });
                 timeout(Duration::from_secs(5), proxy.intercepted()).await.expect("original commit held");
                 let observer = database.connections(&database.user).recover().await.expect("independent observer");
                 timeout(Duration::from_secs(5), async {
@@ -2312,7 +2349,7 @@ pub(crate) mod tests {
                 let original = result.expect("complete readback remains known despite cleanup failure");
                 assert!(original.created());
                 proxy.release();
-                let replay = services.registration().register(registration_input(operation, &credential, "00000020000229007X")).await.expect("original replay");
+                let replay = services.registration().register_input_for_test(registration_input(operation, &credential, "00000020000229007X")).await.expect("original replay");
                 assert!(!replay.created());
                 assert_eq!(original.id(), replay.id());
                 assert_eq!(original.token().text(), replay.token().text());
@@ -2356,7 +2393,7 @@ pub(crate) mod tests {
                         let rolled_back = matches!(fault, Fault::RolledBack);
                         proxy.arm(fault);
                         let worker = services.registration().clone();
-                        let task = tokio::spawn(async move { worker.register(command).await });
+                        let task = tokio::spawn(async move { worker.register_input_for_test(command).await });
                         timeout(Duration::from_secs(5), proxy.intercepted()).await.expect("R2 COMMIT really intercepted");
                         let observer = database.connections(&database.user).recover().await.expect("independent observer");
                         if delayed {
@@ -2382,7 +2419,7 @@ pub(crate) mod tests {
                             let paired: bool = observer.client().query_one("SELECT attempt.credential_id=$2 AND authentication.status='registrable' AND attempt.accepted_at>=authentication.finished_at AND ((attempt.status='id_number_taken' AND receipt.id IS NULL AND registration.id=attempt.credential_id) OR (attempt.status='registered' AND receipt.id=attempt.id AND receipt.operation_id=attempt.operation_id AND receipt.proof=attempt.proof AND session.receipt_id=receipt.id AND session.created_at=attempt.accepted_at AND handoff.id=session.id AND registration.id IS NULL)) FROM identity.attempts attempt JOIN identity.authentications authentication ON authentication.id=attempt.authentication_id LEFT JOIN identity.receipts receipt ON receipt.operation_id=attempt.operation_id LEFT JOIN identity.sessions session ON session.receipt_id=receipt.id LEFT JOIN identity.handoffs handoff ON handoff.id=session.id LEFT JOIN identity.registrations registration ON registration.id=attempt.credential_id WHERE attempt.operation_id=$1", &[&operation, &credential.id()]).await.expect("complete original result before replay").get(0);
                             assert!(paired);
                         }
-                        let replay = services.registration().register(registration_input(operation, &credential, number)).await;
+                        let replay = services.registration().register_input_for_test(registration_input(operation, &credential, number)).await;
                         if refusal {
                             if !rolled_back { assert!(matches!(result, Err(crate::registration::Error::IdNumberTaken))); }
                             assert!(matches!(replay, Err(crate::registration::Error::IdNumberTaken)));
@@ -2430,7 +2467,7 @@ pub(crate) mod tests {
                 let registration = services.registration();
                 let operation = Uuid::new_v4().to_string().parse().expect("operation");
                 let request = || crate::registration::Input::new(operation, credential.id(), credential.token().text().parse().expect("original token"), "Fixture Operator".parse().expect("name"), "00000020000229007X".parse().expect("number"));
-                let original = registration.register(request()).await.unwrap_or_else(|error| {
+                let original = registration.register_input_for_test(request()).await.unwrap_or_else(|error| {
                     let mut cause = &error;
                     loop {
                         match cause {
@@ -2445,7 +2482,7 @@ pub(crate) mod tests {
                 let row = observer.client().query_one("SELECT receipt.id = attempt.id AND receipt.operation_id = attempt.operation_id AND receipt.credential_id = attempt.credential_id AND receipt.proof = attempt.proof AND account.person_id = receipt.person_id AND person.revision_id = receipt.revision_id AND person.sequence = 1 AND appointment.revision_id = receipt.revision_id AND appointment.operator_id = receipt.revision_id AND appointment.sequence = 1 AND appointment.assigned_at = account.created_at AND session.created_at = account.created_at AND attempt.accepted_at = account.created_at AND role.scope = 'institution' AND role.level = 1 AND authentication.status = 'registrable' AND NOT EXISTS (SELECT 1 FROM identity.registrations WHERE id = receipt.credential_id) AS paired FROM identity.receipts receipt JOIN identity.attempts attempt ON attempt.id = receipt.id JOIN identity.accounts account ON account.id = receipt.account_id JOIN identity.persons person ON person.id = receipt.person_id JOIN access.holders holder ON holder.id = account.id JOIN access.appointments appointment ON appointment.id = holder.assignment_id JOIN access.roles role ON role.id = holder.role_id JOIN identity.sessions session ON session.receipt_id = receipt.id JOIN identity.authentications authentication ON authentication.id = session.authentication_id JOIN identity.handoffs handoff ON handoff.id = session.id JOIN identity.avatars avatar ON avatar.account_id = account.id AND avatar.released_at IS NULL WHERE receipt.operation_id = $1 AND session.id = $2", &[&operation, &original.id()]).await.expect("committed complete graph before replay");
                 assert!(row.get::<_, bool>("paired"));
                 observer.terminate().await.expect("observer ended");
-                let replay = registration.register(request()).await.expect("original handoff");
+                let replay = registration.register_input_for_test(request()).await.expect("original handoff");
                 assert!(!replay.created());
                 assert_eq!(original.id(), replay.id());
                 assert_eq!(original.token().text(), replay.token().text());

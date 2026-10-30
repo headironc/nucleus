@@ -6,7 +6,6 @@ use tokio_postgres::Client;
 use crate::identity::{
     keys,
     session::{Error, Session, handoff},
-    website::AppId,
 };
 
 pub(crate) async fn verify(
@@ -23,9 +22,9 @@ pub(crate) async fn verify(
         Some(_) => status == "registrable" && authenticated_at <= session.created_at(),
     };
     if !source
-        || session.app_id() != &row.try_get::<_, AppId>("app_id")?
+        || session.origin().app_id() != row.try_get::<_, &str>("app_id")?
         || row.try_get::<_, &str>("purpose")? != "create_session"
-        || row.try_get::<_, &str>("transport")? != "cookie"
+        || row.try_get::<_, &str>("transport")? != session.origin().transport()
     {
         return Err(Error::Facts {
             rule: "session preserves its authentication source and credential lifetime",

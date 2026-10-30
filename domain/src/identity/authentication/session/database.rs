@@ -24,7 +24,7 @@ pub(super) struct Authentication {
     proof: request::Proof,
     hash: [u8; 32],
     key_id: crate::keys::Id,
-    app_id: website::AppId,
+    origin: session::Origin,
     status: Status,
     finished_at: DateTime<Utc>,
 }
@@ -40,9 +40,7 @@ impl TryFrom<Row> for Authentication {
     type Error = Error;
     fn try_from(row: Row) -> Result<Self, Error> {
         let hash: Vec<u8> = row.try_get("hash")?;
-        if row.try_get::<_, String>("purpose")? != "create_session"
-            || row.try_get::<_, String>("transport")? != "cookie"
-        {
+        if row.try_get::<_, String>("purpose")? != "create_session" {
             return Err(inconsistent(
                 "retained authentication must have the website session source",
             ));
@@ -63,7 +61,7 @@ impl TryFrom<Row> for Authentication {
             proof: row.try_get("proof")?,
             hash: hash.try_into().map_err(invalid_hash)?,
             key_id: row.try_get("key_id")?,
-            app_id: row.try_get("app_id")?,
+            origin: origin(&row)?,
             status,
             finished_at: row.try_get("finished_at")?,
         })
@@ -74,13 +72,51 @@ fn invalid_hash(_: Vec<u8>) -> Error {
     inconsistent("stored credential and input digests must contain 32 bytes")
 }
 
+fn origin(row: &Row) -> Result<session::Origin, Error> {
+    match row.try_get::<_, &str>("transport")? {
+        "cookie" => Ok(session::Origin::WebsiteMessage(row.try_get("app_id")?)),
+        "bearer" => Ok(session::Origin::MiniMobile(
+            row.try_get::<_, &str>("app_id")?
+                .parse()
+                .map_err(invalid_origin)?,
+        )),
+        _ => Err(inconsistent("authentication retains a supported source")),
+    }
+}
+
+fn invalid_origin(_: website::Error) -> Error {
+    inconsistent("authentication application identity is valid")
+}
+
 impl Authentication {
+    pub(super) fn verify_mobile(
+        &self,
+        service: &Inner,
+        input: &super::mobile::Input,
+        origin: &session::Origin,
+    ) -> Result<(), Error> {
+        if self.proof != input.secret().proof() {
+            return Err(Error::Proof);
+        }
+        if &self.origin != origin
+            || !service
+                .keys
+                .input
+                .fetch(self.key_id)?
+                .verify(&input.encoded(origin)?, &self.hash)
+        {
+            return Err(Error::Mismatch);
+        }
+        Ok(())
+    }
+
     pub(super) fn verify(&self, service: &Inner, input: &Input) -> Result<(), Error> {
         if self.proof != input.secret.proof() {
             return Err(Error::Proof);
         }
         let key = service.keys.input.fetch(self.key_id)?;
-        if self.app_id != *service.settings.session().app_id()
+        if self.origin
+            != session::Origin::WebsiteMessage(service.settings.session().app_id().clone())
             || !key.verify(
                 &input.encoded(service.settings.session().app_id())?,
                 &self.hash,
@@ -117,7 +153,7 @@ impl Authentication {
                 let now = service.now(client).await?;
                 self.validate(
                     &service.keys.input,
-                    service.settings.session().app_id(),
+                    service.settings.session().issuance(),
                     now,
                 )?;
                 let Some(session) = session::find_by_authentication(
@@ -131,11 +167,11 @@ impl Authentication {
                 else {
                     return Err(Error::Verification);
                 };
-                let token = session::handoff::deliver(
+                let token = session::handoff::deliver_origin(
                     client,
                     &session,
                     &service.keys.credential,
-                    service.settings.session().app_id(),
+                    &self.origin,
                     now,
                 )
                 .await?;
@@ -165,7 +201,7 @@ impl Authentication {
                 let now = service.now(client).await?;
                 self.validate(
                     &service.keys.input,
-                    service.settings.session().app_id(),
+                    service.settings.session().issuance(),
                     now,
                 )?;
                 let Some(registration) =
@@ -202,11 +238,11 @@ impl Authentication {
     pub(super) fn validate(
         &self,
         keys: &keys::request::Keys,
-        app_id: &website::AppId,
+        settings: &session::settings::Settings,
         now: DateTime<Utc>,
     ) -> Result<(), Error> {
         keys.fetch(self.key_id)?;
-        if self.finished_at > now || self.app_id != *app_id {
+        if self.finished_at > now || !settings.accepts(&self.origin) {
             return Err(inconsistent(
                 "authentication event and application must match the running website",
             ));
@@ -331,7 +367,7 @@ pub(super) async fn consume(
 pub(super) async fn create_registration(
     service: &Inner,
     client: &Client,
-    input: &Input,
+    mobile: &crate::identity::mobile::Mobile,
     authentication_id: authentication::Id,
     now: DateTime<Utc>,
 ) -> Result<Receipt, Error> {
@@ -341,11 +377,11 @@ pub(super) async fn create_registration(
         &service.keys.credential,
         credential::Binding::Registration(id),
     )?;
-    let mobile = Envelope::seal(
+    let envelope = Envelope::seal(
         &service.keys.encryption,
         &service.keys.mobile,
         Binding::Registration(id),
-        &input.mobile,
+        mobile,
     )?;
     let expires_at = now
         .checked_add_signed(service.settings.session().registration())
@@ -353,10 +389,10 @@ pub(super) async fn create_registration(
     client
         .execute(
             "DELETE FROM identity.registrations WHERE (mobile).hash = $1",
-            &[&service.keys.mobile.hash(&input.mobile)?],
+            &[&service.keys.mobile.hash(mobile)?],
         )
         .await?;
-    client.execute("INSERT INTO identity.registrations (id, authentication_id, mobile, token, created_at, expires_at) VALUES ($1,$2,$3,$4,$5,$6)", &[&id, &authentication_id, &mobile, &sealed.as_ref(), &now, &expires_at]).await?;
+    client.execute("INSERT INTO identity.registrations (id, authentication_id, mobile, token, created_at, expires_at) VALUES ($1,$2,$3,$4,$5,$6)", &[&id, &authentication_id, &envelope, &sealed.as_ref(), &now, &expires_at]).await?;
     Ok(Receipt::Registration(Registration {
         id,
         token: registration::Token(token),
@@ -423,7 +459,7 @@ pub(super) async fn verify_all(
     client: &Client,
     app: &crate::kernel::App,
     keys: &keys::Keys,
-    app_id: &website::AppId,
+    settings: &session::settings::Settings,
     now: DateTime<Utc>,
 ) -> Result<(), Error> {
     let read = Read::Snapshot(app.anchors().view()?);
@@ -437,7 +473,7 @@ pub(super) async fn verify_all(
                 let complete = rows.len() < 128;
                 for row in rows {
                     let authentication = Authentication::try_from(row)?;
-                    authentication.validate(&keys.input, app_id, now)?;
+                    authentication.validate(&keys.input, settings, now)?;
                     if let Some(session) =
                         session::find_by_authentication(client, app, read, authentication.id, now)
                             .await?

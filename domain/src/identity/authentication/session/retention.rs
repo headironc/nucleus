@@ -84,6 +84,8 @@ async fn fetch_candidates(
         let rows = lease.client().query("SELECT operation_id FROM identity.authentications WHERE ($1::uuid IS NULL OR operation_id > $1) AND (finished_at + interval '24 hours' <= $2 OR EXISTS (SELECT 1 FROM identity.registrations WHERE authentication_id = authentications.id AND expires_at <= $2)) ORDER BY operation_id LIMIT 128", &[&cursor, &now]).await?;
         let mut candidates = rows.into_iter().map(|row| row.try_get(0).map_err(Error::from)).collect::<Result<Vec<operation::Id>, Error>>()?;
         candidates.extend(session::state::authentication_candidates(lease.client(), cursor, now).await?);
+        let rows = lease.client().query("SELECT operation_id FROM identity.exchanges WHERE ($1::uuid IS NULL OR operation_id>$1) AND ((status='claimed' AND deadline<=$2) OR finished_at + interval '24 hours'<=$2) AND NOT EXISTS (SELECT 1 FROM identity.authentications WHERE exchange_id=exchanges.id) ORDER BY operation_id LIMIT 128", &[&cursor, &now]).await?;
+        for row in rows { candidates.push(row.try_get(0)?); }
         candidates.sort_unstable_by_key(|id| *id.as_bytes());
         candidates.dedup();
         candidates.truncate(128);
@@ -100,6 +102,7 @@ async fn fetch_candidates(
 }
 
 enum Deletion {
+    Exchange(super::mobile::Id),
     Handoff(session::Id),
     Session(session::Id),
     Registration(registration::Id),
@@ -139,6 +142,11 @@ impl Deletion {
                 .await?;
         }
         match self {
+            Self::Exchange(id) => {
+                client
+                    .execute("DELETE FROM identity.exchanges WHERE id=$1", &[id])
+                    .await?;
+            }
             Self::Registration(id)
             | Self::AuthenticationRegistration {
                 registration_id: id,
@@ -167,7 +175,7 @@ impl Deletion {
                     .execute("DELETE FROM identity.authentications WHERE id = $1", &[id])
                     .await?;
             }
-            Self::Handoff(_) | Self::Session(_) | Self::Registration(_) => {}
+            Self::Handoff(_) | Self::Session(_) | Self::Registration(_) | Self::Exchange(_) => {}
         }
         Ok(())
     }
@@ -184,6 +192,13 @@ impl Deletion {
         // A lawful replacement can remove a shorter-lived child while connections change.
         // The longest-lived selected entity determines this attempt's remaining work.
         let retained: bool = match self {
+            Self::Exchange(id) => client
+                .query_one(
+                    "SELECT EXISTS (SELECT 1 FROM identity.exchanges WHERE id=$1)",
+                    &[id],
+                )
+                .await?
+                .try_get(0)?,
             Self::Handoff(_) | Self::Session(_) => credential,
             Self::Registration(id) => client
                 .query_one(
@@ -358,7 +373,13 @@ async fn select(
         )
         .await?;
     let Some(row) = option else {
-        return Ok((None, service.now(client).await?));
+        let now = service.now(client).await?;
+        return Ok((
+            super::mobile::retention(client, operation_id, now)
+                .await?
+                .map(Deletion::Exchange),
+            now,
+        ));
     };
     let id: authentication::Id = row.try_get(0)?;
     session::state::lock_authentication(client, id).await?;
