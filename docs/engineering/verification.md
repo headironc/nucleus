@@ -72,7 +72,19 @@ plan 直接调用现分类器。无法核实比较时保守选择 full/all；畸
 
 成功验收同时要求完整 package 检查、PG scan empty、TMPDIR removed、原 run/job 成功终态，以及 GARM 自动回收对应 VM 的证据。硬终止可能阻止清理，单有 `always()` 不证明资源已回收。现场负责人持有唯一 dispatch、运行观察和 VM 生命周期责任；源码检查与合并不代替实际验收，也不证明全部 CI 已迁移。
 
-[专用 PR 检查](../../.github/workflows/runner-probe-checks.yml)执行 `.github/runner-probe/` 的类型与回归，覆盖实际来源拒绝、只读权限、完整命令、日志失败传播和清理条件。固定 actionlint 1.7.12 核两份工作流，额外 runner 标签由 `.github/actionlint.yaml` 声明。产品代码、镜像及 fixture 输入未变时按下文复用原证据；回归不启动 VM 或 registry 操作。
+[专用 PR 检查](../../.github/workflows/runner-probe-checks.yml)执行 `.github/runner-probe/` 的类型与回归，覆盖实际来源拒绝、只读权限、完整命令、日志失败传播和清理条件。固定 actionlint 1.7.12 核两份工作流，额外 runner 标签由 `.github/actionlint.yaml` 声明。产品代码、镜像及 fixture 输入未变时按下文复用原证据；当前 required CI 仍须通过，回归不启动 VM 或 registry 操作。
+
+#### 专用 JIT 启动模板
+
+[bootstrap.tmpl](../../.github/runner-probe/bootstrap.tmpl) 是现有单 job 消费者的启动源，适用 GARM v0.2.1 和 LXD provider v0.1.5。模板改编自 provider 所带的 garm-provider-common v0.1.9，保留[来源及修改说明](../../.github/runner-probe/bootstrap.NOTICE)和 [Apache-2.0 许可证](../../.github/runner-probe/bootstrap.LICENSE)。原真实 run `40985793966` 已验证相同模板、原生 job-token 拉取、完整 platform 包及 GARM 自动回收；模板 SHA256 为 `4ad03706a17eb260be188834aae901d222b685e1b8345c72d52c904243136bf2`。该结果只覆盖原版本、模板字节及已核输入，不证明任意池或故障矩阵可用。
+
+原现场负责人从已审提交读取模板，按 provider 的 `runner_install_template` 字节字段填入既有 extra specs，由原 GARM/provider 渲染及交付。使用 JSON 表示该字节字段时按其原生契约进行 base64 编码；不要把已填 JWT 的脚本作为源码或手动部署入口。仓库不保存现场 extra specs、root 操作包、凭据、JWT、数据库或运行 receipts。源码合并本身不更新现场配置，也不派发 job。
+
+模板只接受 JIT，拒绝 boot debug，固定 `runner` 账号，以及 `https://10.203.64.1:9444/api/v1/metadata` 和 `/api/v1/callbacks`。它依赖现有镜像的 Runner 安装、可信 CA、固定 `10.203.64.1:3128` 代理和 Docker client/server 29.1.3；同时核对代理文件及 Docker 配置。回调 JWT 只由受控 GARM 实例签发，属于可信模板输入，不接受外部用户提供的模板参数。关闭 trace 后经 stdin header 传递 JWT，不放入 curl argv。认证过的 metadata 提供 JIT 身份、服务名及 systemd 单元；这不是跨控制器的通用启动接口。
+
+请求 JIT 身份前先拒绝已有或符号链接身份文件，并确认默认 Unix Docker 上下文、镜像及容器均为空；不通过清空已有内容获得冷环境。身份文件以独占创建和私有权限写入。安装服务时拒绝现有单元和 drop-in，不读 `.runner` 推断登记 ID；system-info 和 status 的 `agent_id` 始终为 null，由 GARM 保留已登记身份。失败只回报具体阶段，不输出凭据；部分身份文件或已启动服务的清理由原 VM 生命周期负责，不能重跑脚本覆盖它们。
+
+[行为回归](../../.github/runner-probe/bootstrap.test.ts)由 Bun 驱动，使用固定 Go 1.27.3 的 `text/template` 真实渲染，执行 Bash 语法和控制流程。测试只将文件根映射到私有临时目录，替换 curl、Docker、sudo；真实 jq、重定向、文件权限和 ERR trap 仍执行。覆盖非 JIT/debug/绑定拒绝、已有及竞态身份保护、Docker 冷环境拒绝、null ID 回调和失败脱敏。Go 小程序仅为测试适配器，不是新的部署入口。回归不证明真实 systemd、Docker 网络或 GARM 回收，仍按前述实际运行证据验收。模板行为或消费者输入变化时，由领域判断受影响覆盖，再由原现场负责人补验；字节和输入未变时复用原证据。
 
 ## CI 触发与选检
 
