@@ -42,7 +42,7 @@ impl ToSchema for Common {}
 
 /// An error response with an extensible code. Clients must tolerate unknown values.
 #[derive(Serialize, ToSchema)]
-#[schema(as = Failure, bound = "")]
+#[schema(as = Failure, bound = "", max_properties = 1)]
 pub(crate) struct Failure<C: AsCode = Common> {
     #[schema(inline)]
     pub(crate) code: C,

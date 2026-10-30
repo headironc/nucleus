@@ -5,18 +5,18 @@ use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
 };
-use domain::identity::{authentication, operation};
+use domain::{identity::operation, startup::Services};
 use serde::Serialize;
 use utoipa::ToSchema;
 use utoipa_axum::{router::OpenApiRouter, routes};
 
 use crate::{extension::Extension, json::Json, response};
 
-pub(crate) fn router(authentication: authentication::Service) -> OpenApiRouter {
+pub(crate) fn router(services: Services) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(live))
         .routes(routes!(ready))
-        .with_state(authentication)
+        .with_state(services)
 }
 
 #[derive(Serialize, ToSchema)]
@@ -51,7 +51,7 @@ async fn live(Extension(_): Extension<operation::Id>) -> Json<Live> {
 #[utoipa::path(get, path = "/health/ready", operation_id = "readiness",
     params(("Operation-Id" = Uuid, Header, description = "Required request UUID value.")),
     responses(
-        (status = 200, body = Ready, description = "Trusted database time and C1 admission are available."),
+        (status = 200, body = Ready, description = "Trusted database time and shared request work are available."),
         (status = 400, body = response::Failure, description = "invalid_input; invalid Operation-Id"),
         (status = 500, body = response::Failure, description = "internal_error"),
         (status = 503, body = response::Failure, description = "dependency_unavailable; no supplier call")
@@ -59,9 +59,9 @@ async fn live(Extension(_): Extension<operation::Id>) -> Json<Live> {
 )]
 async fn ready(
     Extension(operation_id): Extension<operation::Id>,
-    State(authentication): State<authentication::Service>,
+    State(services): State<Services>,
 ) -> Response {
-    match authentication.ready().await {
+    match services.ready().await {
         Ok(()) => Json(Ready {
             code: "ok",
             ready: true,

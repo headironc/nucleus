@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="司籍处网站员工服务主页设计。" />
+    <title>员工服务 · 司籍处</title>
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/tokens.css" />
+    <link rel="stylesheet" href="assets/halo-home.css" />
+    <link rel="stylesheet" href="assets/halo-services.css" />
+    <script src="assets/halo-services.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#services">跳到主要内容</a>
+    <div class="preview-tools" aria-label="设计预览工具">
+      <div class="preview-caption">
+        <strong>HALO · 设计预览</strong><span>虚构资料，仅演示页面与交互</span>
+      </div>
+      <button
+        class="preview-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="preview-tools-content"
+      >
+        展开预览工具
+      </button>
+      <div class="preview-tools-content" id="preview-tools-content">
+        <div class="preview-controls">
+          <label for="scenario-picker">页面状态</label>
+          <select id="scenario-picker">
+            <optgroup label="员工服务">
+              <option value="active">正常 · 已有工号</option>
+              <option value="not-enabled">未开通</option>
+              <option value="suspended">暂停</option>
+              <option value="terminated">结束</option>
+            </optgroup>
+            <optgroup label="机构内容权限">
+              <option value="content-manager">
+                栏目维护者 · 员工服务未开通
+              </option>
+            </optgroup>
+            <optgroup label="办理资料">
+              <option value="active-no-number">正常 · 尚无工号</option>
+              <option value="active-empty">正常 · 暂无申请</option>
+              <option value="number-unavailable">工号读取失败</option>
+              <option value="applications-unavailable">申请读取失败</option>
+              <option value="suspended-empty">暂停 · 暂无可取消申请</option>
+              <option value="suspended-unavailable">暂停 · 申请读取失败</option>
+              <option value="terminated-empty">结束 · 暂无可取消申请</option>
+              <option value="terminated-unavailable">
+                结束 · 申请读取失败
+              </option>
+            </optgroup>
+            <optgroup label="进入与刷新">
+              <option value="loading">服务状态读取中</option>
+              <option value="unavailable">服务状态读取失败</option>
+              <option value="account-unavailable">本人账户读取失败</option>
+              <option value="session-expired">登录已失效</option>
+              <option value="account-changed">账户已切换</option>
+            </optgroup>
+          </select>
+        </div>
+        <details class="design-notes">
+          <summary>设计说明与状态依据</summary>
+          <div>
+            <p id="state-basis"></p>
+            <p>
+              本页为静态交互设计稿，不读取账户、不提交业务请求。姓名、工号、申请和日期均为虚构示例；状态切换不代表实际服务资格变化。
+            </p>
+            <p>
+              登录成功只用于进入员工服务。正式实现须读取本人及当前服务状态；注册不自动开通服务。工号与申请分别读取，失败不能解释为没有工号或没有申请。
+            </p>
+            <p>
+              暂停时只展示取消所需的申请摘要；结束时不展示原申请的继续入口。重新开通不恢复旧申请或旧工牌的增办资格。
+            </p>
+            <p>
+              个人账户连接只读资料与实名更正记录稿。结束员工服务连接独立办理设计稿，不执行真实请求。工号办理、照片、申请详情和邀请码等页面另行设计；取消申请只展示确认与操作位置。
+            </p>
+            <p>
+              本页规则依据见仓库 <code>docs/client/pages.md</code>、<code
+                >docs/access/grants.md</code
+              >
+              与 <code>docs/workforce/applications.md</code>。
+            </p>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="halo-home.html" aria-label="司籍处首页">
+          <img src="assets/logo.png" width="56" height="56" alt="" />
+          <span class="brand-copy"
+            ><strong>司籍处</strong><span>中医药文化宣传与推广中心</span></span
+          >
+        </a>
+        <nav class="service-navigation" aria-label="网站导航">
+          <a href="#services" aria-current="page">员工服务</a>
+          <a href="halo-account.html" data-account hidden>个人账户</a>
+          <a class="public-return" href="halo-home.html"
+            >返回首页 <span aria-hidden="true">↗</span></a
+          >
+        </nav>
+      </div>
+    </header>
+
+    <main id="services" class="services-layout" tabindex="-1">
+      <div class="page-heading">
+        <div>
+          <p class="section-kicker">日常事务 · 有序办理</p>
+          <h1 id="page-title" tabindex="-1">员工服务</h1>
+          <p class="page-introduction" id="page-introduction">
+            正在确认登录状态，请稍候。
+          </p>
+        </div>
+        <span class="service-status" id="service-status" hidden></span>
+      </div>
+
+      <div class="service-columns">
+        <div id="service-content" class="service-content"></div>
+        <aside class="service-aside" aria-label="账户与帮助">
+          <section
+            class="account-panel"
+            data-account
+            hidden
+            aria-labelledby="account-title"
+          >
+            <div class="account-heading">
+              <div class="account-symbol" aria-hidden="true">
+                <svg viewBox="0 0 24 24">
+                  <circle cx="12" cy="8" r="3.5" />
+                  <path d="M5 21v-2a7 7 0 0 1 14 0v2" />
+                </svg>
+              </div>
+              <div>
+                <h2 id="account-title">个人账户</h2>
+                <p>资料与登录设置</p>
+              </div>
+            </div>
+            <div class="account-links">
+              <button type="button" data-preview="profile">
+                个人资料与头像 <span aria-hidden="true">›</span>
+              </button>
+              <button type="button" data-preview="affiliation">
+                政治面貌 <span aria-hidden="true">›</span>
+              </button>
+              <button type="button" data-preview="login-methods">
+                登录方式 <span aria-hidden="true">›</span>
+              </button>
+            </div>
+            <p id="account-note">账户资料与员工服务分别管理。</p>
+            <div id="content-manager" data-content-management hidden>
+              <a class="button" href="halo-columns.html"
+                >栏目管理 <span aria-hidden="true">→</span></a
+              >
+            </div>
+            <button type="button" class="subtle-button" data-action="sign-out">
+              退出登录
+            </button>
+          </section>
+          <div class="service-support">
+            <section class="help-panel" aria-labelledby="help-title">
+              <h2 id="help-title">办理有疑问？</h2>
+              <p>工号、工牌或服务开通的问题，请联系医院管理员。</p>
+            </section>
+            <a class="public-reading" href="halo-home.html#reading">
+              <img
+                src="assets/halo-botanical.svg"
+                width="680"
+                height="520"
+                alt=""
+              />
+              <span class="reading-copy"
+                ><strong>医院文化与科普</strong
+                ><span>继续浏览 <span aria-hidden="true">↗</span></span></span
+              >
+            </a>
+          </div>
+        </aside>
+      </div>
+
+      <div class="service-bottom" id="service-bottom" hidden>
+        <p>不再需要办理工号或工牌？</p>
+        <button type="button" class="subtle-button" data-action="leave-service">
+          结束员工服务
+        </button>
+      </div>
+    </main>
+
+    <footer class="services-footer">
+      <span>司籍处 · 员工服务</span>
+    </footer>
+
+    <dialog
+      id="service-dialog"
+      class="preview-dialog"
+      aria-labelledby="dialog-title"
+      aria-describedby="dialog-description"
+    >
+      <div class="dialog-heading">
+        <span id="dialog-context">设计预览 · 后续页面</span>
+        <button
+          type="button"
+          class="dialog-close"
+          data-action="close-dialog"
+          aria-label="关闭"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18" />
+          </svg>
+        </button>
+      </div>
+      <h2 id="dialog-title"></h2>
+      <p id="dialog-description"></p>
+      <div id="dialog-summary" hidden></div>
+      <p id="dialog-note" class="dialog-note" hidden></p>
+      <div class="dialog-actions">
+        <button type="button" class="button primary" id="dialog-confirm">
+          知道了
+        </button>
+        <button
+          type="button"
+          class="button"
+          id="dialog-back"
+          data-action="close-dialog"
+          hidden
+        >
+          暂不结束
+        </button>
+      </div>
+    </dialog>
+  </body>
+</html>

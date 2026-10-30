@@ -1,50 +1,82 @@
 //! Message transactions and recovery; fixed queries and facts belong to authentication::database.
 
 use chrono::TimeDelta;
-use tokio::time::timeout;
+use tokio::time::{Instant, timeout_at};
 use tokio_postgres::Client;
 
 use crate::{
+    database::transaction::{Completion, Known, Outcome, commit, confirm},
     identity::{
         authentication::{
-            self, Error, Inner, Input, Stage, Status, TRANSACTION_BUDGET,
-            database::{self, message::Message},
+            self, Error, Inner, Input, Sender, Stage, Status, TRANSACTION_BUDGET,
+            database::{
+                self,
+                message::{Binding, Message},
+            },
             dispatch::{Change, Preparation, Prepared, Receipt},
             quota, transaction,
         },
         challenge, message,
         message::{Conclusion, worker},
     },
-    runtime::Sample,
+    kernel::time::Sample,
 };
+
+enum Transition {
+    Original(Message),
+    Inserted,
+}
 
 impl Inner {
     pub(super) async fn prepare(
         &self,
         input: &Input,
         challenge: authentication::Receipt,
-    ) -> Result<Preparation, Error> {
+    ) -> Result<(Preparation, Option<Box<Error>>), Error> {
         let lease = self.context.connections().lease().await?;
         let mut option: Option<Prepared> = None;
-        let error = match timeout(TRANSACTION_BUDGET, async {
+        let deadline = Instant::now() + TRANSACTION_BUDGET;
+        let result = match timeout_at(deadline, async {
             let client = lease.client();
-            transaction::begin(client, input.operation_id).await?;
-            let challenge = database::challenge::find(client, &self.keys, input)
+            transaction::begin(&self.context, client, input.operation_id).await?;
+            let challenge = database::challenge::find_receipt(client, &self.keys, input)
                 .await?
                 .ok_or(Error::Facts {
                     stage: Stage::MessagePreparation,
                     rule: "the verified challenge must still exist",
                 })?;
-            if let Some(message) = database::message::find(client, challenge.id).await? {
-                message.validate(&self.keys.message, self.sample().await?)?;
-                client.batch_execute("COMMIT").await?;
-                return Ok(Preparation::Original(message));
+            input.lock_scope(client).await?;
+            if let Some(message) =
+                database::message::find_by_challenge(client, challenge.id).await?
+            {
+                self.authenticate_sender(client, input).await?;
+                message.validate(&self.keys.message, self.now(client).await?)?;
+                return Ok(Outcome::Known(Transition::Original(message)));
             }
+            let binding = match &input.sender {
+                Sender::Anonymous => Binding::Authentication,
+                Sender::Current(actor) => {
+                    let contact = self.contact(client, actor, &input.mobile).await?;
+                    Binding::Current {
+                        person_id: contact.person_id(),
+                        operator_id: contact.revision_id(),
+                    }
+                }
+                Sender::Transfer { actor, transfer_id } => {
+                    let contact = self
+                        .transfer_contact(client, actor, *transfer_id, &input.mobile)
+                        .await?;
+                    Binding::Transfer {
+                        person_id: contact.person_id(),
+                        operator_id: contact.operator_revision_id(),
+                    }
+                }
+            };
             transaction::object(client, b"identity/mobile", input.mobile.as_bytes()).await?;
             let source = database::challenge::fetch_source(client, challenge.id).await?;
             transaction::object(client, b"message/source", source.to_string().as_bytes()).await?;
             transaction::object(client, b"message/deployment", b"permit").await?;
-            let now = self.sample().await?;
+            let now = self.now(client).await?;
             match challenge.status {
                 Status::Passed {
                     solved_at,
@@ -65,6 +97,7 @@ impl Inner {
                 now,
                 self.settings.message(),
                 &code,
+                binding,
             )?;
             option = Some(Prepared { message, code });
             let prepared = option.as_ref().ok_or(Error::Facts {
@@ -72,84 +105,121 @@ impl Inner {
                 rule: "the original code and message must be retained before insertion",
             })?;
             prepared.message.insert(client).await?;
-            client.batch_execute("COMMIT").await?;
-            Ok::<_, Error>(Preparation::Ready(option.take().ok_or(Error::Facts {
-                stage: Stage::MessagePreparation,
-                rule: "a committed new permit must retain its original code and message",
-            })?))
+            Ok::<_, Error>(Outcome::Pending(Transition::Inserted))
         })
         .await
         {
-            Ok(Ok(preparation)) => {
-                lease.release();
-                return Ok(preparation);
-            }
-            Ok(Err(error)) => error,
-            Err(error) => error.into(),
+            Ok(result) => result,
+            Err(error) => Err(error.into()),
         };
-        if error.rejection()
-            && matches!(
-                timeout(TRANSACTION_BUDGET, lease.client().batch_execute("ROLLBACK")).await,
-                Ok(Ok(()))
-            )
-        {
-            lease.release();
-            return Err(error);
-        }
-        let cause = error.combine(lease.discard().await);
-        let message = match self.recover_message(input, challenge.id).await {
-            Ok(Some(message)) => message,
-            Ok(None) => {
-                return Err(Error::NotCommitted {
-                    cause: Box::new(cause),
-                });
+        let error = match result {
+            Ok(outcome) => {
+                let completion =
+                    commit(outcome, deadline, lease.client().batch_execute("COMMIT")).await;
+                let (completion, cleanup) = completion.recycle(lease).await;
+                match completion {
+                    Completion::Known(Known { value, end }) => {
+                        let preparation = match value {
+                            Transition::Original(message) => Preparation::Original(message),
+                            Transition::Inserted => Preparation::Ready(option.take().ok_or(Error::Facts {
+                                stage: Stage::MessagePreparation,
+                                rule: "a committed new permit must retain its original code and message",
+                            })?),
+                        };
+                        let option = match end {
+                            Ok(()) => cleanup.err().map(Error::from).map(Box::new),
+                            Err(error) => Some(Box::new(Error::from(error).combine(cleanup))),
+                        };
+                        if option.as_ref().is_some_and(|cause| cause.unreliable()) {
+                            self.registry.close();
+                        }
+                        return Ok((preparation, option));
+                    }
+                    Completion::Pending { error, .. } => Error::from(error).combine(cleanup),
+                }
             }
+            Err(error) => {
+                if error.rejection() {
+                    return Err(transaction::rollback(lease, error).await);
+                }
+                let error = error.combine(lease.discard().await);
+                if error.unreliable() {
+                    self.registry.close();
+                }
+                error
+            }
+        };
+        let (readback, termination) = match self.recover_message(input, challenge.id).await {
+            Ok(readback) => readback,
             Err(recovery) => {
                 return Err(Error::Unknown {
-                    cause: Box::new(cause),
+                    cause: Box::new(error),
                     recovery: Box::new(recovery),
                 });
             }
         };
-        let Some(prepared) = option else {
-            return Ok(Preparation::Original(message));
+        let commit = readback.end;
+        let Some(message) = readback.value else {
+            return Err(Error::NotCommitted {
+                cause: Box::new(Error::MessageReadback {
+                    cause: Box::new(error),
+                    commit,
+                    termination,
+                }),
+            });
         };
-        if prepared.message.id() != message.id() {
-            return Err(Error::Facts {
-                stage: Stage::MessageRecovery,
-                rule: "recovered message identity must match the original permit",
+        if let Some(prepared) = &option
+            && let Err(cause) = prepared.verify(&self.keys.message, &message)
+        {
+            if cause.unreliable() {
+                self.registry.close();
+            }
+            return Err(Error::MessagePreparation {
+                cause: Box::new(cause),
+                preparation: Box::new(Error::MessageReadback {
+                    cause: Box::new(error),
+                    commit,
+                    termination,
+                }),
             });
         }
-        if prepared.message.worker_id() != message.worker_id() {
-            return Err(Error::Facts {
-                stage: Stage::MessageRecovery,
-                rule: "recovered worker must match the original execution",
-            });
-        }
-        if !message.verify_code(&self.keys.message, &prepared.code)? {
-            return Err(Error::Facts {
-                stage: Stage::MessageRecovery,
-                rule: "the retained code must verify against the recovered proof",
-            });
-        }
-        if message.status() != message::Status::Sending {
-            return Ok(Preparation::Original(message));
-        }
-        Ok(Preparation::Ready(Prepared {
-            message,
-            code: prepared.code,
-        }))
+        let preparation = match option {
+            Some(prepared) if message.status() == message::Status::Sending => {
+                Preparation::Ready(Prepared {
+                    message,
+                    code: prepared.code,
+                })
+            }
+            _ => Preparation::Original(message),
+        };
+        let option = if error.unreliable() || commit.is_err() || termination.is_err() {
+            Some(Box::new(Error::MessageReadback {
+                cause: Box::new(error),
+                commit,
+                termination,
+            }))
+        } else {
+            None
+        };
+        Ok((preparation, option))
     }
 
     async fn recover_message(
         &self,
         input: &Input,
         challenge_id: challenge::Id,
-    ) -> Result<Option<Message>, Error> {
+    ) -> Result<
+        (
+            Known<Option<Message>>,
+            Result<(), platform::database::Error>,
+        ),
+        Error,
+    > {
         let session = self.context.connections().recover().await?;
-        let error = match timeout(TRANSACTION_BUDGET, async {
-            transaction::begin(session.client(), input.operation_id).await?;
-            let receipt = database::challenge::find(session.client(), &self.keys, input)
+        let deadline = Instant::now() + TRANSACTION_BUDGET;
+        let result = match timeout_at(deadline, async {
+            transaction::begin(&self.context, session.client(), input.operation_id).await?;
+            let receipt = database::challenge::find_receipt(session.client(), &self.keys, input)
                 .await?
                 .ok_or(Error::Facts {
                     stage: Stage::MessageRecovery,
@@ -161,23 +231,25 @@ impl Inner {
                     rule: "challenge identity must match the original receipt",
                 });
             }
-            let option = database::message::find(session.client(), challenge_id).await?;
+            let option =
+                database::message::find_by_challenge(session.client(), challenge_id).await?;
             if let Some(message) = &option {
-                message.validate(&self.keys.message, self.sample().await?)?;
+                message.validate(&self.keys.message, self.now(session.client()).await?)?;
             }
-            session.client().batch_execute("COMMIT").await?;
             Ok::<_, Error>(option)
         })
         .await
         {
             Ok(Ok(option)) => {
-                session.terminate().await?;
-                return Ok(option);
+                Ok(confirm(option, deadline, session.client().batch_execute("COMMIT")).await)
             }
-            Ok(Err(error)) => error,
-            Err(error) => error.into(),
+            Ok(Err(error)) => Err(error),
+            Err(error) => Err(error.into()),
         };
-        Err(error.combine(session.terminate().await))
+        match result {
+            Ok(completion) => Ok(completion.terminate(session).await),
+            Err(error) => Err(error.combine(session.terminate().await)),
+        }
     }
 
     pub(super) async fn finish_message(
@@ -186,8 +258,8 @@ impl Inner {
         challenge_id: challenge::Id,
         worker_id: worker::Id,
         conclusion: Conclusion,
-    ) -> Result<Receipt, Error> {
-        let (message, _) = self
+    ) -> Result<(Receipt, Option<Box<Error>>), Error> {
+        let (message, _, option) = self
             .change_message(
                 input,
                 challenge_id,
@@ -197,7 +269,7 @@ impl Inner {
                 },
             )
             .await?;
-        Ok(Receipt::new(&message))
+        Ok((Receipt::new(&message), option))
     }
 
     pub(super) async fn change_message(
@@ -205,46 +277,87 @@ impl Inner {
         input: &Input,
         challenge_id: challenge::Id,
         change: &Change<'_>,
-    ) -> Result<(Message, Sample), Error> {
+    ) -> Result<(Message, Sample, Option<Box<Error>>), Error> {
         let cause = match self.context.connections().lease().await {
             Ok(lease) => {
-                let error = match timeout(
-                    TRANSACTION_BUDGET,
-                    self.write_message(lease.client(), input, challenge_id, change),
-                )
-                .await
+                match self
+                    .write_message(lease.client(), input, challenge_id, change, true)
+                    .await
                 {
-                    Ok(Ok(result)) => {
-                        lease.release();
-                        return Ok(result);
+                    Ok(completion) => {
+                        let (completion, cleanup) = completion.recycle(lease).await;
+                        match completion {
+                            Completion::Known(Known {
+                                value: (message, sample),
+                                end,
+                            }) => {
+                                let option = match end {
+                                    Ok(()) => cleanup.err().map(Error::from).map(Box::new),
+                                    Err(cause) => {
+                                        Some(Box::new(Error::from(cause).combine(cleanup)))
+                                    }
+                                };
+                                if option.as_ref().is_some_and(|cause| cause.unreliable()) {
+                                    self.registry.close();
+                                }
+                                return Ok((message, sample, option));
+                            }
+                            Completion::Pending { error, .. } => {
+                                Error::from(error).combine(cleanup)
+                            }
+                        }
                     }
-                    Ok(Err(error)) => error,
-                    Err(error) => error.into(),
-                };
-                error.combine(lease.discard().await)
+                    Err(error) => error.combine(lease.discard().await),
+                }
             }
             Err(error) => error.into(),
         };
+        let reliable = !cause.unreliable();
+        if !reliable {
+            self.registry.close();
+        }
         let recovery = async {
             let session = self.context.connections().recover().await?;
-            let error = match timeout(
-                TRANSACTION_BUDGET,
-                self.write_message(session.client(), input, challenge_id, change),
-            )
-            .await
-            {
-                Ok(Ok(result)) => {
-                    session.terminate().await?;
-                    return Ok(result);
-                }
-                Ok(Err(error)) => error,
-                Err(error) => error.into(),
-            };
-            Err(error.combine(session.terminate().await))
+            let result = self
+                .write_message(session.client(), input, challenge_id, change, reliable)
+                .await;
+            match result {
+                Ok(result) => Ok(result.terminate(session).await),
+                Err(error) => Err(error.combine(session.terminate().await)),
+            }
         }
         .await;
         match recovery {
-            Ok(result) => Ok(result),
+            Ok((
+                Completion::Known(Known {
+                    value: (message, sample),
+                    end: commit,
+                }),
+                termination,
+            )) => {
+                let option = if !reliable || commit.is_err() || termination.is_err() {
+                    Some(Box::new(Error::MessageReadback {
+                        cause: Box::new(cause),
+                        commit,
+                        termination,
+                    }))
+                } else {
+                    None
+                };
+                let option = match option {
+                    Some(cause)
+                        if message.status() == message::Status::Sending && cause.unreliable() =>
+                    {
+                        return Err(*cause);
+                    }
+                    option => option,
+                };
+                Ok((message, sample, option))
+            }
+            Ok((Completion::Pending { error, .. }, termination)) => Err(Error::Unknown {
+                cause: Box::new(cause),
+                recovery: Box::new(Error::from(error).combine(termination)),
+            }),
             Err(recovery) => Err(Error::Unknown {
                 cause: Box::new(cause),
                 recovery: Box::new(recovery),
@@ -258,83 +371,120 @@ impl Inner {
         input: &Input,
         challenge_id: challenge::Id,
         change: &Change<'_>,
-    ) -> Result<(Message, Sample), Error> {
-        transaction::begin(client, input.operation_id).await?;
-        let receipt = database::challenge::find(client, &self.keys, input)
-            .await?
-            .ok_or(Error::Facts {
-                stage: Stage::MessageTransition,
-                rule: "the original challenge must still exist",
-            })?;
-        if receipt.id != challenge_id {
-            return Err(Error::Facts {
-                stage: Stage::MessageTransition,
-                rule: "challenge identity must match the original receipt",
-            });
-        }
-        if matches!(change, Change::Claim { .. }) {
-            transaction::object(client, b"identity/mobile", input.mobile.as_bytes()).await?;
-        }
-        let mut message =
-            database::message::find(client, challenge_id)
+        reliable: bool,
+    ) -> Result<Completion<(Message, Sample)>, Error> {
+        let deadline = Instant::now() + TRANSACTION_BUDGET;
+        let (message, sample, original) = timeout_at(deadline, async {
+            transaction::begin(&self.context, client, input.operation_id).await?;
+            let receipt = database::challenge::find_receipt(client, &self.keys, input)
+                .await?
+                .ok_or(Error::Facts {
+                    stage: Stage::MessageTransition,
+                    rule: "the original challenge must still exist",
+                })?;
+            if receipt.id != challenge_id {
+                return Err(Error::Facts {
+                    stage: Stage::MessageTransition,
+                    rule: "challenge identity must match the original receipt",
+                });
+            }
+            if matches!(change, Change::Claim { .. }) {
+                input.lock_scope(client).await?;
+            }
+            let eligible = if matches!(change, Change::Claim { .. }) {
+                let eligible = match &input.sender {
+                    Sender::Anonymous => true,
+                    Sender::Current(actor) => {
+                        match self.contact(client, actor, &input.mobile).await {
+                            Ok(_) => true,
+                            Err(error) if error.rejection() => false,
+                            Err(error) => return Err(error),
+                        }
+                    }
+                    Sender::Transfer { actor, transfer_id } => {
+                        match self
+                            .transfer_contact(client, actor, *transfer_id, &input.mobile)
+                            .await
+                        {
+                            Ok(_) => true,
+                            Err(error) if error.rejection() => false,
+                            Err(error) => return Err(error),
+                        }
+                    }
+                };
+                transaction::object(client, b"identity/mobile", input.mobile.as_bytes()).await?;
+                eligible
+            } else {
+                true
+            };
+            let mut message = database::message::find_by_challenge(client, challenge_id)
                 .await?
                 .ok_or(Error::Facts {
                     stage: Stage::MessageTransition,
                     rule: "the original message must still exist",
                 })?;
-        let sample = self.context.observe().await?;
-        message.validate(&self.keys.message, sample.observed_at())?;
-        if message.status() != message::Status::Sending {
-            client.batch_execute("COMMIT").await?;
-            return Ok((message, sample));
-        }
-        let option = match change {
-            Change::Claim { worker_id, code } => {
-                if message.worker_id() != *worker_id {
-                    return Err(Error::Facts {
-                        stage: Stage::MessageClaim,
-                        rule: "claimant must be the original worker",
-                    });
-                }
-                if !message.verify_code(&self.keys.message, code)? {
-                    return Err(Error::Facts {
-                        stage: Stage::MessageClaim,
-                        rule: "the retained code must verify against the message proof",
-                    });
-                }
-                let hash = self.keys.mobile.hash(&input.mobile)?;
-                if message.superseded(client, &hash).await?
-                    || message
-                        .expires_at()
-                        .signed_duration_since(sample.observed_at())
-                        < TimeDelta::seconds(60)
-                {
-                    Some(Conclusion::Failed)
-                } else {
-                    message.claim(client, sample.observed_at()).await?;
-                    None
-                }
+            let sample = self.context.observe(client).await?;
+            message.validate(&self.keys.message, sample.observed_at())?;
+            if message.status() != message::Status::Sending || !reliable {
+                return Ok((message, sample, true));
             }
-            Change::Finish {
-                worker_id,
-                conclusion,
-            } => {
-                if message.worker_id() != *worker_id {
-                    return Err(Error::Facts {
-                        stage: Stage::MessageConclusion,
-                        rule: "the conclusion must belong to the original worker",
-                    });
+            let mut original = false;
+            let option = match change {
+                Change::Claim { worker_id, code } => {
+                    if message.worker_id() != *worker_id {
+                        return Err(Error::Facts {
+                            stage: Stage::MessageClaim,
+                            rule: "claimant must be the original worker",
+                        });
+                    }
+                    if !message.verify_code(&self.keys.message, code)? {
+                        return Err(Error::Facts {
+                            stage: Stage::MessageClaim,
+                            rule: "the retained code must verify against the message proof",
+                        });
+                    }
+                    let hash = self.keys.mobile.hash(&input.mobile)?;
+                    if !eligible
+                        || message.superseded(client, &hash).await?
+                        || message
+                            .expires_at()
+                            .signed_duration_since(sample.observed_at())
+                            < TimeDelta::seconds(60)
+                    {
+                        Some(Conclusion::Failed)
+                    } else {
+                        original = message.claimed();
+                        message.claim(client, sample.observed_at()).await?;
+                        None
+                    }
                 }
-                Some(*conclusion)
+                Change::Finish {
+                    worker_id,
+                    conclusion,
+                } => {
+                    if message.worker_id() != *worker_id {
+                        return Err(Error::Facts {
+                            stage: Stage::MessageConclusion,
+                            rule: "the conclusion must belong to the original worker",
+                        });
+                    }
+                    Some(*conclusion)
+                }
+                Change::Orphan => Some(message.orphaned()),
+            };
+            if let Some(conclusion) = option {
+                message
+                    .finish(client, conclusion, sample.observed_at())
+                    .await?;
             }
-            Change::Orphan => Some(message.orphaned()),
+            Ok::<_, Error>((message, sample, original))
+        })
+        .await??;
+        let outcome = if original {
+            Outcome::Known((message, sample))
+        } else {
+            Outcome::Pending((message, sample))
         };
-        if let Some(conclusion) = option {
-            message
-                .finish(client, conclusion, sample.observed_at())
-                .await?;
-        }
-        client.batch_execute("COMMIT").await?;
-        Ok((message, sample))
+        Ok(commit(outcome, deadline, client.batch_execute("COMMIT")).await)
     }
 }

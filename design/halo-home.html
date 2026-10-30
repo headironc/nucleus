@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="司籍处网站公开首页设计：医院文化、知识科普与员工服务入口。"
+    />
+    <title>司籍处 · 网站首页设计</title>
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/tokens.css" />
+    <link rel="stylesheet" href="assets/halo-home.css" />
+    <script src="assets/halo-home.js" defer></script>
+  </head>
+  <body id="top">
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    <details class="container">
+      <summary class="text-button">HALO · 设计预览工具</summary>
+      <p>只切换首页公开内容画面，不发送业务请求。</p>
+      <label for="home-scenario">首页内容状态</label>
+      <select id="home-scenario">
+        <option value="normal">正常内容</option>
+        <option value="partial-unavailable">个别文章撤回／栏目停用</option>
+        <option value="block-empty">公开内容区块全部失效</option>
+      </select>
+      <p>
+        失效条目直接隐藏；推荐与栏目区块空时整块隐藏。管理维护提示属于后续管理页，本稿不展示。
+      </p>
+    </details>
+
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="#top" aria-label="司籍处首页">
+          <img src="assets/logo.png" width="56" height="56" alt="" />
+          <span class="brand-copy"
+            ><strong>司籍处</strong><span>中医药文化宣传与推广中心</span></span
+          >
+        </a>
+        <nav class="desktop-nav" aria-label="主导航">
+          <a href="#top" aria-current="page">首页</a>
+          <a href="#explore">文化与科普</a>
+          <a href="halo-reading.html">四时拾记</a>
+        </nav>
+        <div class="header-actions">
+          <a class="staff-link" href="#staff"
+            >员工服务 <span aria-hidden="true">↗</span></a
+          >
+          <button
+            class="menu-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="mobile-navigation"
+            aria-label="打开导航"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 7h16M4 12h16M4 17h16" />
+            </svg>
+          </button>
+        </div>
+      </div>
+      <nav
+        class="mobile-navigation container"
+        id="mobile-navigation"
+        aria-label="手机导航"
+        hidden
+      >
+        <a href="#top" aria-current="page">首页</a>
+        <a href="#explore">文化与科普</a>
+        <a href="halo-reading.html">四时拾记</a>
+        <a href="#staff">员工服务</a>
+      </nav>
+    </header>
+
+    <main id="main" tabindex="-1">
+      <section class="hero container" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow">
+            <span aria-hidden="true"></span>文化相伴 · 四时有序
+          </p>
+          <h1 id="hero-title">本草之间</h1>
+          <p class="hero-subtitle">一草一木，皆有来处。</p>
+          <p class="hero-description">
+            从草木风物，到日常生活。<br />走近医院文化，读一读四季的故事。
+          </p>
+          <a class="button primary" href="halo-reading.html"
+            >开始阅读 <span aria-hidden="true">→</span></a
+          >
+          <div class="hero-footnote">
+            <span class="short-rule" aria-hidden="true"></span
+            ><span>文化 · 科普 · 生活</span>
+          </div>
+        </div>
+        <figure class="hero-art">
+          <img
+            src="assets/halo-lingzhi.jpg"
+            width="680"
+            height="520"
+            alt=""
+            fetchpriority="high"
+          />
+          <figcaption>
+            <span>草木有时</span
+            ><span class="art-seal" aria-hidden="true">四时</span>
+          </figcaption>
+          <span class="art-caption" aria-hidden="true"
+            >一页本草，一段四时。</span
+          >
+        </figure>
+      </section>
+
+      <section
+        class="explore container section"
+        id="explore"
+        aria-labelledby="explore-title"
+        tabindex="-1"
+      >
+        <div class="section-heading compact">
+          <h2 id="explore-title">在这里，慢慢发现</h2>
+          <p>从一个感兴趣的话题开始</p>
+        </div>
+        <div class="explore-grid">
+          <button
+            class="explore-item"
+            type="button"
+            data-preview-title="线上展馆"
+            data-preview-description="这里将进入线上展馆。本次先展示栏目入口，展馆内页另行设计。"
+          >
+            <svg viewBox="0 0 40 40" aria-hidden="true">
+              <path
+                d="M5 15 20 5l15 10M8 16h24M10 19v13m10-13v13m10-13v13M6 35h28M16 14h8"
+              />
+            </svg>
+            <span class="explore-copy"
+              ><strong>线上展馆</strong><span>走近文化与传承</span></span
+            >
+            <span class="entry-arrow" aria-hidden="true">↗</span>
+          </button>
+          <button
+            class="explore-item"
+            type="button"
+            data-preview-title="知识科普"
+            data-preview-description="这里将进入知识科普。本次先展示栏目入口，科普内容与内页另行设计。"
+          >
+            <svg viewBox="0 0 40 40" aria-hidden="true">
+              <path
+                d="M20 10c-5-4-10-4-15-2v24c5-2 10-2 15 2 5-4 10-4 15-2V8c-5-2-10-2-15 2Zm0 0v24M10 14l5 1m-5 6 5 1m10-7 5-1m-5 8 5-1"
+              />
+            </svg>
+            <span class="explore-copy"
+              ><strong>知识科普</strong><span>把知识带进日常</span></span
+            >
+            <span class="entry-arrow" aria-hidden="true">↗</span>
+          </button>
+          <button
+            class="explore-item"
+            type="button"
+            data-preview-title="趣味互动"
+            data-preview-description="这里将进入趣味互动。本次先展示栏目入口，互动形式与规则另行设计。"
+          >
+            <svg viewBox="0 0 40 40" aria-hidden="true">
+              <path d="M8 12h24v22H8zM14 12V7h12v5M14 21h12m-6-6v12" />
+              <circle cx="30" cy="6" r="2" />
+            </svg>
+            <span class="explore-copy"
+              ><strong>趣味互动</strong><span>换个方式认识传统</span></span
+            >
+            <span class="entry-arrow" aria-hidden="true">↗</span>
+          </button>
+          <button
+            class="explore-item"
+            type="button"
+            data-preview-title="文化活动"
+            data-preview-description="这里将查看文化活动。本稿不展示虚构的活动日期，也不提供报名或提交。"
+          >
+            <svg viewBox="0 0 40 40" aria-hidden="true">
+              <path
+                d="M7 10h26v25H7zM13 5v10M27 5v10M7 18h26m-18 7h3m6 0h3m-12 5h3"
+              />
+            </svg>
+            <span class="explore-copy"
+              ><strong>文化活动</strong><span>发现身边的活动</span></span
+            >
+            <span class="entry-arrow" aria-hidden="true">↗</span>
+          </button>
+        </div>
+        <div class="contribute-line">
+          <span>也欢迎你，记录身边的文化与生活。</span
+          ><button
+            class="text-button"
+            type="button"
+            data-preview-title="欢迎投稿"
+            data-preview-description="这里将展示投稿说明。本稿不收集稿件或个人信息，投稿方式另行明确。"
+          >
+            欢迎投稿 <span aria-hidden="true">→</span>
+          </button>
+        </div>
+      </section>
+
+      <section
+        class="reading container section"
+        id="reading"
+        aria-labelledby="reading-title"
+        tabindex="-1"
+      >
+        <div class="section-heading">
+          <div>
+            <p class="section-kicker">读一读 · 看一看</p>
+            <h2 id="reading-title">四时拾记</h2>
+          </div>
+          <div class="reading-filters" role="group" aria-label="筛选推荐阅读">
+            <button type="button" data-filter="all" aria-pressed="true">
+              全部
+            </button>
+            <button type="button" data-filter="culture" aria-pressed="false">
+              文化
+            </button>
+            <button type="button" data-filter="life" aria-pressed="false">
+              生活
+            </button>
+          </div>
+        </div>
+        <p id="reading-status" class="visually-hidden" role="status">
+          显示全部 3 篇推荐阅读
+        </p>
+        <div class="reading-grid">
+          <article class="story" data-category="culture">
+            <a class="story-link" href="halo-reading.html?article=seasons">
+              <span class="story-image botanical"
+                ><img
+                  src="assets/halo-seasons.svg"
+                  width="560"
+                  height="360"
+                  alt=""
+                  loading="lazy"
+                /><span class="image-label" aria-hidden="true">四时</span></span
+              >
+              <span class="story-category">文化专栏</span>
+              <h3>四时有序，草木有时</h3>
+              <p>从一草一木出发，读一读藏在四季里的传统文化。</p>
+              <span class="story-action"
+                >阅读全文 <span aria-hidden="true">↗</span></span
+              >
+            </a>
+          </article>
+          <article class="story" data-category="life">
+            <a class="story-link" href="halo-reading.html?article=table">
+              <span class="story-image"
+                ><img
+                  src="assets/halo-table.svg"
+                  width="560"
+                  height="360"
+                  alt=""
+                  loading="lazy"
+                /><span class="image-label" aria-hidden="true">食趣</span></span
+              >
+              <span class="story-category">生活随笔</span>
+              <h3>人间烟火，一味一故事</h3>
+              <p>循着熟悉的器物，探寻日常生活中的风物与记忆。</p>
+              <span class="story-action"
+                >阅读全文 <span aria-hidden="true">↗</span></span
+              >
+            </a>
+          </article>
+          <article class="story" data-category="culture">
+            <a class="story-link" href="halo-reading.html?article=courtyard">
+              <span class="story-image courtyard"
+                ><img
+                  src="assets/halo-botanical.svg"
+                  width="680"
+                  height="520"
+                  alt=""
+                  loading="lazy"
+                /><span class="image-label" aria-hidden="true">庭院</span></span
+              >
+              <span class="story-category">文化专栏</span>
+              <h3>一方庭院，收藏四时</h3>
+              <p>循着一扇窗、一片叶，发现日常里安静的风景。</p>
+              <span class="story-action"
+                >阅读全文 <span aria-hidden="true">↗</span></span
+              >
+            </a>
+          </article>
+        </div>
+      </section>
+
+      <section
+        class="staff-section container"
+        id="staff"
+        aria-labelledby="staff-title"
+        tabindex="-1"
+      >
+        <div class="staff-mark" aria-hidden="true">
+          <svg viewBox="0 0 48 48">
+            <path d="M17 10h14M18 5h12v10H18zM12 10H8v33h32V10h-4" />
+            <circle cx="24" cy="25" r="4" />
+            <path d="M17 37c0-7 14-7 14 0" />
+          </svg>
+        </div>
+        <div class="staff-copy">
+          <p class="section-kicker">医院员工专属</p>
+          <h2 id="staff-title">员工服务</h2>
+          <p>办理工号、申请工牌，查看办理进度。</p>
+        </div>
+        <div class="staff-action">
+          <a class="button primary" href="halo-authentication.html">
+            员工登录 <span aria-hidden="true">→</span>
+          </a>
+          <p>公开内容无需登录，可直接浏览。</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer container">
+      <div class="footer-main">
+        <div>
+          <a class="footer-brand" href="#top">司籍处</a>
+          <p>中医药文化宣传与推广中心</p>
+        </div>
+        <a class="back-top" href="#top"
+          >返回顶部 <span aria-hidden="true">↑</span></a
+        >
+      </div>
+      <div class="footer-meta">
+        <span>司籍处 · 网站首页</span
+        ><button
+          class="text-button"
+          type="button"
+          data-preview-title="网站首页设计说明"
+          data-preview-description="本稿展示公开首页的桌面与窄屏布局。开始阅读与四时拾记连接公开阅读稿，三篇推荐连接对应文章；员工登录连接登录注册稿。其他栏目入口仍为示意，筛选只操作本页示例。原有品牌标志继续使用，草木插画不是医院照片。无业务请求、个人资料或正式内容发布。"
+        >
+          设计预览说明 <span aria-hidden="true">↗</span>
+        </button>
+      </div>
+    </footer>
+
+    <dialog
+      id="preview-notes"
+      class="preview-dialog"
+      aria-labelledby="preview-title"
+      aria-describedby="preview-description"
+    >
+      <div class="dialog-heading">
+        <span>设计预览说明</span
+        ><button class="dialog-close" type="button" aria-label="关闭说明">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18" />
+          </svg>
+        </button>
+      </div>
+      <h2 id="preview-title"></h2>
+      <p id="preview-description"></p>
+      <form method="dialog">
+        <button class="button primary" type="submit">继续浏览</button>
+      </form>
+    </dialog>
+  </body>
+</html>

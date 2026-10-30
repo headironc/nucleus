@@ -23,7 +23,7 @@ use crate::identity::{
     challenge::Purpose,
     message::{
         Code, Id,
-        access_key::{AccessKey, Secret},
+        credentials::{AccessKey, Secret},
         response::{Failure, Outcome, Response, Unknown},
         settings::Settings,
     },
@@ -96,7 +96,7 @@ impl<'a> Request<'a> {
             ("Interval", "60"),
             ("AutoRetry", "0"),
             ("ReturnVerifyCode", "false"),
-            ("CodeLength", "8"),
+            ("CodeLength", "6"),
             ("CodeType", "1"),
             ("DuplicatePolicy", "1"),
         ]);
@@ -258,9 +258,10 @@ impl Debug for Error {
                 .field(&"[redacted]")
                 .finish(),
             Self::Reqwest(source) => formatter.debug_tuple("Reqwest").field(source).finish(),
-            Self::Read { status, .. } => formatter
+            Self::Read { status, source } => formatter
                 .debug_struct("Read")
                 .field("status", status)
+                .field("timeout", &source.is_timeout())
                 .finish_non_exhaustive(),
             Self::Decode {
                 status,
@@ -417,9 +418,9 @@ mod tests {
     const NONCE: &str = "01890f6e-7b80-7000-8000-000000000001";
     const MESSAGE_ID: &str = "01890f6e-7b80-7000-8000-000000000000";
     // Independently computed with Python json, urllib.parse, hashlib and hmac.
-    const SPECIAL_QUERY: &str = "AutoRetry=0&CodeLength=8&CodeType=1&CountryCode=86&DuplicatePolicy=1&Interval=60&OutId=01890f6e-7b80-7000-8000-000000000000&PhoneNumber=13800000000&ReturnVerifyCode=false&SignName=%E7%AD%BE%E5%90%8D%20%22%5C%2B%25%26%3D%3F%23&TemplateCode=SMS_%E6%B5%8B%E8%AF%95%2F1&TemplateParam=%7B%22code%22%3A%2200001234%22%2C%22min%22%3A%222%22%7D&ValidTime=61";
+    const SPECIAL_QUERY: &str = "AutoRetry=0&CodeLength=6&CodeType=1&CountryCode=86&DuplicatePolicy=1&Interval=60&OutId=01890f6e-7b80-7000-8000-000000000000&PhoneNumber=13800000000&ReturnVerifyCode=false&SignName=%E7%AD%BE%E5%90%8D%20%22%5C%2B%25%26%3D%3F%23&TemplateCode=SMS_%E6%B5%8B%E8%AF%95%2F1&TemplateParam=%7B%22code%22%3A%22001234%22%2C%22min%22%3A%222%22%7D&ValidTime=61";
     const SPECIAL_SIGNATURE: &str =
-        "0b4c059a592f2552319b64d1802bf0c586df2497ef519066394aa73ad9c50e27";
+        "637ec554b332e3aa4e99694b8bba3ade8852715a050a14282812dd50f004bee6";
 
     fn context() -> Context {
         Context {
@@ -432,9 +433,9 @@ mod tests {
     }
 
     fn access_key() -> AccessKey {
-        use crate::identity::message::access_key;
+        use crate::identity::message::credentials;
         AccessKey::new(
-            access_key::Id::new("YourAccessKeyId".into()).expect("example id"),
+            credentials::Id::new("YourAccessKeyId".into()).expect("example id"),
             Secret::new("YourAccessKeySecret".into()).expect("example secret"),
         )
     }
@@ -467,7 +468,7 @@ mod tests {
         client.request(
             Input {
                 mobile: &"13800000000".parse().expect("fixed mobile is valid"),
-                code: &"00001234".parse().expect("fixed code is valid"),
+                code: &"001234".parse().expect("fixed code is valid"),
                 message_id: MESSAGE_ID.parse().expect("fixed Message ID is valid"),
                 valid_seconds,
                 purpose: Purpose::Authentication,
@@ -605,7 +606,7 @@ mod tests {
         assert_eq!(signed, SIGNED);
         assert_eq!(
             string_to_sign(&canonical),
-            "ACS3-HMAC-SHA256\n5afb2c5c47f5f5ba9801163c24f369a63553d4c14a354364aa17860d707c1f7d"
+            "ACS3-HMAC-SHA256\n912159600f6a612595758b49aa03ba46799657860cb24dec8fc38456dd05de5c"
         );
         assert_eq!(
             request.inner.headers()[AUTHORIZATION],
@@ -691,7 +692,7 @@ mod tests {
             assert_eq!(pairs["ValidTime"], seconds.to_string());
             assert_eq!(
                 pairs["TemplateParam"],
-                format!(r#"{{"code":"00001234","min":"{minutes}"}}"#)
+                format!(r#"{{"code":"001234","min":"{minutes}"}}"#)
             );
             assert!(!pairs.contains_key("RegionId"));
             assert!(!pairs.contains_key("SmsUpExtendCode"));

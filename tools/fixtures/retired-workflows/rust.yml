@@ -1,0 +1,216 @@
+name: Rust
+
+on:
+  pull_request:
+  merge_group:
+    types: [checks_requested]
+
+# Keep unrelated PRs and queue refs in separate cancellation groups.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-26.04
+    outputs:
+      tier: ${{ steps.changes.outputs.tier }}
+      packages: ${{ steps.changes.outputs.packages }}
+      matrix: ${{ steps.packages.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .tool-versions
+      - name: Classify Rust inputs
+        id: changes
+        env:
+          BASE_SHA: ${{ github.event.merge_group.base_sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          QUEUE_SHA: ${{ github.event.merge_group.head_sha }}
+          MERGE_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: bun tools/check-inputs.ts --ci
+      - name: Prepare pinned Rust toolchain for discovery
+        if: ${{ steps.changes.outputs.tier == 'full' }}
+        run: rustup show active-toolchain
+      - name: Discover affected workspace packages
+        id: packages
+        if: ${{ steps.changes.outputs.tier == 'full' }}
+        env:
+          AFFECTED_PACKAGES: ${{ steps.changes.outputs.packages }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          matrix=$(bun tools/check-packages.ts --matrix --affected "$AFFECTED_PACKAGES")
+          # Reject unusable output before GitHub expands the dynamic matrix.
+          MATRIX="$matrix" bun -e '
+            const matrix = JSON.parse(process.env.MATRIX);
+            if (!matrix || !Array.isArray(matrix.include) || matrix.include.length === 0)
+              throw new Error("Package discovery must produce a nonempty package matrix");
+            const entries = new Set();
+            for (const entry of matrix.include) {
+              if (!entry || typeof entry.package !== "string" || !entry.package.length ||
+                  Object.keys(entry).some(key => !["package", "shard", "group"].includes(key)) ||
+                  (entry.package === "nucleus"
+                    ? entry.shard !== undefined || !["rest", "http"].includes(entry.group)
+                    : entry.package === "domain"
+                      ? entry.group !== undefined || !["1/4", "2/4", "3/4", "4/4"].includes(entry.shard)
+                      : entry.shard !== undefined || entry.group !== undefined))
+                throw new Error("Invalid package matrix entry");
+              const key = JSON.stringify([entry.package, entry.shard, entry.group]);
+              if (entries.has(key)) throw new Error("Duplicate package matrix entry");
+              entries.add(key);
+            }
+            for (const [name, count] of [["nucleus", 2], ["domain", 4]]) {
+              const selected = matrix.include.filter(entry => entry.package === name).length;
+              if (selected !== 0 && selected !== count)
+                throw new Error("Package matrix must include every group or shard");
+            }
+          '
+          printf 'matrix=%s\n' "$matrix" >> "$GITHUB_OUTPUT"
+
+  tools:
+    needs: changes
+    if: ${{ needs.changes.outputs.tier != 'skip' }}
+    runs-on: ubuntu-26.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version-file: .tool-versions
+      - name: Prepare pinned Rust toolchain
+        run: |
+          rustup show active-toolchain
+          rustup component add clippy
+      - name: Install tool dependencies
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Check tool types
+        run: bun run check:tools
+      - name: Test dependency checks
+        run: bun test tools/check-dependencies.test.ts
+      - name: Check dependency boundaries
+        run: bun tools/check-dependencies.ts
+      - name: Test review gate
+        run: bun test tools/review-gate.test.ts tools/review-queue.test.ts tools/review-json.test.ts tools/release-candidate.test.ts tools/main-promotion.test.ts tools/dev-admission.test.ts tools/merge-credentials.test.ts tools/merge-operation.test.ts
+      - name: Test package checks
+        run: bun test tools/check-inputs.test.ts tools/check-packages.test.ts tools/rust-workflow.test.ts tools/cache.test.ts tools/check-bun.test.ts tools/halo-ci-image.test.ts tools/check-halo-test.test.ts tools/halo-local.test.ts tools/halo-browser-smoke.test.ts
+
+  checks:
+    needs: changes
+    if: ${{ needs.changes.outputs.tier != 'skip' && needs.changes.outputs.tier != 'tools' }}
+    runs-on: ubuntu-26.04
+    env:
+      CARGO_TARGET_DIR: target/cargo
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/rust-setup
+        timeout-minutes: 10
+        with:
+          cache-key: checks
+      - name: Install formatting toolchain
+        run: rustup toolchain install nightly-2026-09-06 --profile minimal --component rustfmt
+      - name: Check formatting
+        run: cargo +nightly-2026-09-06 fmt --all -- --check
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+  packages:
+    name: package (${{ matrix.package }}${{ matrix.group && format(' {0}', matrix.group) || '' }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})
+    needs: changes
+    if: ${{ needs.changes.outputs.tier != 'skip' && needs.changes.outputs.tier != 'tools' && needs.changes.outputs.tier != 'checks' }}
+    runs-on: ubuntu-26.04
+    permissions:
+      contents: read
+    container:
+      image: ghcr.io/silence-force/nucleus-ci@sha256:bd2c19ea184e0fdae98cedc7741b19948165499401820e0481735b4be9d75e3b
+      options: --user 1001:1001 --ipc=host
+    defaults:
+      run:
+        shell: bash
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
+    env:
+      CARGO_TARGET_DIR: target/cargo
+      HALO_CI_IMAGE: ghcr.io/silence-force/nucleus-ci@sha256:bd2c19ea184e0fdae98cedc7741b19948165499401820e0481735b4be9d75e3b
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/package-setup
+        id: setup
+        timeout-minutes: 10
+        with:
+          cache-key: package-${{ matrix.package }}
+      - name: Report available processors
+        run: nproc
+      - name: Build, test and document the package
+        env:
+          PACKAGE: ${{ matrix.package }}
+          SHARD: ${{ matrix.shard }}
+          GROUP: ${{ matrix.group }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--package "$PACKAGE" --test-threads 4)
+          if test -n "$SHARD"; then
+            args+=(--shard "$SHARD")
+          fi
+          if test -n "$GROUP"; then
+            args+=(--group "$GROUP")
+          fi
+          bun tools/check-packages.ts "${args[@]}"
+
+  rust:
+    if: ${{ always() }}
+    needs: [changes, tools, checks, packages]
+    runs-on: ubuntu-26.04
+    steps:
+      - name: Require every Rust check
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          TIER: ${{ needs.changes.outputs.tier }}
+          TOOLS_RESULT: ${{ needs.tools.result }}
+          CHECKS_RESULT: ${{ needs.checks.result }}
+          PACKAGES_RESULT: ${{ needs.packages.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'changes=%s tier=%s tools=%s checks=%s packages=%s\n' "$CHANGES_RESULT" "$TIER" "$TOOLS_RESULT" "$CHECKS_RESULT" "$PACKAGES_RESULT"
+          test "$CHANGES_RESULT" = success
+          case "$TIER" in
+            full)
+              test "$TOOLS_RESULT" = success
+              test "$CHECKS_RESULT" = success
+              test "$PACKAGES_RESULT" = success
+              ;;
+            checks)
+              test "$TOOLS_RESULT" = success
+              test "$CHECKS_RESULT" = success
+              test "$PACKAGES_RESULT" = skipped
+              ;;
+            tools)
+              test "$TOOLS_RESULT" = success
+              test "$CHECKS_RESULT" = skipped
+              test "$PACKAGES_RESULT" = skipped
+              ;;
+            skip)
+              test "$TOOLS_RESULT" = skipped
+              test "$CHECKS_RESULT" = skipped
+              test "$PACKAGES_RESULT" = skipped
+              ;;
+            *) exit 1 ;;
+          esac

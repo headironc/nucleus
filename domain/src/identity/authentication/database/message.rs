@@ -1,14 +1,17 @@
 //! Message facts, code pairing, claims and fixed queries shared by C1 consumers.
 
 use chrono::{DateTime, TimeDelta, Utc};
-use tokio::time::timeout;
 use tokio_postgres::{Client, Row};
 
-use crate::identity::{
-    authentication::{Error, Stage, TRANSACTION_BUDGET},
-    challenge, keys, message,
-    message::{Conclusion, worker},
-    mobile::hash::Hash,
+use crate::{
+    database::verification,
+    identity::{
+        authentication::{Error, Stage, TRANSACTION_BUDGET},
+        challenge, keys, message,
+        message::{Conclusion, worker},
+        mobile::hash::Hash,
+        person,
+    },
 };
 
 pub(in crate::identity::authentication) struct Message {
@@ -19,9 +22,23 @@ pub(in crate::identity::authentication) struct Message {
     challenge_id: challenge::Id,
     ordinal: i64,
     worker_id: worker::Id,
-    key_id: keys::Id,
+    key_id: crate::keys::Id,
     proof: message::proof::Proof,
+    binding: Binding,
     claimed_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Clone, Copy)]
+pub(in crate::identity::authentication) enum Binding {
+    Authentication,
+    Current {
+        person_id: person::Id,
+        operator_id: person::revision::Id,
+    },
+    Transfer {
+        person_id: person::Id,
+        operator_id: person::revision::Id,
+    },
 }
 
 impl Message {
@@ -32,6 +49,7 @@ impl Message {
         now: DateTime<Utc>,
         limits: &message::Limits,
         code: &message::Code,
+        binding: Binding,
     ) -> Result<Self, Error> {
         let id = message::Id::new();
         let worker_id = worker::Id::new();
@@ -52,6 +70,7 @@ impl Message {
             status: message::Status::Sending,
             key_id: key.id(),
             proof: key.prove(id, code)?,
+            binding,
             claimed_at: None,
         };
         // Construction precedes SQL so the caller can retain the original code across commit recovery.
@@ -64,12 +83,27 @@ impl Message {
     ) -> Result<(), Error> {
         client.execute("INSERT INTO identity.messages (id, challenge_id, ordinal, worker_id, created_at, expires_at) VALUES ($1,$2,$3,$4,$5,$6)",
             &[&self.id, &self.challenge_id, &self.ordinal, &self.worker_id, &self.created_at, &self.expires_at]).await?;
-        client
-            .execute(
-                "INSERT INTO identity.checks (id, hash, key_id, expires_at) VALUES ($1,$2,$3,$4)",
-                &[&self.id, &self.proof, &self.key_id, &self.expires_at],
-            )
-            .await?;
+        match self.binding {
+            Binding::Authentication => {
+                client.execute(
+                    "INSERT INTO identity.checks (id, hash, key_id, expires_at) VALUES ($1,$2,$3,$4)",
+                    &[&self.id, &self.proof, &self.key_id, &self.expires_at],
+                ).await?;
+            }
+            Binding::Current {
+                person_id,
+                operator_id,
+            }
+            | Binding::Transfer {
+                person_id,
+                operator_id,
+            } => {
+                client.execute(
+                    "INSERT INTO identity.confirmations (id, hash, key_id, expires_at, person_id, operator_id) VALUES ($1,$2,$3,$4,$5,$6)",
+                    &[&self.id, &self.proof, &self.key_id, &self.expires_at, &person_id, &operator_id],
+                ).await?;
+            }
+        }
         Ok(())
     }
 
@@ -145,11 +179,35 @@ impl Message {
         client: &Client,
         hash: &Hash,
     ) -> Result<bool, Error> {
+        let (purpose, person_id) = match self.binding {
+            Binding::Authentication => (challenge::Purpose::Authentication, None),
+            Binding::Current { person_id, .. } => {
+                (challenge::Purpose::MobileChange, Some(person_id))
+            }
+            Binding::Transfer { person_id, .. } => {
+                (challenge::Purpose::MobileBinding, Some(person_id))
+            }
+        };
         Ok(client.query_one(
             "SELECT EXISTS (SELECT 1 FROM identity.messages message JOIN identity.challenges challenge ON challenge.id = message.challenge_id
-             WHERE (challenge.mobile).hash = $1 AND challenge.purpose = 'authentication' AND message.ordinal > $2)",
-            &[hash, &self.ordinal],
+             WHERE (challenge.mobile).hash = $1 AND challenge.purpose = $3 AND message.ordinal > $2
+                AND challenge.person_id IS NOT DISTINCT FROM $4)",
+            &[hash, &self.ordinal, &purpose, &person_id],
         ).await?.try_get(0)?)
+    }
+
+    /// Original wrong-code outcomes are reclaimed by their own operation owner first.
+    pub(in crate::identity::authentication) async fn retained(
+        &self,
+        client: &Client,
+    ) -> Result<bool, Error> {
+        Ok(client
+            .query_one(
+                "SELECT EXISTS (SELECT 1 FROM identity.rejections WHERE message_id = $1)",
+                &[&self.id],
+            )
+            .await?
+            .try_get(0)?)
     }
 
     /// The caller deletes the parent Challenge in the same transaction.
@@ -159,6 +217,12 @@ impl Message {
     ) -> Result<(), Error> {
         client
             .execute("DELETE FROM identity.checks WHERE id = $1", &[&self.id])
+            .await?;
+        client
+            .execute(
+                "DELETE FROM identity.confirmations WHERE id = $1",
+                &[&self.id],
+            )
             .await?;
         client
             .execute("DELETE FROM identity.claims WHERE id = $1", &[&self.id])
@@ -213,6 +277,31 @@ impl TryFrom<Row> for Message {
     type Error = Error;
 
     fn try_from(row: Row) -> Result<Self, Error> {
+        let binding = match (
+            row.try_get::<_, challenge::Purpose>("purpose")?,
+            row.try_get::<_, Option<person::Id>>("person_id")?,
+            row.try_get::<_, Option<person::revision::Id>>("operator_id")?,
+        ) {
+            (challenge::Purpose::Authentication, None, None) => Binding::Authentication,
+            (challenge::Purpose::MobileChange, Some(person_id), Some(operator_id)) => {
+                Binding::Current {
+                    person_id,
+                    operator_id,
+                }
+            }
+            (challenge::Purpose::MobileBinding, Some(person_id), Some(operator_id)) => {
+                Binding::Transfer {
+                    person_id,
+                    operator_id,
+                }
+            }
+            _ => {
+                return Err(Error::Facts {
+                    stage: Stage::MessageDecode,
+                    rule: "message verification must retain its purpose and identity",
+                });
+            }
+        };
         let created_at = row.try_get("created_at")?;
         let expires_at = row.try_get("expires_at")?;
         let status = match (
@@ -323,6 +412,7 @@ impl TryFrom<Row> for Message {
             worker_id,
             key_id: row.try_get("key_id")?,
             proof: row.try_get("hash")?,
+            binding,
             claimed_at: option,
         })
     }
@@ -330,9 +420,14 @@ impl TryFrom<Row> for Message {
 
 const SELECT: &str = "SELECT message.id, message.challenge_id, message.ordinal, message.worker_id,
     message.created_at, message.expires_at, message.status, message.finished_at,
-    verification.hash, verification.key_id, verification.expires_at AS check_expires_at,
+    challenge.purpose, confirmation.person_id, confirmation.operator_id,
+    coalesce(verification.hash, confirmation.hash) AS hash,
+    coalesce(verification.key_id, confirmation.key_id) AS key_id,
+    coalesce(verification.expires_at, confirmation.expires_at) AS check_expires_at,
     claim.worker_id AS claim_worker_id, claim.created_at AS claimed_at
-    FROM identity.messages message JOIN identity.checks verification ON verification.id = message.id
+    FROM identity.messages message JOIN identity.challenges challenge ON challenge.id = message.challenge_id
+    LEFT JOIN identity.checks verification ON verification.id = message.id
+    LEFT JOIN identity.confirmations confirmation ON confirmation.id = message.id
     LEFT JOIN identity.claims claim ON claim.id = message.id";
 
 pub(in crate::identity::authentication) async fn next_ordinal(
@@ -357,30 +452,16 @@ pub(in crate::identity::authentication) async fn lock(
     Ok(())
 }
 
-pub(in crate::identity::authentication) async fn find(
+pub(in crate::identity::authentication) async fn find_by_challenge(
     client: &Client,
     challenge_id: challenge::Id,
 ) -> Result<Option<Message>, Error> {
     let sql = format!("{SELECT} WHERE message.challenge_id = $1");
-    match client.query_opt(&sql, &[&challenge_id]).await? {
-        Some(row) => Ok(Some(row.try_into()?)),
-        None => {
-            if client
-                .query_opt(
-                    "SELECT id FROM identity.messages WHERE challenge_id = $1",
-                    &[&challenge_id],
-                )
-                .await?
-                .is_some()
-            {
-                return Err(Error::Facts {
-                    stage: Stage::MessageDecode,
-                    rule: "a message must retain its paired check",
-                });
-            }
-            Ok(None)
-        }
-    }
+    client
+        .query_opt(&sql, &[&challenge_id])
+        .await?
+        .map(Message::try_from)
+        .transpose()
 }
 
 pub(in crate::identity::authentication) async fn verify_all(
@@ -388,13 +469,14 @@ pub(in crate::identity::authentication) async fn verify_all(
     keys: &keys::message::Keys,
     now: DateTime<Utc>,
 ) -> Result<(), Error> {
-    timeout(
-        TRANSACTION_BUDGET,
-        client.batch_execute(&format!("DECLARE messages CURSOR FOR {SELECT}")),
-    )
-    .await??;
+    verification::Stage::MessagesOpen
+        .query(
+            TRANSACTION_BUDGET,
+            client.batch_execute(&format!("DECLARE messages CURSOR FOR {SELECT}")),
+        )
+        .await??;
     loop {
-        let complete = timeout(TRANSACTION_BUDGET, async {
+        let complete = verification::Stage::MessagesBatch.batch(TRANSACTION_BUDGET, async {
                 let rows = client.query("FETCH FORWARD 128 FROM messages", &[]).await?;
                 let complete = rows.is_empty();
                 for row in rows {
@@ -417,7 +499,9 @@ pub(in crate::identity::authentication) async fn verify_all(
             break;
         }
     }
-    timeout(TRANSACTION_BUDGET, client.batch_execute("CLOSE messages")).await??;
+    verification::Stage::MessagesClose
+        .query(TRANSACTION_BUDGET, client.batch_execute("CLOSE messages"))
+        .await??;
     Ok(())
 }
 
@@ -458,7 +542,8 @@ mod tests {
                     "SELECT $1::uuid AS id, $2::uuid AS challenge_id, 1::bigint AS ordinal,
                         $3::uuid AS worker_id, $4::timestamptz AS created_at, $5::timestamptz AS expires_at,
                         $6::text AS status, $7::timestamptz AS finished_at, decode(repeat('00',32),'hex') AS hash,
-                        0::bigint AS key_id, $8::timestamptz AS check_expires_at,
+                        0::bigint AS key_id, 'authentication'::text AS purpose,
+                        NULL::uuid AS person_id, NULL::uuid AS operator_id, $8::timestamptz AS check_expires_at,
                         $9::uuid AS claim_worker_id, $10::timestamptz AS claimed_at",
                     &[&message_id, &challenge_id, &worker_id, &created_at, &expires_at, &status, &finished_at, &check_expires_at, &claim_worker_id, &claimed_at],
                 ).await.expect("typed historical fixture");

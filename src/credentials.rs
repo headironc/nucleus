@@ -21,14 +21,8 @@ pub enum Filename {
     Message,
     #[strum(serialize = "database.json")]
     Database,
-    #[strum(serialize = "challenge-keys.json")]
-    ChallengeKeys,
-    #[strum(serialize = "mobile-keys.json")]
-    MobileKeys,
-    #[strum(serialize = "encryption-keys.json")]
-    EncryptionKeys,
-    #[strum(serialize = "message-keys.json")]
-    MessageKeys,
+    #[strum(serialize = "keys.json")]
+    Keys,
 }
 
 pub(crate) fn directory() -> Result<PathBuf, Error> {

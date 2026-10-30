@@ -133,16 +133,22 @@ mod tests {
             source.parse().expect("source"),
         );
         client.batch_execute("BEGIN").await.expect("begin fixture");
-        let challenge = database::challenge::insert(client, &keys, &input, created_at)
-            .await
-            .expect("challenge fixture");
+        let challenge = database::challenge::insert(
+            client,
+            &keys,
+            &input,
+            database::challenge::Subject::Anonymous,
+            created_at,
+        )
+        .await
+        .expect("challenge fixture");
         client.execute("UPDATE identity.challenges SET status='passed',solved_at=$2,finished_at=$2 WHERE id=$1",&[&challenge.id,&created_at]).await.expect("passed fixture");
         let message_id = message::Id::new();
         let expires_at = created_at + TimeDelta::seconds(300);
         let worker_id = Uuid::new_v4();
         let key = keys.message.active();
         let proof = key
-            .prove(message_id, &"00001234".parse().expect("fictional code"))
+            .prove(message_id, &"001234".parse().expect("fictional code"))
             .expect("proof");
         client.execute("INSERT INTO identity.messages(id,challenge_id,ordinal,worker_id,created_at,expires_at) VALUES($1,$2,$3,$4,$5,$6)",&[&message_id,&challenge.id,&ordinal,&worker_id,&created_at,&expires_at]).await.expect("permit fixture");
         client

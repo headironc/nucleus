@@ -1,0 +1,1125 @@
+import { afterEach, expect, test } from "bun:test";
+import { data, Evaluator, Lexer, Parser } from "@actions/expressions";
+import { truthy } from "@actions/expressions/result";
+import { spawnSync } from "node:child_process";
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+
+const workflow = Bun.YAML.parse(
+  readFileSync(
+    new URL("./fixtures/retired-workflows/rust.yml", import.meta.url),
+    "utf8",
+  ),
+) as {
+  on: Record<string, unknown>;
+  concurrency?: { group: string; "cancel-in-progress": boolean };
+  jobs: Record<
+    string,
+    {
+      name?: string;
+      if?: string;
+      needs?: string | string[];
+      "continue-on-error"?: boolean;
+      outputs?: Record<string, string>;
+      strategy?: {
+        "fail-fast": boolean;
+        "max-parallel": number;
+        matrix: string;
+      };
+      steps: {
+        id?: string;
+        if?: string;
+        "continue-on-error"?: boolean;
+        run?: string;
+        env?: Record<string, string>;
+        uses?: string;
+        with?: Record<string, unknown>;
+      }[];
+    }
+  >;
+};
+
+const directories: string[] = [];
+const environment = {
+  ...Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith("GIT_")),
+  ),
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_AUTHOR_NAME: "Nucleus fixture",
+  GIT_AUTHOR_EMAIL: "fixture@example.invalid",
+  GIT_COMMITTER_NAME: "Nucleus fixture",
+  GIT_COMMITTER_EMAIL: "fixture@example.invalid",
+};
+
+afterEach(() => {
+  for (const directory of directories.splice(0)) {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+function temporaryDirectory() {
+  const directory = mkdtempSync(join(tmpdir(), "nucleus workflow "));
+  directories.push(directory);
+  return directory;
+}
+
+function repository() {
+  const directory = temporaryDirectory();
+  function git(args: string[]) {
+    const result = spawnSync(
+      "git",
+      ["-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args],
+      { cwd: directory, env: environment, encoding: "utf8", timeout: 5_000 },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(0);
+    return result.stdout.trim();
+  }
+  function write(path: string, content = "changed\n") {
+    const destination = join(directory, path);
+    mkdirSync(dirname(destination), { recursive: true });
+    writeFileSync(destination, content);
+  }
+  git(["init", "--initial-branch=base", "--object-format=sha1", "--template="]);
+  mkdirSync(join(directory, "tools"));
+  copyFileSync(
+    new URL("./check-inputs.ts", import.meta.url),
+    join(directory, "tools/check-inputs.ts"),
+  );
+  write("docs/guide.md", "# Guide\n");
+  write("src/lib.rs", "pub fn value() {}\n");
+  write("design/page.html", "<!doctype html><title>Prototype</title>\n");
+  write("assets/avatars/0-cat.webp", "runtime asset fixture\n");
+  write("tools/check-bun.ts", "original tool fixture\n");
+  write("rustfmt.toml", "original format fixture\n");
+  git(["add", "."]);
+  git(["commit", "-m", "Create fixture"]);
+  git(["switch", "-c", "feature"]);
+  function merge(squash = false) {
+    git(["add", "."]);
+    git(["commit", "--allow-empty", "-m", "Change fixture"]);
+    const head = git(["rev-parse", "HEAD"]);
+    git(["switch", "base"]);
+    const base = git(["rev-parse", "HEAD"]);
+    git([
+      "merge",
+      ...(squash ? ["--squash"] : ["--no-ff", "--no-edit"]),
+      "feature",
+    ]);
+    if (squash) git(["commit", "--allow-empty", "-m", "Create queue candidate"]);
+    return {
+      EVENT_NAME: "pull_request",
+      BASE_SHA: base,
+      HEAD_SHA: head,
+      MERGE_SHA: git(["rev-parse", "HEAD"]),
+    };
+  }
+  function queue() {
+    const revisions = merge(true);
+    return {
+      EVENT_NAME: "merge_group",
+      BASE_SHA: revisions.BASE_SHA,
+      QUEUE_SHA: revisions.MERGE_SHA,
+      MERGE_SHA: revisions.MERGE_SHA,
+    };
+  }
+  return { directory, git, write, merge, queue };
+}
+
+function classify(directory: string, revisions: NodeJS.ProcessEnv) {
+  const step = workflow.jobs.changes.steps.find(
+    (step) => step.id === "changes",
+  );
+  expect(step?.run).toBeString();
+  const output = join(directory, ".git", "classification");
+  writeFileSync(output, "");
+  const result = spawnSync(
+    "bash",
+    ["--noprofile", "--norc", "-c", step!.run!],
+    {
+      cwd: directory,
+      env: { ...environment, ...revisions, GITHUB_OUTPUT: output },
+      encoding: "utf8",
+      timeout: 5_000,
+    },
+  );
+  expect(result.error).toBeUndefined();
+  expect(result.status, result.stderr).toBe(0);
+  const lines = readFileSync(output, "utf8").split("\n");
+  expect(lines.some((line) => /^halo=(run|skip)$/.test(line))).toBe(true);
+  return lines.find((line) => line.startsWith("tier=")) + "\n";
+}
+
+test.each([
+  "AGENTS.md",
+  "README.md",
+  ".gitignore",
+  ".prettierrc.json",
+  ".markdownlint.jsonc",
+  "docs/guide.md",
+  "docs/nested/space ' and\nnewline.md",
+  "design/orbit-pages.html",
+  "design/assets/orbit.css",
+  "design/assets/halo-home.js",
+  "design/README.md",
+  "design/assets/lucide-LICENSE.txt",
+  "design/assets/illustration.svg",
+  "design/assets/image.png",
+  "design/assets/image.jpg",
+  "design/assets/image.jpeg",
+  "design/assets/image.webp",
+  "design/assets/image.avif",
+  "design/assets/image.gif",
+  "design/nested/space ' and\nnewline.html",
+  "halo/app/routes/codes.tsx",
+  "halo/bun.lock",
+  ".github/workflows/halo.yml",
+])("an input owned by Docs or Halo can skip Rust checks: %s", (path) => {
+  const fixture = repository();
+  fixture.write(path);
+  const revisions = fixture.merge();
+  expect(classify(fixture.directory, revisions)).toBe("tier=skip\n");
+  expect(fixture.git(["status", "--porcelain"])).toBe("");
+});
+
+test.each([
+  "src/lib.rs",
+  "Cargo.toml",
+  "Cargo.lock",
+  "rust-toolchain.toml",
+  "tools/check-packages.ts",
+  ".github/workflows/rust.yml",
+  ".github/workflows/cache.yml",
+  ".github/workflows/new-review.yml",
+  ".github/actions/rust-setup/action.yml",
+  "fixture/postgresql.version",
+  "deployment/migrations/V1__keys.sql",
+  "assets/avatars/0-cat.webp",
+  "docs/input.json",
+  "design/build.rs",
+  "design/package.json",
+  "design/assets/module.mjs",
+  "design/assets/client.ts",
+  "design-tools/preview.html",
+  "orbit/src/app.ts",
+  "unknown.txt",
+  "src/space ' and\nnewline.md",
+])("a mixed merge keeps full validation for %s", (path) => {
+  const fixture = repository();
+  fixture.write("docs/guide.md");
+  fixture.write(path);
+  expect(classify(fixture.directory, fixture.merge())).toBe("tier=full\n");
+});
+
+const toolsOnly = [
+  "tools/check-bun.ts",
+  "tools/check-bun.test.ts",
+  "tools/rust-workflow.test.ts",
+  "tools/check-packages.test.ts",
+  "tools/check-dependencies.ts",
+  "tools/check-dependencies.test.ts",
+  "tools/space ' and\nnewline.ts",
+  ".tool-versions",
+  "package.json",
+  "bun.lock",
+  "tsconfig.json",
+  ".github/workflows/docs.yml",
+  ".github/workflows/review-gate.yml",
+  ".github/workflows/review-context.yml",
+  ".github/workflows/review-activity.yml",
+];
+
+test.each(toolsOnly)(
+  "a tool or tool configuration change runs only the tools job: %s",
+  (path) => {
+    for (const companions of [[], ["docs/guide.md", "design/page.html"]]) {
+      const fixture = repository();
+      for (const companion of companions) fixture.write(companion);
+      fixture.write(path);
+      expect(classify(fixture.directory, fixture.merge())).toBe(
+        "tier=tools\n",
+      );
+    }
+  },
+);
+
+test.each([
+  [".github/workflows/review-gate.yml", "tools"],
+  [".github/workflows/review-context.yml", "tools"],
+  [".github/workflows/review-activity.yml", "tools"],
+  [".github/workflows/new-review.yml", "full"],
+] as const)("review workflow classification preserves full Rust consumers: %s", (path, tier) => {
+  for (const queue of [false, true]) {
+    for (const rust of [false, true]) {
+      const fixture = repository();
+      fixture.write(path);
+      if (rust) fixture.write("src/lib.rs", "changed consumer source\n");
+      const revisions = queue ? fixture.queue() : fixture.merge();
+      expect(classify(fixture.directory, revisions)).toBe(
+        `tier=${rust ? "full" : tier}\n`,
+      );
+    }
+  }
+});
+
+test("mixed inputs select the highest Rust tier", () => {
+  for (const [inputs, tier] of [
+    [["docs/guide.md", "tools/check-bun.ts"], "tools"],
+    [["rustfmt.toml"], "checks"],
+    [["rustfmt.toml", "tools/check-bun.ts", "docs/guide.md"], "checks"],
+    [["src/lib.rs", "rustfmt.toml", "tools/check-bun.ts"], "full"],
+    [["tools/check-bun.ts", "unknown.txt", "rustfmt.toml"], "full"],
+  ] as const) {
+    const fixture = repository();
+    for (const input of inputs) fixture.write(input);
+    expect(classify(fixture.directory, fixture.merge())).toBe(`tier=${tier}\n`);
+  }
+});
+
+test("any full input outranks tools and skipped inputs", () => {
+  for (const full of ["tools/check-packages.ts", "src/lib.rs", "unknown.txt"]) {
+    for (const order of [
+      ["tools/check-bun.ts", full],
+      [full, "tools/check-bun.ts"],
+    ]) {
+      const fixture = repository();
+      fixture.write("docs/guide.md");
+      for (const path of order) fixture.write(path);
+      expect(classify(fixture.directory, fixture.merge())).toBe("tier=full\n");
+    }
+  }
+  // A deleted package checker is still a full input.
+  const fixture = repository();
+  fixture.write("tools/check-packages.ts");
+  fixture.git(["add", "."]);
+  fixture.git(["commit", "-m", "Add checker"]);
+  fixture.git(["switch", "base"]);
+  fixture.git(["merge", "--ff-only", "feature"]);
+  fixture.git(["switch", "feature"]);
+  rmSync(join(fixture.directory, "tools/check-packages.ts"));
+  expect(classify(fixture.directory, fixture.merge())).toBe("tier=full\n");
+});
+
+test("PR and queue deletions and renames preserve every tier boundary", () => {
+  for (const queue of [false, true]) {
+    for (const [source, destination, tier] of [
+      ["tools/check-bun.ts", "", "tools"],
+      ["rustfmt.toml", "", "checks"],
+      ["tools/check-bun.ts", "docs/tool.md", "tools"],
+      ["docs/guide.md", "tools/guide.ts", "tools"],
+      ["tools/check-bun.ts", "rustfmt.toml", "checks"],
+      ["rustfmt.toml", "tools/format.ts", "checks"],
+      ["tools/check-bun.ts", "src/tool.rs", "full"],
+      ["src/lib.rs", "tools/source.ts", "full"],
+    ] as const) {
+      const fixture = repository();
+      fixture.write("docs/guide.md", "mixed documentation\n");
+      if (destination) {
+        renameSync(
+          join(fixture.directory, source),
+          join(fixture.directory, destination),
+        );
+      } else rmSync(join(fixture.directory, source));
+      const revisions = queue ? fixture.queue() : fixture.merge();
+      expect(classify(fixture.directory, revisions)).toBe(`tier=${tier}\n`);
+    }
+  }
+});
+
+test("design, documentation and their metadata can change together without Rust inputs", () => {
+  const fixture = repository();
+  for (const path of [
+    "design/orbit-pages.html",
+    "design/assets/orbit.css",
+    "design/assets/logo.png",
+    "docs/client/pages.md",
+    "README.md",
+    ".gitignore",
+  ]) {
+    fixture.write(path);
+  }
+  const revisions = fixture.merge();
+  expect(classify(fixture.directory, revisions)).toBe("tier=skip\n");
+  fixture.write("deployment/migrations/V1__keys.sql");
+  fixture.git(["add", "."]);
+  fixture.git(["commit", "--amend", "--no-edit"]);
+  expect(
+    classify(fixture.directory, {
+      ...revisions,
+      MERGE_SHA: fixture.git(["rev-parse", "HEAD"]),
+    }),
+  ).toBe("tier=full\n");
+});
+
+test("deleted sources and both sides of a rename remain in the comparison", () => {
+  for (const destination of ["docs/renamed.md", "src/renamed.rs"]) {
+    const fixture = repository();
+    renameSync(
+      join(fixture.directory, "docs/guide.md"),
+      join(fixture.directory, destination),
+    );
+    expect(classify(fixture.directory, fixture.merge())).toBe(
+      destination.startsWith("docs/") ? "tier=skip\n" : "tier=full\n",
+    );
+  }
+  for (const source of [
+    "docs/guide.md",
+    "design/page.html",
+    "src/lib.rs",
+    "assets/avatars/0-cat.webp",
+  ]) {
+    const fixture = repository();
+    rmSync(join(fixture.directory, source));
+    expect(classify(fixture.directory, fixture.merge())).toBe(
+      source.startsWith("docs/") || source.startsWith("design/")
+        ? "tier=skip\n"
+        : "tier=full\n",
+    );
+  }
+  const fixture = repository();
+  renameSync(
+    join(fixture.directory, "src/lib.rs"),
+    join(fixture.directory, "docs/source.md"),
+  );
+  expect(classify(fixture.directory, fixture.merge())).toBe("tier=full\n");
+});
+
+test("renames across runtime and design boundaries keep Rust validation", () => {
+  for (const [source, destination] of [
+    ["assets/avatars/0-cat.webp", "design/assets/cat.webp"],
+    ["design/page.html", "assets/page.html"],
+    ["src/lib.rs", "design/source.txt"],
+    ["design/page.html", "design/renamed.html"],
+  ]) {
+    const fixture = repository();
+    mkdirSync(dirname(join(fixture.directory, destination)), {
+      recursive: true,
+    });
+    renameSync(
+      join(fixture.directory, source),
+      join(fixture.directory, destination),
+    );
+    expect(classify(fixture.directory, fixture.merge())).toBe(
+      source.startsWith("design/") && destination.startsWith("design/")
+        ? "tier=skip\n"
+        : "tier=full\n",
+    );
+  }
+});
+
+test("a successful empty comparison is distinct from an unavailable comparison", () => {
+  const fixture = repository();
+  const revisions = fixture.merge();
+  expect(classify(fixture.directory, revisions)).toBe("tier=skip\n");
+  for (const variable of ["HEAD_SHA", "MERGE_SHA"]) {
+    for (const value of ["", "missing-commit", "0".repeat(40)]) {
+      expect(
+        classify(fixture.directory, { ...revisions, [variable]: value }),
+      ).toBe("tier=full\n");
+    }
+  }
+  expect(classify(fixture.directory, {})).toBe("tier=full\n");
+});
+
+test("mismatched parents, candidate and a failed diff require all checks", () => {
+  const fixture = repository();
+  fixture.write("docs/guide.md");
+  const revisions = fixture.merge();
+  for (const mismatch of [
+    { HEAD_SHA: revisions.BASE_SHA },
+    { MERGE_SHA: revisions.HEAD_SHA },
+  ]) {
+    expect(classify(fixture.directory, { ...revisions, ...mismatch })).toBe(
+      "tier=full\n",
+    );
+  }
+  // Parent IDs still resolve, but the base tree is unavailable to git diff.
+  const tree = fixture.git(["rev-parse", `${revisions.BASE_SHA}^{tree}`]);
+  rmSync(
+    join(fixture.directory, ".git/objects", tree.slice(0, 2), tree.slice(2)),
+  );
+  expect(classify(fixture.directory, revisions)).toBe("tier=full\n");
+});
+
+test("depth two supplies both merge parents; depth one falls back to full checks", () => {
+  const fixture = repository();
+  fixture.write("docs/guide.md");
+  const revisions = fixture.merge();
+  for (const depth of [1, 2]) {
+    const shallow = temporaryDirectory();
+    fixture.git([
+      "clone",
+      "--no-local",
+      `--depth=${depth}`,
+      fixture.directory,
+      shallow,
+    ]);
+    expect(classify(shallow, revisions)).toBe(
+      depth === 2 ? "tier=skip\n" : "tier=full\n",
+    );
+  }
+});
+
+test("classification compares the tested merge tree to its actual target", () => {
+  const fixture = repository();
+  const oldBase = fixture.git(["rev-parse", "base"]);
+  fixture.git(["switch", "base"]);
+  fixture.write("src/lib.rs", "pub fn newer_base() {}\n");
+  fixture.git(["add", "."]);
+  fixture.git(["commit", "-m", "Advance target"]);
+  fixture.git(["switch", "feature"]);
+  fixture.write("docs/guide.md");
+  const revisions = fixture.merge();
+  expect(classify(fixture.directory, revisions)).toBe("tier=skip\n");
+  expect(classify(fixture.directory, { ...revisions, BASE_SHA: oldBase })).toBe(
+    "tier=skip\n",
+  );
+  // A change present only in the merge tree must still require Rust validation.
+  fixture.write("src/lib.rs", "pub fn merge_change() {}\n");
+  fixture.git(["add", "."]);
+  fixture.git(["commit", "--amend", "--no-edit"]);
+  expect(
+    classify(fixture.directory, {
+      ...revisions,
+      MERGE_SHA: fixture.git(["rev-parse", "HEAD"]),
+    }),
+  ).toBe("tier=full\n");
+});
+
+test("the required rust gate accepts only the exact status table for all four tiers", () => {
+  const gate = workflow.jobs.rust;
+  expect(gate.if).toBe("${{ always() }}");
+  expect(gate.needs).toEqual(["changes", "tools", "checks", "packages"]);
+  expect(gate["continue-on-error"]).not.toBe(true);
+  expect(gate.steps).toHaveLength(1);
+  const step = gate.steps[0];
+  expect(step.env).toEqual({
+    CHANGES_RESULT: "${{ needs.changes.result }}",
+    TIER: "${{ needs.changes.outputs.tier }}",
+    TOOLS_RESULT: "${{ needs.tools.result }}",
+    CHECKS_RESULT: "${{ needs.checks.result }}",
+    PACKAGES_RESULT: "${{ needs.packages.result }}",
+  });
+  expect(step.run).toBeString();
+  // Execute the workflow's actual shell, including its failure propagation.
+  const outcomes = [
+    "success",
+    "failure",
+    "cancelled",
+    "skipped",
+    "neutral",
+    "",
+  ];
+  for (const changes of outcomes) {
+    for (const tier of ["full", "checks", "tools", "skip", "", "true", "false"]) {
+      for (const tools of outcomes) {
+        for (const checks of outcomes) {
+          for (const packages of outcomes) {
+            const result = spawnSync(
+              "bash",
+              ["--noprofile", "--norc", "-c", step.run!],
+              {
+                env: {
+                  ...environment,
+                  CHANGES_RESULT: changes,
+                  TIER: tier,
+                  TOOLS_RESULT: tools,
+                  CHECKS_RESULT: checks,
+                  PACKAGES_RESULT: packages,
+                },
+                encoding: "utf8",
+                timeout: 5_000,
+              },
+            );
+            expect(result.error).toBeUndefined();
+            const expected = {
+              full: ["success", "success", "success"],
+              checks: ["success", "success", "skipped"],
+              tools: ["success", "skipped", "skipped"],
+              skip: ["skipped", "skipped", "skipped"],
+            }[tier];
+            const accepted =
+              changes === "success" &&
+              expected?.[0] === tools &&
+              expected[1] === checks &&
+              expected[2] === packages;
+            expect(
+              result.status,
+              `changes=${changes}, tier=${tier}, tools=${tools}, checks=${checks}, packages=${packages}: ${result.stderr}`,
+            ).toBe(accepted ? 0 : 1);
+          }
+        }
+      }
+    }
+  }
+}, 120_000);
+
+test("PR and queue runs have separate cancellation groups", () => {
+  const expected = {
+    group: "${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}",
+    "cancel-in-progress": true,
+  };
+  expect(workflow.concurrency).toEqual(expected);
+  const docs = Bun.YAML.parse(
+    readFileSync(
+      new URL("./fixtures/retired-workflows/docs.yml", import.meta.url),
+      "utf8",
+    ),
+  ) as { on: Record<string, unknown>; concurrency?: unknown };
+  expect(docs.on).toEqual({ pull_request: null, merge_group: { types: ["checks_requested"] } });
+  expect(docs.concurrency).toEqual(expected);
+});
+
+test.each([
+  ["docs/guide.md", "skip"],
+  ["design/page.html", "skip"],
+  ["tools/check-bun.ts", "tools"],
+  ["rustfmt.toml", "checks"],
+  ["src/lib.rs", "full"],
+  ["Cargo.toml", "full"],
+  [".github/workflows/rust.yml", "full"],
+  ["unknown.txt", "full"],
+])("a queue candidate reuses the input tiers for %s", (path, tier) => {
+  const fixture = repository();
+  fixture.write("docs/guide.md", "# Updated guide\n");
+  fixture.write(path);
+  expect(classify(fixture.directory, fixture.queue())).toBe(`tier=${tier}\n`);
+});
+
+test("queue classification includes earlier changes in the combined candidate", () => {
+  const fixture = repository();
+  fixture.write("src/lib.rs", "pub fn earlier_change() {}\n");
+  fixture.git(["add", "."]);
+  fixture.git(["commit", "-m", "Add earlier Rust change"]);
+  fixture.write("docs/guide.md", "# Later documentation change\n");
+  expect(classify(fixture.directory, fixture.queue())).toBe("tier=full\n");
+});
+
+test("queue classification retains deletions and both sides of renames", () => {
+  for (const [source, destination, tier] of [
+    ["docs/guide.md", "docs/renamed.md", "skip"],
+    ["src/lib.rs", "docs/source.md", "full"],
+    ["src/lib.rs", "", "full"],
+  ] as const) {
+    const fixture = repository();
+    if (destination) {
+      renameSync(
+        join(fixture.directory, source),
+        join(fixture.directory, destination),
+      );
+    } else {
+      rmSync(join(fixture.directory, source));
+    }
+    expect(classify(fixture.directory, fixture.queue())).toBe(`tier=${tier}\n`);
+  }
+});
+
+test("queue classification binds the event head, checkout and single parent", () => {
+  const fixture = repository();
+  fixture.write("docs/guide.md");
+  const revisions = fixture.queue();
+  expect(classify(fixture.directory, revisions)).toBe("tier=skip\n");
+  for (const variable of ["BASE_SHA", "QUEUE_SHA", "MERGE_SHA"]) {
+    for (const value of ["", "missing-commit", "0".repeat(40)]) {
+      expect(
+        classify(fixture.directory, { ...revisions, [variable]: value }),
+      ).toBe("tier=full\n");
+    }
+  }
+  for (const mismatch of [
+    { BASE_SHA: revisions.QUEUE_SHA },
+    { QUEUE_SHA: revisions.BASE_SHA },
+    { MERGE_SHA: revisions.BASE_SHA },
+    { EVENT_NAME: "push" },
+  ]) {
+    expect(classify(fixture.directory, { ...revisions, ...mismatch })).toBe(
+      "tier=full\n",
+    );
+  }
+  const mergeFixture = repository();
+  mergeFixture.write("docs/guide.md");
+  const merge = mergeFixture.merge();
+  expect(classify(mergeFixture.directory, {
+    ...merge,
+    EVENT_NAME: "merge_group",
+    QUEUE_SHA: merge.MERGE_SHA,
+  })).toBe("tier=full\n");
+});
+
+test("queue comparison falls back to full checks for missing history or trees", () => {
+  const fixture = repository();
+  fixture.write("docs/guide.md");
+  const revisions = fixture.queue();
+  for (const depth of [1, 2]) {
+    const shallow = temporaryDirectory();
+    fixture.git([
+      "clone", "--no-local", `--depth=${depth}`, fixture.directory, shallow,
+    ]);
+    expect(classify(shallow, revisions)).toBe(
+      depth === 2 ? "tier=skip\n" : "tier=full\n",
+    );
+  }
+  const tree = fixture.git(["rev-parse", `${revisions.BASE_SHA}^{tree}`]);
+  rmSync(
+    join(fixture.directory, ".git/objects", tree.slice(0, 2), tree.slice(2)),
+  );
+  expect(classify(fixture.directory, revisions)).toBe("tier=full\n");
+});
+
+test("queue classification excludes changes already in its verified baseline", () => {
+  const fixture = repository();
+  const oldBase = fixture.git(["rev-parse", "base"]);
+  fixture.git(["switch", "base"]);
+  fixture.write("src/lib.rs", "pub fn accepted_base_change() {}\n");
+  fixture.git(["add", "."]);
+  fixture.git(["commit", "-m", "Advance target"]);
+  fixture.git(["switch", "feature"]);
+  fixture.write("docs/guide.md");
+  const queue = fixture.queue();
+  expect(classify(fixture.directory, queue)).toBe("tier=skip\n");
+  expect(classify(fixture.directory, { ...queue, BASE_SHA: oldBase })).toBe(
+    "tier=full\n",
+  );
+});
+
+test("an unknown event cannot use the pull request comparison", () => {
+  const fixture = repository();
+  fixture.write("docs/guide.md");
+  const revisions = fixture.merge();
+  expect(classify(fixture.directory, revisions)).toBe("tier=skip\n");
+  expect(classify(fixture.directory, { ...revisions, EVENT_NAME: "push" })).toBe("tier=full\n");
+});
+
+test("classification always runs and all validation jobs consume its output directly", () => {
+  expect(workflow.on).toEqual({ pull_request: null, merge_group: { types: ["checks_requested"] } });
+  const changes = workflow.jobs.changes;
+  expect(changes.if).toBeUndefined();
+  expect(changes.needs).toBeUndefined();
+  expect(changes["continue-on-error"]).not.toBe(true);
+  expect(changes.outputs).toEqual({
+    tier: "${{ steps.changes.outputs.tier }}",
+    packages: "${{ steps.changes.outputs.packages }}",
+    matrix: "${{ steps.packages.outputs.matrix }}",
+  });
+  const checkout = changes.steps.find((step) =>
+    step.uses?.startsWith("actions/checkout@"),
+  );
+  expect(checkout?.with?.["fetch-depth"]).toBe(2);
+  expect(checkout?.with?.["persist-credentials"]).toBe(false);
+  const classify = changes.steps.find((step) => step.id === "changes");
+  expect(classify?.env).toEqual({
+    BASE_SHA: "${{ github.event.merge_group.base_sha }}",
+    HEAD_SHA: "${{ github.event.pull_request.head.sha }}",
+    QUEUE_SHA: "${{ github.event.merge_group.head_sha }}",
+    MERGE_SHA: "${{ github.sha }}",
+    EVENT_NAME: "${{ github.event_name }}",
+  });
+  expect(workflow.jobs.tools.needs).toBe("changes");
+  // Missing or unexpected output runs every job, which the gate then rejects.
+  expect(workflow.jobs.tools.if).toBe(
+    "${{ needs.changes.outputs.tier != 'skip' }}",
+  );
+  expect(workflow.jobs.checks.needs).toBe("changes");
+  expect(workflow.jobs.checks.if).toBe(
+    "${{ needs.changes.outputs.tier != 'skip' && needs.changes.outputs.tier != 'tools' }}",
+  );
+  expect(workflow.jobs.packages.if).toBe(
+    "${{ needs.changes.outputs.tier != 'skip' && needs.changes.outputs.tier != 'tools' && needs.changes.outputs.tier != 'checks' }}",
+  );
+});
+
+test("dependency regression and boundary commands execute with Bun and propagate failures", () => {
+  const steps = workflow.jobs.tools.steps;
+  const regression = steps.find(
+    (step) => step.run === "bun test tools/check-dependencies.test.ts",
+  );
+  const boundary = steps.find(
+    (step) => step.run === "bun tools/check-dependencies.ts",
+  );
+  expect(regression).toBeDefined();
+  expect(boundary).toBeDefined();
+  expect(steps.indexOf(regression!)).toBeLessThan(steps.indexOf(boundary!));
+  const directory = temporaryDirectory();
+  const stub = join(directory, "bun");
+  writeFileSync(
+    stub,
+    '#!/bin/bash\nprintf "%s\\n" "$@"\nexit "${COMMAND_STATUS:-0}"\n',
+  );
+  chmodSync(stub, 0o700);
+  for (const [step, expected] of [
+    [regression!, ["test", "tools/check-dependencies.test.ts"]],
+    [boundary!, ["tools/check-dependencies.ts"]],
+  ] as const) {
+    for (const status of [0, 17]) {
+      const result = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-c", step.run!],
+        {
+          env: {
+            ...environment,
+            PATH: `${directory}:${process.env.PATH}`,
+            COMMAND_STATUS: String(status),
+          },
+          encoding: "utf8",
+          timeout: 5_000,
+        },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stderr).toBe(status);
+      expect(result.stdout.trim().split("\n")).toEqual([...expected]);
+    }
+  }
+});
+
+test("the package matrix consumes automatic discovery without allowing failed members", () => {
+  const changes = workflow.jobs.changes;
+  expect(changes.outputs?.matrix).toBe("${{ steps.packages.outputs.matrix }}");
+  const discovery = changes.steps.find((step) => step.id === "packages");
+  const prepare = changes.steps.find((step) => step.run === "rustup show active-toolchain");
+  const classify = changes.steps.find((step) => step.id === "changes");
+  expect(prepare).toBeDefined();
+  expect(changes.steps.indexOf(classify!)).toBeLessThan(changes.steps.indexOf(prepare!));
+  expect(changes.steps.indexOf(prepare!)).toBeLessThan(changes.steps.indexOf(discovery!));
+  for (const step of [prepare!, discovery!]) {
+    expect(step.if).toBe("${{ steps.changes.outputs.tier == 'full' }}");
+    expect(step["continue-on-error"]).not.toBe(true);
+    for (const tier of ["full", "checks", "tools", "skip", "", "unknown"]) {
+      const tokens = new Lexer(step.if!.slice(3, -2)).lex().tokens;
+      const parsed = new Parser(tokens, ["steps"], []).parse();
+      const context = JSON.parse(JSON.stringify({ steps: { changes: { outputs: { tier } } } }), data.reviver) as data.Dictionary;
+      expect(truthy(new Evaluator(parsed, context).evaluate())).toBe(tier === "full");
+    }
+  }
+  expect(discovery?.env).toEqual({
+    AFFECTED_PACKAGES: "${{ steps.changes.outputs.packages }}",
+  });
+  expect(discovery?.run).toContain(
+    'bun tools/check-packages.ts --matrix --affected "$AFFECTED_PACKAGES"',
+  );
+  expect(workflow.jobs.checks.outputs).toBeUndefined();
+  expect(workflow.jobs.checks.steps.some((step) => step.id === "packages")).toBe(false);
+  const packages = workflow.jobs.packages;
+  expect(packages.needs).toBe("changes");
+  expect(packages["continue-on-error"]).not.toBe(true);
+  expect(packages.strategy?.matrix).toBe(
+    "${{ fromJSON(needs.changes.outputs.matrix) }}",
+  );
+  expect(packages.strategy?.["fail-fast"]).toBe(false);
+  expect(packages.strategy?.["max-parallel"]).toBe(8);
+  expect(packages.name).toBe(
+    "package (${{ matrix.package }}${{ matrix.group && format(' {0}', matrix.group) || '' }}${{ matrix.shard && format(' shard {0}', matrix.shard) || '' }})",
+  );
+  const run = packages.steps.find((step) => step.env?.PACKAGE !== undefined);
+  expect(run?.env?.PACKAGE).toBe("${{ matrix.package }}");
+  expect(run?.env?.SHARD).toBe("${{ matrix.shard }}");
+  expect(run?.env?.GROUP).toBe("${{ matrix.group }}");
+});
+
+test("actual discovery selects consumers and runs every selected matrix entry through the package command", () => {
+  const job = workflow.jobs.packages;
+  const directory = temporaryDirectory();
+  mkdirSync(join(directory, "tools"));
+  copyFileSync(
+    new URL("./check-packages.ts", import.meta.url),
+    join(directory, "tools/check-packages.ts"),
+  );
+  copyFileSync(
+    new URL("../rust-toolchain.toml", import.meta.url),
+    join(directory, "rust-toolchain.toml"),
+  );
+  const dependencies = {
+    nucleus:
+      '[dependencies]\ndomain = { path = "domain" }\nplatform = { path = "platform" }\n[dev-dependencies]\ndeployment = { path = "deployment" }\nfixture = { path = "fixture" }\n',
+    domain:
+      '[dependencies]\nplatform = { path = "../platform" }\n[dev-dependencies]\nfixture = { path = "../fixture" }\n',
+    deployment:
+      '[dependencies]\ndomain = { path = "../domain" }\nplatform = { path = "../platform" }\n[dev-dependencies]\nfixture = { path = "../fixture" }\n',
+    platform: '[dev-dependencies]\nfixture = { path = "../fixture" }\n',
+    fixture: "",
+    newcomer: "",
+  };
+  for (const [name, declarations] of Object.entries(dependencies)) {
+    const packageDirectory =
+      name === "nucleus" ? directory : join(directory, name);
+    mkdirSync(join(packageDirectory, "src"), { recursive: true });
+    writeFileSync(
+      join(packageDirectory, "Cargo.toml"),
+      `[package]\nname = "${name}"\nversion = "0.1.0"\nedition = "2024"\n${declarations}` +
+        (name === "nucleus"
+          ? '\n[workspace]\nresolver = "3"\nmembers = ["domain", "deployment", "platform", "fixture", "newcomer"]\n'
+          : ""),
+    );
+    writeFileSync(
+      join(packageDirectory, "src/lib.rs"),
+      'compile_error!("discovery must not build");\n',
+    );
+  }
+  mkdirSync(join(directory, "tests"));
+  writeFileSync(join(directory, "tests/http.rs"), 'compile_error!("discovery must not build");\n');
+  const locked = spawnSync("cargo", ["generate-lockfile", "--offline"], {
+    cwd: directory,
+    env: environment,
+    encoding: "utf8",
+    timeout: 5_000,
+  });
+  expect(locked.error).toBeUndefined();
+  expect(locked.status, locked.stderr).toBe(0);
+  const discovery = workflow.jobs.changes.steps.find(
+    (step) => step.id === "packages",
+  )!;
+  function discover(selection: string) {
+    const output = join(directory, "matrix-output");
+    writeFileSync(output, "");
+    const result = spawnSync(
+      "bash",
+      ["--noprofile", "--norc", "-c", discovery.run!],
+      {
+        cwd: directory,
+        env: {
+          ...environment,
+          CARGO_NET_OFFLINE: "true",
+          AFFECTED_PACKAGES: selection,
+          GITHUB_OUTPUT: output,
+        },
+        encoding: "utf8",
+        timeout: 5_000,
+      },
+    );
+    expect(result.error).toBeUndefined();
+    return { ...result, output: readFileSync(output, "utf8") };
+  }
+  const entries: { package: string; shard?: string; group?: string }[] = [];
+  for (const [selection, expected] of [
+    ['["nucleus"]', ["nucleus"]],
+    ['["deployment"]', ["deployment", "nucleus"]],
+    ['["domain"]', ["deployment", "domain", "nucleus"]],
+    ['["domain","deployment"]', ["deployment", "domain", "nucleus"]],
+    ['["fixture"]', ["deployment", "domain", "fixture", "nucleus", "platform"]],
+    [
+      "all",
+      ["deployment", "domain", "fixture", "newcomer", "nucleus", "platform"],
+    ],
+  ] as const) {
+    const result = discover(selection);
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.output).toStartWith("matrix=");
+    const selected: { package: string; shard?: string; group?: string }[] = JSON.parse(
+      result.output.slice("matrix=".length),
+    ).include;
+    expect([...new Set(selected.map((entry) => entry.package))].sort()).toEqual(
+      [...expected],
+    );
+    expect(
+      selected
+        .filter((entry) => entry.package === "domain")
+        .map((entry) => entry.shard),
+    ).toEqual(
+      expected.some((name) => name === "domain")
+        ? ["1/4", "2/4", "3/4", "4/4"]
+        : [],
+    );
+    for (const name of expected.filter((name) => name !== "domain" && name !== "nucleus"))
+      expect(selected.filter((entry) => entry.package === name)).toEqual([
+        { package: name },
+      ]);
+    expect(selected.filter((entry) => entry.package === "nucleus")).toEqual(
+      expected.some((name) => name === "nucleus")
+        ? [{ package: "nucleus", group: "rest" }, { package: "nucleus", group: "http" }]
+        : [],
+    );
+    if (selection === "all") entries.push(...selected);
+  }
+  for (const selection of ["", "[]", '["missing"]', "all\ninvalid"]) {
+    const result = discover(selection);
+    expect(result.status).not.toBe(0);
+    expect(result.output).toBe("");
+  }
+  expect(existsSync(join(directory, "target"))).toBe(false);
+  const stub = join(directory, "bun");
+  writeFileSync(
+    stub,
+    '#!/bin/bash\nprintf "%s\\n" "$@"\nexit "${COMMAND_STATUS:-0}"\n',
+  );
+  chmodSync(stub, 0o700);
+  const step = job.steps.find((step) => step.env?.PACKAGE !== undefined)!;
+  for (const entry of entries) {
+    for (const status of [0, 17]) {
+      const result = spawnSync(
+        "bash",
+        ["--noprofile", "--norc", "-c", step.run!],
+        {
+          env: {
+            ...environment,
+            PATH: `${directory}:${process.env.PATH}`,
+            PACKAGE: entry.package,
+            SHARD: entry.shard ?? "",
+            GROUP: entry.group ?? "",
+            COMMAND_STATUS: String(status),
+          },
+          encoding: "utf8",
+          timeout: 5_000,
+        },
+      );
+      expect(result.error).toBeUndefined();
+      expect(result.status, result.stderr).toBe(status);
+      expect(result.stdout.trim().split("\n")).toEqual([
+        "tools/check-packages.ts",
+        "--package",
+        entry.package,
+        "--test-threads",
+        "4",
+        ...(entry.shard ? ["--shard", entry.shard] : []),
+        ...(entry.group ? ["--group", entry.group] : []),
+      ]);
+    }
+  }
+}, 30_000);
+
+test("discovery rejects failed, empty or malformed matrices before publishing job output", () => {
+  const directory = temporaryDirectory();
+  const stub = join(directory, "bun");
+  writeFileSync(stub, '#!/bin/bash\nif test "$1" = tools/check-packages.ts; then\n  printf "%s" "$TEST_MATRIX"\n  exit "$TEST_EXIT"\nfi\nexec "$TEST_BUN" "$@"\n');
+  chmodSync(stub, 0o700);
+  const discovery = workflow.jobs.changes.steps.find((step) => step.id === "packages")!;
+  const valid = '{"include":[{"package":"nucleus","group":"rest"},{"package":"nucleus","group":"http"}]}';
+  for (const [matrix, status, accepted] of [
+    [valid, 0, true],
+    [valid, 17, false],
+    ["", 0, false],
+    ["{", 0, false],
+    ["null", 0, false],
+    ["[]", 0, false],
+    ["{}", 0, false],
+    ['{"include":[]}', 0, false],
+    ['{"include":{}}', 0, false],
+    ['{"include":[null]}', 0, false],
+    ['{"include":[{}]}', 0, false],
+    ['{"include":[{"package":""}]}', 0, false],
+    ['{"include":[{"package":42}]}', 0, false],
+    ['{"include":[{"package":"domain","shard":4}]}', 0, false],
+    ['{"include":[{"package":"domain","shard":""}]}', 0, false],
+    ['{"include":[{"package":"nucleus"}]}', 0, false],
+    ['{"include":[{"package":"nucleus","group":"http"}]}', 0, false],
+    ['{"include":[{"package":"nucleus","group":"rest"}]}', 0, false],
+    ['{"include":[{"package":"nucleus","group":"other"}]}', 0, false],
+    ['{"include":[{"package":"nucleus","group":"http","shard":"1/4"}]}', 0, false],
+    ['{"include":[{"package":"other","group":"http"}]}', 0, false],
+    ['{"include":[{"package":"other","shard":"1/4"}]}', 0, false],
+    ['{"include":[{"package":"other"},{"package":"other"}]}', 0, false],
+    ['{"include":[{"package":"other","unexpected":"value"}]}', 0, false],
+    ['{"include":[{"package":"domain","shard":"1/4"}]}', 0, false],
+    [valid.replace('"http"', '"rest"'), 0, false],
+  ] as const) {
+    const output = join(directory, "output");
+    writeFileSync(output, "");
+    const result = spawnSync("bash", ["--noprofile", "--norc", "-c", discovery.run!], {
+      cwd: directory,
+      env: {
+        ...environment,
+        PATH: `${directory}:${process.env.PATH}`,
+        TEST_BUN: process.execPath,
+        TEST_MATRIX: matrix,
+        TEST_EXIT: String(status),
+        AFFECTED_PACKAGES: "all",
+        GITHUB_OUTPUT: output,
+      },
+      encoding: "utf8",
+      timeout: 5_000,
+    });
+    expect(result.error).toBeUndefined();
+    expect(result.status === 0, `matrix=${matrix}, status=${status}: ${result.stderr}`).toBe(accepted);
+    expect(readFileSync(output, "utf8")).toBe(accepted ? `matrix=${valid}\n` : "");
+  }
+});
+
+test("Docs always runs design preview regressions and propagates failures", () => {
+  const docs = Bun.YAML.parse(
+    readFileSync(
+      new URL("./fixtures/retired-workflows/docs.yml", import.meta.url),
+      "utf8",
+    ),
+  ) as typeof workflow;
+  expect(docs.on).toEqual({
+    pull_request: null,
+    merge_group: { types: ["checks_requested"] },
+  });
+  const job = docs.jobs.docs;
+  expect(job.if).toBeUndefined();
+  expect(job.needs).toBeUndefined();
+  expect(job["continue-on-error"]).toBeUndefined();
+  const step = job.steps.find(
+    (step) => step.run === "bun test tools/preview-design.test.ts",
+  );
+  expect(step).toBeDefined();
+  expect(step!.if).toBeUndefined();
+  expect(step!["continue-on-error"]).toBeUndefined();
+  const setup = job.steps.find((step) =>
+    step.uses?.startsWith("oven-sh/setup-bun@"),
+  );
+  expect(setup?.with?.["bun-version-file"]).toBe(".tool-versions");
+  const install = job.steps.find(
+    (step) => step.run === "bun install --frozen-lockfile --ignore-scripts",
+  );
+  expect(install).toBeDefined();
+  expect(install!.if).toBeUndefined();
+  expect(install!["continue-on-error"]).toBeUndefined();
+  expect(job.steps.indexOf(setup!)).toBeLessThan(job.steps.indexOf(install!));
+  expect(job.steps.indexOf(install!)).toBeLessThan(job.steps.indexOf(step!));
+  expect(
+    workflow.jobs.checks.steps.some(
+      (step) => step.run === "bun test tools/preview-design.test.ts",
+    ),
+  ).toBe(false);
+  const directory = temporaryDirectory();
+  const stub = join(directory, "bun");
+  writeFileSync(
+    stub,
+    '#!/bin/bash\nprintf "%s\\n" "$@"\nexit "${COMMAND_STATUS:-0}"\n',
+  );
+  chmodSync(stub, 0o700);
+  for (const status of [0, 17]) {
+    const result = spawnSync(
+      "bash",
+      ["--noprofile", "--norc", "-c", step!.run!],
+      {
+        env: {
+          ...environment,
+          PATH: `${directory}:${process.env.PATH}`,
+          COMMAND_STATUS: String(status),
+        },
+        encoding: "utf8",
+        timeout: 5_000,
+      },
+    );
+    expect(result.error).toBeUndefined();
+    expect(result.status, result.stderr).toBe(status);
+    expect(result.stdout.trim().split("\n")).toEqual([
+      "test",
+      "tools/preview-design.test.ts",
+    ]);
+  }
+});
+
+test("the protected aggregate job identities remain rust and docs", () => {
+  expect(workflow.jobs.rust.name).toBeUndefined();
+  const docs = Bun.YAML.parse(
+    readFileSync(
+      new URL("./fixtures/retired-workflows/docs.yml", import.meta.url),
+      "utf8",
+    ),
+  ) as typeof workflow;
+  expect(docs.jobs.docs).toBeDefined();
+  expect(docs.jobs.docs.name).toBeUndefined();
+});

@@ -1,0 +1,277 @@
+.termination-layout {
+  width: min(1040px, calc(100% - 96px));
+  margin: 32px auto 64px;
+}
+.termination-nav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 24px;
+  font-size: 14px;
+}
+.termination-nav a,
+.termination-back {
+  color: var(--sub);
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+}
+.termination-back {
+  font-size: 14px;
+}
+.termination-heading {
+  margin: 24px 0 28px;
+}
+.termination-heading h1 {
+  font: 600 32px/1.5 var(--sans);
+  margin: 8px 0;
+}
+.termination-heading > p:last-child {
+  color: var(--sub);
+  font-size: 15px;
+  line-height: 1.9;
+}
+.termination-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 272px;
+  gap: 32px;
+  align-items: start;
+}
+.termination-panel,
+.termination-guide {
+  min-width: 0;
+  padding: 28px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--surface);
+}
+.termination-panel h2 {
+  font: 600 22px/1.6 var(--sans);
+  margin: 0 0 12px;
+}
+.termination-panel p,
+.termination-guide p {
+  font-size: 14px;
+  line-height: 1.9;
+  color: var(--sub);
+  overflow-wrap: anywhere;
+}
+.termination-guide {
+  padding: 24px;
+}
+.termination-guide h2 {
+  font-size: 17px;
+  line-height: 1.7;
+  margin: 0 0 12px;
+}
+.termination-guide p + p {
+  margin-top: 12px;
+}
+.termination-person {
+  padding: 20px;
+  margin-bottom: 24px;
+  background: var(--muted);
+  border-radius: var(--radius-s);
+}
+.termination-person strong {
+  display: block;
+  font-size: 20px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.termination-person p {
+  margin: 5px 0 0;
+}
+.termination-consequences {
+  padding-left: 20px;
+  margin: 16px 0 24px;
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.9;
+}
+.termination-consequences li + li {
+  margin-top: 10px;
+}
+.termination-note {
+  padding: 16px 20px;
+  background: var(--muted);
+  border-left: 3px solid var(--neutral-rule);
+  margin-top: 20px;
+}
+.termination-note.success {
+  background: var(--ok-soft);
+  border-color: var(--ok-rule);
+}
+.termination-note.warning {
+  background: var(--warn-soft);
+  border-color: var(--warn-rule);
+}
+.termination-note + .button {
+  margin-top: 20px;
+}
+.termination-note h3 {
+  font-size: 16px;
+  line-height: 1.7;
+  margin: 0 0 6px;
+}
+.termination-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 28px;
+}
+.termination-actions .button {
+  min-height: 48px;
+  height: auto;
+  white-space: normal;
+  text-align: center;
+  line-height: 1.6;
+  padding: 12px 20px;
+}
+.termination-layout .button:disabled {
+  opacity: 1;
+  color: var(--ink);
+  background: var(--muted);
+  border-color: var(--control-line);
+  cursor: wait;
+}
+.termination-actions .secondary {
+  color: var(--ink);
+  border-color: var(--control-line);
+  background: var(--surface);
+}
+.design-notes label {
+  display: block;
+  margin-top: 16px;
+}
+.design-notes select {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px;
+  margin: 6px 0;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--control-line);
+  font: inherit;
+}
+.termination-result {
+  max-width: 680px;
+}
+.termination-status {
+  display: inline-block;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--sage);
+  margin-bottom: 16px;
+  letter-spacing: 0.08em;
+}
+.termination-footer {
+  width: min(1040px, calc(100% - 96px));
+  margin: 0 auto;
+  border-top: 1px solid var(--line);
+  padding: 24px 0;
+  font-size: 12px;
+  color: var(--sub);
+}
+#termination-dialog {
+  width: min(480px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow: auto;
+  padding: 28px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+}
+#termination-dialog::backdrop {
+  background: var(--backdrop);
+}
+.termination-dialog-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  color: var(--sub);
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+.termination-close {
+  width: 44px;
+  height: 44px;
+  background: transparent;
+  color: var(--sub);
+  border: 0;
+  font-size: 26px;
+  cursor: pointer;
+}
+#termination-dialog h2 {
+  font-size: 22px;
+  line-height: 1.6;
+  margin-bottom: 16px;
+}
+#termination-dialog p {
+  font-size: 15px;
+  line-height: 1.9;
+  color: var(--sub);
+}
+#termination-dialog .termination-actions {
+  justify-content: flex-end;
+}
+.termination-layout :focus-visible,
+#termination-dialog :focus-visible {
+  outline: 3px solid var(--sage);
+  outline-offset: 4px;
+}
+.termination-heading h1:focus-visible {
+  outline: none;
+  text-decoration: underline solid var(--sage) 3px;
+  text-underline-offset: 8px;
+}
+@media (max-width: 900px) {
+  .termination-columns {
+    grid-template-columns: 1fr;
+    gap: 24px;
+  }
+  .termination-guide {
+    max-width: 680px;
+  }
+}
+@media (max-width: 600px) {
+  .preview-tools {
+    flex-wrap: wrap;
+  }
+  .termination-layout,
+  .termination-footer {
+    width: calc(100% - 32px);
+  }
+  .termination-layout {
+    margin-top: 20px;
+  }
+  .termination-heading {
+    margin: 16px 0 24px;
+  }
+  .termination-heading h1 {
+    font-size: 26px;
+  }
+  .termination-panel,
+  .termination-guide {
+    padding: 20px;
+  }
+  .termination-panel h2,
+  #termination-dialog h2 {
+    font-size: 20px;
+  }
+  .termination-person {
+    padding: 16px;
+  }
+  .termination-actions {
+    flex-direction: column;
+  }
+  .termination-actions .button {
+    width: 100%;
+  }
+  .termination-nav {
+    gap: 16px;
+  }
+  #termination-dialog {
+    padding: 20px;
+  }
+}

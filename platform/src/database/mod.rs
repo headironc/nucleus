@@ -10,13 +10,14 @@ use std::{
     fmt,
     future::Future,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use deadpool::{Runtime, managed};
 use rustls::{ClientConfig, RootCertStore, crypto::ring};
 use thiserror::Error;
 use tokio::{
-    sync::{OwnedSemaphorePermit, Semaphore},
+    sync::{OwnedSemaphorePermit, Semaphore, watch},
     task::{AbortHandle, JoinError, JoinHandle},
     time::timeout,
 };
@@ -97,6 +98,18 @@ impl Connections {
         Ok(self.pool.manager().0.connect().await?)
     }
 
+    /// A dedicated session for a process-lifetime lock, outside the online pool.
+    ///
+    /// TCP keepalive probes the peer every five seconds while idle, so a lost database
+    /// host ends the driver instead of leaving the lock owner waiting for a reply.
+    /// The returned [`Ended`] resolves once the driver stops for any reason.
+    pub async fn instance(&self) -> Result<(Session, Ended), Error> {
+        if self.pool.is_closed() {
+            return Err(managed::PoolError::Closed.into());
+        }
+        Ok(self.pool.manager().0.instance().await?)
+    }
+
     /// After consumers drain, close admission and await even drivers aborted by Drop.
     pub async fn close(&self) {
         self.pool.close();
@@ -167,7 +180,7 @@ impl Connector {
     }
 
     async fn connect(&self) -> Result<Session, ConnectionError> {
-        let (client, connection) = self.open().await?;
+        let (client, connection) = self.open(&self.config).await?;
         let driver = self.spawn(connection);
         Ok(Session {
             client,
@@ -176,8 +189,38 @@ impl Connector {
         })
     }
 
+    /// Unacknowledged probes or writes end the connection after about fifteen seconds.
+    fn instance_config(&self) -> Config {
+        let mut config = self.config.clone();
+        config
+            .keepalives(true)
+            .keepalives_idle(KEEPALIVE)
+            .keepalives_interval(KEEPALIVE)
+            .keepalives_retries(3)
+            .tcp_user_timeout(KEEPALIVE * 3);
+        config
+    }
+
+    async fn instance(&self) -> Result<(Session, Ended), ConnectionError> {
+        let (client, connection) = self.open(&self.instance_config()).await?;
+        // The sender lives in the driver future, so completion and abortion both drop it.
+        let (sender, receiver) = watch::channel(());
+        let driver = self.spawn(async move {
+            let _ended = sender;
+            connection.await
+        });
+        Ok((
+            Session {
+                client,
+                driver,
+                stopped: false,
+            },
+            Ended(receiver),
+        ))
+    }
+
     async fn recover(&self, permit: OwnedSemaphorePermit) -> Result<Session, ConnectionError> {
-        let (client, connection) = self.open().await?;
+        let (client, connection) = self.open(&self.config).await?;
         let driver = self.spawn(async move {
             let _permit = permit;
             connection.await
@@ -191,6 +234,7 @@ impl Connector {
 
     async fn open(
         &self,
+        config: &Config,
     ) -> Result<
         (
             Client,
@@ -200,10 +244,22 @@ impl Connector {
     > {
         timeout(
             self.settings.budgets().connect(),
-            self.config.connect(self.tls.clone()),
+            config.connect(self.tls.clone()),
         )
         .await?
         .map_err(ConnectionError::Connect)
+    }
+}
+
+const KEEPALIVE: Duration = Duration::from_secs(5);
+
+/// Observes the end of an instance session's driver without owning the session.
+pub struct Ended(watch::Receiver<()>);
+
+impl Ended {
+    /// Resolve once the driver has stopped, including after a stop or abort.
+    pub async fn wait(&mut self) {
+        while self.0.changed().await.is_ok() {}
     }
 }
 
@@ -811,6 +867,103 @@ mod tests {
     }
 
     #[test]
+    fn proxy_release_after_backend_exit_preserves_next_interception() {
+        use fixture::database_proxy::{Fault, Proxy};
+
+        let server = Server::acquire();
+        Runtime::new().expect("test runtime").block_on(async {
+            timeout(Duration::from_secs(15), async {
+                let name = server.database().await;
+                let proxy = Proxy::start(&server.fixture).await;
+                let mut roots = RootCertStore::empty();
+                roots.add(proxy.authority()).expect("proxy authority");
+                let connections = Connections::new(
+                    Settings::new(
+                        "127.0.0.1".into(),
+                        proxy.port(),
+                        name,
+                        "fixture".into(),
+                        2,
+                        Budgets::default(),
+                    )
+                    .expect("proxy settings"),
+                    Password::new(PASSWORD.into()).expect("fixture password"),
+                    roots,
+                )
+                .expect("proxy connections");
+                let first = connections.recover().await.expect("first reader");
+                proxy.arm(Fault::StalledTime);
+                let task = tokio::spawn(async move {
+                    let result = first
+                        .client()
+                        .query_one("SELECT clock_timestamp()", &[])
+                        .await;
+                    let termination = first.terminate().await;
+                    assert!(
+                        matches!(termination, Ok(()) | Err(Error::Postgres(_))),
+                        "unexpected driver termination: {termination:?}"
+                    );
+                    result
+                });
+                let pid = timeout(Duration::from_secs(2), proxy.intercepted())
+                    .await
+                    .expect("first query stopped");
+                let admin = server.admin().await;
+                assert!(
+                    admin
+                        .client()
+                        .query_one("SELECT pg_terminate_backend($1, 2000)", &[&pid])
+                        .await
+                        .expect("terminate the intercepted backend")
+                        .get::<_, bool>(0)
+                );
+                assert!(
+                    timeout(Duration::from_secs(2), task)
+                        .await
+                        .expect("reader observes terminated backend")
+                        .expect("first task")
+                        .is_err()
+                );
+                proxy.release();
+                // Repeated cleanup cannot reserve a release for the next fault,
+                // even if the old relay has not yet observed the backend's EOF.
+                proxy.release();
+                let second = connections.recover().await.expect("second reader");
+                proxy.arm(Fault::StalledTime);
+                let mut task = tokio::spawn(async move {
+                    let result = second
+                        .client()
+                        .query_one("SELECT clock_timestamp()", &[])
+                        .await;
+                    second.terminate().await.expect("second driver ended");
+                    result
+                });
+                let next = timeout(Duration::from_secs(2), proxy.intercepted())
+                    .await
+                    .expect("second query stopped");
+                assert_ne!(pid, next);
+                assert!(
+                    timeout(Duration::from_millis(100), &mut task)
+                        .await
+                        .is_err(),
+                    "release for an ended fault must not release the next query"
+                );
+                proxy.release();
+                timeout(Duration::from_secs(2), task)
+                    .await
+                    .expect("second query released")
+                    .expect("second task")
+                    .expect("second result");
+                connections.close().await;
+                admin.terminate().await.expect("observer ended");
+                proxy.stop().await;
+            })
+            .await
+            .expect("proxy release lifetime");
+        });
+    }
+
+    #[test]
     fn drop_ends_recovery_driver_and_dead_online_sessions_are_replaced() {
         let server = Server::acquire();
         Runtime::new().expect("test runtime").block_on(async {
@@ -940,6 +1093,76 @@ mod tests {
                 .expect("repeat cleanup after reported failure");
             admin.terminate().await.expect("end admin");
             connections.close().await;
+        });
+    }
+
+    #[test]
+    fn instance_sessions_report_their_driver_end_and_probe_the_peer() {
+        let server = Server::acquire();
+        Runtime::new().expect("test runtime").block_on(async {
+            let name = server.database().await;
+            let connections = server.connections(&name);
+            let (mut session, mut ended) = connections.instance().await.expect("instance session");
+            let pid: i32 = session
+                .client()
+                .query_one("SELECT pg_backend_pid()", &[])
+                .await
+                .expect("instance backend")
+                .get(0);
+            let mut waiting = std::pin::pin!(ended.wait());
+            assert!(
+                timeout(Duration::from_millis(100), &mut waiting)
+                    .await
+                    .is_err(),
+                "a live driver has not ended"
+            );
+            let admin = server.admin().await;
+            let terminated: bool = admin
+                .client()
+                .query_one("SELECT pg_terminate_backend($1)", &[&pid])
+                .await
+                .expect("terminate instance backend")
+                .get(0);
+            assert!(terminated);
+            timeout(Duration::from_secs(2), waiting)
+                .await
+                .expect("backend termination ends the observed driver");
+            // The end notice is sent from inside the driver task, which finishes just after it.
+            timeout(Duration::from_secs(2), async {
+                while !session.driver.is_finished() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("the driver task finishes after reporting its end");
+            assert!(session.stop().await.is_err(), "retain the backend failure");
+
+            let (session, mut ended) = connections.instance().await.expect("second instance");
+            session.terminate().await.expect("local stop");
+            timeout(Duration::from_secs(1), ended.wait())
+                .await
+                .expect("a local stop also ends the observation");
+            let connector = &connections.pool.manager().0;
+            let instance = connector.instance_config();
+            assert!(instance.get_keepalives());
+            assert_eq!(instance.get_keepalives_idle(), Duration::from_secs(5));
+            assert_eq!(
+                instance.get_keepalives_interval(),
+                Some(Duration::from_secs(5))
+            );
+            assert_eq!(instance.get_keepalives_retries(), Some(3));
+            assert_eq!(
+                instance.get_tcp_user_timeout(),
+                Some(&Duration::from_secs(15))
+            );
+            assert_eq!(
+                connector.config.get_keepalives_idle(),
+                Duration::from_secs(2 * 60 * 60),
+                "online sessions keep the driver default"
+            );
+            connections.close().await;
+            assert!(connections.instance().await.is_err(), "closed admission");
+            admin.terminate().await.expect("end admin");
         });
     }
 

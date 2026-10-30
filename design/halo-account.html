@@ -1,0 +1,161 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="司籍处网站本人账户与实名更正记录设计。" />
+    <title>个人账户 · 司籍处</title>
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/tokens.css" />
+    <link rel="stylesheet" href="assets/halo-home.css" />
+    <link rel="stylesheet" href="assets/halo-account.css" />
+    <script src="assets/halo-account.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#account">跳到主要内容</a>
+    <div class="preview-tools" aria-label="设计预览工具">
+      <div class="preview-caption">
+        <strong>HALO · 设计预览</strong><span>虚构资料，不读取真实账户</span>
+      </div>
+      <button
+        class="preview-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="preview-tools-content"
+      >
+        展开预览工具
+      </button>
+      <div class="preview-tools-content" id="preview-tools-content">
+        <div class="preview-controls">
+          <label for="scenario-picker">页面状态</label>
+          <select id="scenario-picker">
+            <optgroup label="当前账户">
+              <option value="ready">资料已读取 · 微信已绑定</option>
+              <option value="unbound">资料已读取 · 微信未绑定</option>
+              <option value="long-name">长姓名与前导零尾号</option>
+              <option value="loading">当前资料读取中</option>
+              <option value="unavailable">当前资料读取失败</option>
+              <option value="limited">当前资料读取受限</option>
+              <option value="session-invalid">当前登录无效</option>
+              <option value="forbidden">当前读取被拒绝</option>
+              <option value="account-changed">账户选择已变化</option>
+              <option value="other-account">切换后重新读取完成</option>
+              <option value="profile-changed">发现实名资料已变化</option>
+              <option value="updated">资料与历史重新读取完成</option>
+              <option value="avatar-unavailable">只有头像图片加载失败</option>
+              <option value="avatar-retry-failed">头像重试后仍不可用</option>
+            </optgroup>
+            <optgroup label="本人实名更正记录">
+              <option value="history-loading">历史读取中</option>
+              <option value="history-page-two">历史第二页</option>
+              <option value="history-empty">可信空历史</option>
+              <option value="history-unavailable">历史读取失败</option>
+              <option value="history-limited">历史读取受限</option>
+              <option value="history-out-of-range">越界页 · 总数仍为 5</option>
+            </optgroup>
+          </select>
+        </div>
+        <details class="design-notes">
+          <summary>设计说明与状态依据</summary>
+          <div>
+            <p id="state-basis"></p>
+            <p>
+              本页只演示当前本人资料与实名更正历史，不发送业务请求。姓名、证件尾号、头像和日期均为虚构材料。头像示例使用人物轮廓，不代表真实默认头像。
+            </p>
+            <p>
+              当前账户只展示完整姓名、身份证尾四位、头像和微信绑定事实。手机号、注册日期、当前登录方法、设备与微信昵称不在本稿投影内；姓名和证件号只读。
+            </p>
+            <p>
+              历史按更正成功顺序倒序，前后姓名完整、证件只显示尾四位，不显示办理人。示例显式选择每页
+              2 条，以便核对翻页；接口未指定 size 时默认每页 20 条。
+            </p>
+            <p>
+              读取失败与真实空历史分别展示。账户变化后先遮蔽资料与历史，再重新读取；本稿不实现生产会话、存储或浏览器恢复机制。
+            </p>
+            <p>
+              更换头像、退出本次登录和退出全部设备分别进入独立设计稿；其余维护入口打开设计说明。本稿不发送业务请求。当前资料与历史规则见
+              <code>docs/identity/current.md</code
+              >、<code>docs/identity/correction.md</code>；页面范围见
+              <code>docs/client/pages.md</code>。
+            </p>
+          </div>
+        </details>
+      </div>
+    </div>
+
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="halo-home.html" aria-label="司籍处首页">
+          <img src="assets/logo.png" width="56" height="56" alt="" />
+          <span class="brand-copy"
+            ><strong>司籍处</strong><span>中医药文化宣传与推广中心</span></span
+          >
+        </a>
+        <nav class="account-navigation" aria-label="网站导航">
+          <a href="halo-services.html">员工服务</a>
+          <a href="#account" aria-current="page">个人账户</a>
+          <a class="public-return" href="halo-home.html">返回首页 ↗</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="account-layout" id="account" tabindex="-1">
+      <div class="page-heading">
+        <div>
+          <p class="section-kicker">日常事务 · 由本人核对</p>
+          <h1 id="page-title" tabindex="-1">个人账户</h1>
+          <p class="page-introduction">
+            查看账户资料与实名更正记录，按需管理本人账户。
+          </p>
+        </div>
+        <a class="back-to-services" href="halo-services.html">← 返回员工服务</a>
+      </div>
+
+      <div id="page-notice" class="page-notice" role="status" hidden></div>
+      <div id="account-content" aria-live="polite">
+        <section
+          class="reading-state"
+          aria-labelledby="initial-title"
+          aria-busy="true"
+        >
+          <span class="reading-symbol" aria-hidden="true"></span>
+          <h2 id="initial-title">正在读取当前账户</h2>
+          <p>确认完成后，再展示本人资料与实名更正记录。</p>
+        </section>
+      </div>
+      <noscript>
+        <p class="page-notice">请开启 JavaScript 查看本页设计演示。</p>
+      </noscript>
+    </main>
+
+    <footer class="account-footer"><span>司籍处 · 本人账户</span></footer>
+
+    <dialog
+      id="account-dialog"
+      class="preview-dialog"
+      aria-labelledby="dialog-title"
+      aria-describedby="dialog-description"
+    >
+      <div class="dialog-heading">
+        <span>设计预览 · 后续办理</span>
+        <button
+          type="button"
+          class="dialog-close"
+          data-action="close-dialog"
+          aria-label="关闭"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18" />
+          </svg>
+        </button>
+      </div>
+      <h2 id="dialog-title"></h2>
+      <p id="dialog-description"></p>
+      <div class="dialog-actions">
+        <button type="button" class="button primary" data-action="close-dialog">
+          返回账户
+        </button>
+      </div>
+    </dialog>
+  </body>
+</html>

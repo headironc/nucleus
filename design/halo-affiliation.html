@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="司籍处网站本人政治面貌读取与首次填写设计。"
+    />
+    <title>政治面貌 · 司籍处</title>
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/tokens.css" />
+    <link rel="stylesheet" href="assets/halo-home.css" />
+    <link rel="stylesheet" href="assets/halo-affiliation.css" />
+    <script src="assets/halo-affiliation.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">跳到主要内容</a>
+    <details class="preview-tools" aria-label="设计预览工具">
+      <summary>
+        <span class="preview-caption">
+          <strong>HALO · 设计预览</strong>
+          <span>虚构资料，不发送业务请求</span>
+        </span>
+        <span class="preview-toggle" aria-hidden="true">
+          <span class="when-closed">展开预览工具</span>
+          <span class="when-open">收起预览工具</span>
+        </span>
+      </summary>
+      <div class="preview-tools-content">
+        <div class="preview-controls">
+          <div class="preview-field">
+            <label for="scenario-picker">页面状态</label>
+            <select id="scenario-picker"></select>
+          </div>
+          <div class="preview-field preview-field-theme">
+            <label for="theme-picker">外观</label>
+            <select id="theme-picker">
+              <option value="system">跟随系统</option>
+              <option value="light">浅色</option>
+              <option value="dark">深色</option>
+            </select>
+          </div>
+        </div>
+        <details class="design-notes">
+          <summary>设计说明与状态依据</summary>
+          <div class="design-notes-body">
+            <p id="state-basis"></p>
+            <p>
+              本页只演示本人当前政治面貌与首次填写，不发送业务请求。姓名、日期、当前取值和所选示例均为虚构材料。页面不读取或展示历史、办理人或真实账户资料。
+            </p>
+            <p>
+              当前账户、当前政治面貌和固定名称分别读取。只有可信的
+              <code>404 affiliation_unset</code>
+              才是“尚未填写”；技术失败、401、403 或读取未完成不会变成空值，也不会显示旧值。固定名称读取失败时不猜名称、不开放表单。
+            </p>
+            <p>
+              首次填写只发送两位代码。成功响应只确认
+              <code>code: ok</code>；页面不把原选择复制成已读取的当前值，不编造完成时间或结果 ID。查看当前政治面貌会另行读取。
+            </p>
+            <p>
+              结果未确认时，本页保留原选项才提供“重试本次填写”。它按原操作、原键和原选项再次提交，不是只读查询，可能完成原填写。当前值有值、未填或读取失败都不证明原填写成败；当前未填也不会在本页另开一笔填写。
+            </p>
+            <p>
+              重新登录只恢复会话，不证明填写完成。401、403
+              或账户选择变化先停止展示姓名、政治值、原输入和旧提示；本页不自动重试，也不把选择复查失败解释为退出。
+            </p>
+            <p>
+              离页提示按状态区分：提交前提示放弃未保存选择；提交中或结果未知时提示离开不会取消已发送的填写，返回后无法用本页原输入重试。关闭、Escape
+              或“留在此页”返回触发控件焦点。
+            </p>
+            <p>
+              本稿不实现历史与分页、本人更正、真实会话或持久恢复。政治面貌值不进入 URL、Web
+              Storage、IndexedDB 或日志；状态与外观演示参数不含政治面貌值。可先选择“已选一项”再点击任意返回链接查看提交前离页提示。
+            </p>
+          </div>
+        </details>
+      </div>
+    </details>
+
+    <header class="site-header">
+      <div class="container header-inner">
+        <a
+          class="brand"
+          href="halo-home.html"
+          data-leave
+          aria-label="司籍处首页"
+        >
+          <img src="assets/logo.png" width="56" height="56" alt="" />
+          <span class="brand-copy">
+            <strong>司籍处</strong>
+            <span>中医药文化宣传与推广中心</span>
+          </span>
+        </a>
+        <nav class="affiliation-navigation" aria-label="网站导航">
+          <a href="halo-services.html" data-leave>员工服务</a>
+          <a href="halo-account.html" data-leave>个人账户</a>
+          <a class="public-return" href="halo-home.html" data-leave>返回首页 ↗</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="affiliation-layout" id="main" tabindex="-1">
+      <div class="page-heading">
+        <div class="page-heading-copy">
+          <p class="section-kicker" id="page-kicker">个人账户 · 本人资料</p>
+          <h1 id="page-title" tabindex="-1">政治面貌</h1>
+          <p class="page-introduction" id="page-description">
+            这是一项可选资料。未填写不影响员工服务和工牌。
+          </p>
+        </div>
+        <a class="back-link" href="halo-account.html" data-leave>
+          ← 返回个人账户
+        </a>
+      </div>
+
+      <div id="affiliation-content" aria-live="polite">
+        <section
+          class="affiliation-panel state-panel"
+          aria-labelledby="initial-title"
+          aria-busy="true"
+        >
+          <span class="reading-symbol" aria-hidden="true"></span>
+          <h2 class="state-title" id="initial-title">
+            正在读取当前账户
+          </h2>
+          <p class="state-copy">确认完成后，再显示本人政治面貌。</p>
+        </section>
+      </div>
+      <noscript>
+        <p class="inline-notice">请开启 JavaScript 查看本页设计演示。</p>
+      </noscript>
+    </main>
+
+    <footer class="affiliation-footer">
+      <span>司籍处 · 个人账户</span>
+    </footer>
+
+    <dialog
+      id="leave-dialog"
+      class="leave-dialog"
+      aria-labelledby="leave-title"
+      aria-describedby="leave-description"
+    >
+      <div class="dialog-heading">
+        <span>离开此页</span>
+        <button
+          type="button"
+          class="dialog-close"
+          data-action="close-leave"
+          aria-label="关闭离开提示"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18" />
+          </svg>
+        </button>
+      </div>
+      <h2 id="leave-title"></h2>
+      <p id="leave-description"></p>
+      <div class="dialog-actions">
+        <button id="stay-button" class="button primary" type="button" autofocus>
+          留在此页
+        </button>
+        <button id="leave-button" class="button secondary" type="button">
+          离开此页
+        </button>
+      </div>
+    </dialog>
+  </body>
+</html>

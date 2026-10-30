@@ -1,23 +1,364 @@
 # 验证边界
 
-本文拥有当前变更的检查范围与故障注入证据要求。跨能力故障要求由[架构验收](../architecture.md#隔离验收)拥有，各用例补齐所属输入、预期后果与恢复验证。
+本文拥有工具选型及当前变更的检查方法、范围与证据要求。执行时机与责任见[开发循环](delivery.md#开发循环)。跨能力故障要求由[架构验收](../architecture.md#隔离验收)拥有，各用例补齐所属输入、预期后果与恢复验证。
+
+## CI 重建
+
+Nucleus 独立维护原生 CI、业务选检、依赖环境及结果解释。旧共享执行器、固定 Docs 配方、报告认证和自动准入已移除，新 CI 从零建立。正常检出直接安装本库锁定依赖，不再展开 `.shared/` 或运行 `prepare:ci`。
+
+本地文档检查、类型检查、设计预览和业务回归继续由本库命令维护。新 workflow 的具体范围随真实消费者单独交付；本地通过不表示托管 CI 已启用。
+
+### 原生 Docs
+
+[Docs 工作流](../../.github/workflows/docs.yml)在面向 `dev` 或 `main` 的原生 `pull_request` 合成候选上运行唯一的 `docs` 作业，显示名为 `Nucleus Docs`。打开、重开、更新提交和编辑 PR 均重新执行；编辑事件包含更换目标分支。非文档改动和草稿 PR 也运行，不使用路径或作业条件跳过。存在合并冲突而没有合成候选时，不形成 Docs 成功证据。
+
+该作业使用 GitHub 托管的 Ubuntu 24.04、根目录 `.tool-versions` 固定的 Bun 和 Node，以及 lychee 0.24.2。Action 固定到完整源提交，lychee 发布包安装前核对固定摘要。依赖按锁文件安装且禁用安装脚本；检出不保留凭据，权限仅为 `contents: read`。日志记录仓库、PR、运行及尝试编号，并核对实际检出提交等于事件的 `GITHUB_SHA`。
+
+作业直接运行[文档维护](../README.md#文档维护)的预览传输回归、格式、Markdown 和离线链接四项义务。任一准备或检查失败均失败，不忽略错误；超时和取消保留原生终态。同一 PR 的新运行取消旧运行，其他 PR 相互独立。失败、取消、超时、缺失运行及旧候选成功均不能作为当前候选成功。实际 PR 验收还须覆盖成功、断链、预览失败、工具不匹配、取消、非文档改动和候选或目标变化；本地回归不代替托管运行。
+
+Docs 成功只证明上述文档检查，不代表 Rust、维护工具、Halo、完整 CI、提升或部署验收。当前切片不配置分支保护、队列、自动批准或合并；需要消费状态时，由平台所有者从真实 PR 运行回读检查名称、提供方及候选关联。
+
+### 原生维护工具
+
+[Maintenance tools 工作流](../../.github/workflows/maintenance-tools.yml)对面向 `dev` 或 `main` 的每个原生 PR 合成候选运行唯一的 `tools` 作业，显示名为 `Nucleus Maintenance tools`。打开、重开、提交更新和编辑事件均执行，包括草稿、非工具改动和目标分支变更；不使用路径过滤或条件跳过。日志核对实际检出提交等于事件的 `GITHUB_SHA`。
+
+作业使用 GitHub 托管的 Ubuntu 24.04、根目录 `.tool-versions` 固定的 Bun 和 Node，以及 `rust-toolchain.toml` 指定的 Rust 和 Clippy。完整工具回归实际编译离线 Rust 夹具，并运行 Docs 工作流的真实命令回归，因此还安装经固定摘要核对的 lychee 0.24.2。Action 固定完整源提交，权限仅为 `contents: read`，检出不保留凭据。根依赖按锁文件安装，禁用安装脚本；不恢复缓存。
+
+作业依次直接运行 `bun run check:tools`、`bun test tools/*.test.ts` 和 `bun tools/check-dependencies.ts`。通配符消费全部现有及新增工具测试；依赖边界入口读取当前工作区的实际 Cargo 元数据和生产依赖树。回归中的小型 Rust 夹具不代替产品 package 验收，工具任务也不需要真实数据库、供应商或浏览器服务。
+
+准备、类型检查、测试或依赖边界检查失败均保留失败，不继续生成成功结果。同一 PR 的新运行取消旧运行；失败、取消、超时、缺失及其他候选的成功均不能证明当前候选通过。修复源码或环境后以当前候选重新运行，保留原失败与新结果的关联。真实 PR 验收分别覆盖正例、类型错误、工具断言失败及生产依赖越界，本地回归不代替托管证据。
+
+该状态只证明维护工具验证，不代表 Rust 产品矩阵、Halo、完整 CI、main 提升或部署成功。本地仍按当前分类器执行完整选检或核对相关输入后复用有效证据；新增工作流和测试不会自动获得未知路径豁免。平台所有者负责从真实 PR 回读状态、提供方和候选关联，本工作流不配置保护、批准或合并。
+
+### 原生 Rust 检查
+
+[Rust checks 工作流](../../.github/workflows/rust-checks.yml)运行唯一的 `checks` 作业，显示名为 `Nucleus Rust checks`。它消费面向 `dev` 或 `main` 的原生 PR 合成候选。打开、重开、提交更新和编辑事件均运行，包括草稿和非 Rust 改动。分类前无条件核对实际检出提交等于 `GITHUB_SHA`，记录候选及运行身份，并检查固定 Bun。
+
+作业直接消费[输入分类器](../../tools/check-inputs.ts)的四档结果。`skip` 和 `tools` 跳过 native 依赖、Rust 安装、格式与 Clippy，日志说明跳过原因。`checks` 和 `full` 执行原检查。比较协议沿[检查范围](#仓库与检查归属)读取合成提交第一父到候选的差异。第二父核对 PR 头提交；事件中的旧 base SHA 不替代实际第一父。无法可靠比较时保守运行 `full`。候选不匹配、输出接口失败及缺失或未知档位均使作业失败。
+
+作业使用 GitHub 托管的 Ubuntu 24.04。Action 固定完整源提交，权限仅为 `contents: read`，检出不保留凭据。Bun 从根版本文件安装并核对一致性。Rust 的版本、profile 和组件归 `rust-toolchain.toml` 拥有；格式工具独立使用 [Rust 规则](rust.md#workspace-validation)固定的 nightly。安装不改变默认工具链，日志记录实际版本。
+
+作业显式准备 `build-essential`、`pkg-config` 和 `zlib1g-dev`。fontsan/WOFF2 与 ring 编译随 crate 发布的 native 源码，libz-sys 消费 zlib。作业直接运行 `cargo +nightly-2026-09-06 fmt --all -- --check`，随后运行 `cargo clippy --workspace --all-targets --locked -- -D warnings`。不恢复缓存，也不准备数据库、网站或浏览器。
+
+任一准备或检查失败都保留失败。后续步骤的跳过不提供成功证据。同一 PR 的新运行取消旧运行，其他 PR 相互独立。失败、取消、超时、缺失运行和旧候选成功都不能证明当前候选通过。修复后在当前候选重跑，保留原失败关联。真实 PR 验收分别核对成功、格式拒绝、Clippy 拒绝和恢复；本地回归不代替托管结果。
+
+工具回归使用离线小型 Rust workspace，实际验证格式与 Clippy 的成功、拒绝和退出传播。维护工具作业消费这些回归，因此也显式安装相同 nightly。两处安装与检查命令共同核对 Rust 规则的固定日期，不另建配置所有者。
+
+`checks` 和 `full` 的成功证明格式和 workspace Clippy 通过；`skip` 和 `tools` 的成功只证明当前候选无需这些检查。Clippy 编译 dev/test 目标，但不执行测试函数。该状态不代替独立 package 构建、测试、doctest/rustdoc 或 Halo 验收。本地仍按实际分类及输入证据执行或复用必要检查。真实托管验收分别绑定轻量跳过与实际 Rust 执行的候选，并核对失败和取消边界。平台所有者负责当前候选的状态、审查和交付；本工作流不恢复旧 aggregate、缓存控制器或自动准入。
+
+### 原生 package 检查
+
+[Packages 工作流](../../.github/workflows/packages.yml)消费面向 `dev` 或 `main` 的原生 PR 合成候选。打开、重开、提交更新和编辑事件均执行 plan；草稿不豁免。检出核对 HEAD 与 `GITHUB_SHA`，权限仅为 `contents: read`，不保留 Git 凭据。同一 PR 的新运行取消旧运行。
+
+plan 直接调用现分类器。无法核实比较时保守选择 full/all；畸形选择失败。full 使用 package 检查器的 `--list` 与 `--matrix`，核对选中包及完整分片。当前 Domain 为四个 shard，Nucleus 为 rest/http 两组，其他包各一行。空矩阵、遗漏整包、缺少分片、重复或未知行均失败。非 full 计划明确记录 package 不执行的原因。
+
+作业使用 Ubuntu 24.04、根目录固定 Bun 与 Rust 工具链，不恢复缓存。PostgreSQL 作业按[数据库交付验证](../database.md#交付验证)从官方固定摘要源码构建 18.4，普通用户编译，sudo 只安装临时 runner 的开发库。安装经 tar 保留权限和符号链接，再由本次运行的原生 artifact 传给矩阵。消费者仅下载 producer 给出的 artifact ID，核对 tar 摘要、候选、run/attempt、版本、主机环境及安装前缀，重新执行四个真实程序的版本核查。缺失产物不能由隐式重编译掩盖。
+
+矩阵直接调用 `bun tools/check-packages.ts --package <name> --test-threads 2`，按发现行追加 shard/group。所有选中行共同完成独立 build、普通 tests、doctest 与 fatal-warning rustdoc，任一命令失败均传播。每行以非 root 用户在 workspace 外的私有规范 TMPDIR 运行隔离 PostgreSQL。fixture 拥有正常 stop、启动失败脱敏、端口与目录清理；CI 另核本 job 私有实例泄漏，并只对身份可核的自有实例有界停止。泄漏即使兜底成功仍失败；身份或终态不明时保留目录并失败。
+
+稳定状态 `Nucleus Packages` 始终汇总 plan、PostgreSQL 与矩阵。full 只有完整计划及全部选中作业成功才通过；失败、取消、超时、缺失及意外跳过均拒绝。已核非 full 计划只允许对应的两个下游作业跳过。清理使用 `always()`，但 runner 硬终止可能阻止执行，不保证取消时优雅关闭。真实托管验收保留完整正例、PG 准备拒绝、实际 package 测试失败与清理、取消及恢复的终态。本地编排回归不代替真实九行产品矩阵。
+
+该状态只证明 package 责任，不包含 Halo、main 晋级、部署或自动准入。HTTP 中要求 Halo/Node/浏览器的测试仍明确 ignored，本状态不声称浏览器覆盖。本地继续按当前 classifier 的完整选检执行或核对输入后复用有效证据，不因托管范围排除 Halo 而免检。
+
+### Runner 首个真实消费者
+
+[Runner probe](../../.github/workflows/runner-probe.yml) 只接受准确 `headironc/nucleus` 仓库的默认 `dev` 手动派发。现场负责人先绑定已审合并提交，以完整 SHA 填入 `expected_revision`。作业核对仓库 ID、事件、ref、源码和 workflow SHA，再检出同一提交并核 HEAD；checkout 不保留凭据。派发前确认无在途 probe。固定 concurrency 禁止并行且不取消原运行，不把串行机制当作堆积请求的许可。
+
+唯一 job 使用 `nucleus-standard-probe`，超时 45 分钟。原生 container 初始化以 `github.actor` 和只读包权限的 `github.token` 拉取固定 digest。默认权限为 `contents: read`，仅该 job 增加 `packages: read`。镜像及首次发布、冷拉取证据归 [Halo 镜像合同](../../halo/README.md#首次私有包发布与冷拉取)。源码准备可独立推进，真实派发等待准确成品与兼容输入被接纳。
+
+容器以镜像默认非 root 用户运行。Runner 负责工作区、临时目录和 HOME 挂载的可写性，保留镜像预装的 Cargo/Rustup 路径。workflow 不提升权限、放宽文件模式或注入管理秘密，也不使用跨任务缓存。初始化或写权限失败保持失败结论。
+
+先执行 `bun tools/halo-ci-image.ts verify`，核镜像输入与预装 PostgreSQL，再创建 job 私有 TMPDIR。完整消费者命令为 `bun tools/check-packages.ts --package platform --test-threads 2`，包含 build、test/doctest 和 rustdoc；`CARGO_BUILD_JOBS=2` 限制编译并发。最后以 `always()` 调用原 PostgreSQL 清理入口。日志管道保留失败退出，清理发现泄漏时仍失败。诊断日志按 run/attempt 上传并保留 7 天，取消保持非成功。
+
+成功验收同时要求完整 package 检查、PG scan empty、TMPDIR removed、原 run/job 成功终态，以及 GARM 自动回收对应 VM 的证据。硬终止可能阻止清理，单有 `always()` 不证明资源已回收。现场负责人持有唯一 dispatch、运行观察和 VM 生命周期责任；源码检查与合并不代替实际验收，也不证明全部 CI 已迁移。
+
+[专用 PR 检查](../../.github/workflows/runner-probe-checks.yml)执行 `.github/runner-probe/` 的类型与回归，覆盖实际来源拒绝、只读权限、完整命令、日志失败传播和清理条件。固定 actionlint 1.7.12 核两份工作流，额外 runner 标签由 `.github/actionlint.yaml` 声明。产品代码、镜像及 fixture 输入未变时按下文复用原证据；当前 required CI 仍须通过，回归不启动 VM 或 registry 操作。
+
+#### 专用 JIT 启动模板
+
+[bootstrap.tmpl](../../.github/runner-probe/bootstrap.tmpl) 是现有单 job 消费者的启动源，适用 GARM v0.2.1 和 LXD provider v0.1.5。模板改编自 provider 所带的 garm-provider-common v0.1.9，保留[来源及修改说明](../../.github/runner-probe/bootstrap.NOTICE)和 [Apache-2.0 许可证](../../.github/runner-probe/bootstrap.LICENSE)。原真实 run `40985793966` 已验证相同模板、原生 job-token 拉取、完整 platform 包及 GARM 自动回收；模板 SHA256 为 `4ad03706a17eb260be188834aae901d222b685e1b8345c72d52c904243136bf2`。该结果只覆盖原版本、模板字节及已核输入，不证明任意池或故障矩阵可用。
+
+原现场负责人从已审提交读取模板，按 provider 的 `runner_install_template` 字节字段填入既有 extra specs，由原 GARM/provider 渲染及交付。使用 JSON 表示该字节字段时按其原生契约进行 base64 编码；不要把已填 JWT 的脚本作为源码或手动部署入口。仓库不保存现场 extra specs、root 操作包、凭据、JWT、数据库或运行 receipts。源码合并本身不更新现场配置，也不派发 job。
+
+模板只接受 JIT，拒绝 boot debug，固定 `runner` 账号，以及 `https://10.203.64.1:9444/api/v1/metadata` 和 `/api/v1/callbacks`。它依赖现有镜像的 Runner 安装、可信 CA、固定 `10.203.64.1:3128` 代理和 Docker client/server 29.1.3；同时核对代理文件及 Docker 配置。回调 JWT 只由受控 GARM 实例签发，属于可信模板输入，不接受外部用户提供的模板参数。关闭 trace 后经 stdin header 传递 JWT，不放入 curl argv。认证过的 metadata 提供 JIT 身份、服务名及 systemd 单元；这不是跨控制器的通用启动接口。
+
+请求 JIT 身份前先拒绝已有或符号链接身份文件，并确认默认 Unix Docker 上下文、镜像及容器均为空；不通过清空已有内容获得冷环境。身份文件以独占创建和私有权限写入。安装服务时拒绝现有单元和 drop-in，不读 `.runner` 推断登记 ID；system-info 和 status 的 `agent_id` 始终为 null，由 GARM 保留已登记身份。失败只回报具体阶段，不输出凭据；部分身份文件或已启动服务的清理由原 VM 生命周期负责，不能重跑脚本覆盖它们。
+
+[行为回归](../../.github/runner-probe/bootstrap.test.ts)由 Bun 驱动，使用固定 Go 1.27.3 的 `text/template` 真实渲染，执行 Bash 语法和控制流程。测试只将文件根映射到私有临时目录，替换 curl、Docker、sudo；真实 jq、重定向、文件权限和 ERR trap 仍执行。覆盖非 JIT/debug/绑定拒绝、已有及竞态身份保护、Docker 冷环境拒绝、null ID 回调和失败脱敏。Go 小程序仅为测试适配器，不是新的部署入口。回归不证明真实 systemd、Docker 网络或 GARM 回收，仍按前述实际运行证据验收。模板行为或消费者输入变化时，由领域判断受影响覆盖，再由原现场负责人补验；字节和输入未变时复用原证据。
+
+## CI 触发与选检
+
+本节区分当前自动行为与建议目标。下表覆盖 Docs、Rust checks、Maintenance tools、Packages 和 OCI producer 五份基础工作流；首次私有包发布及其专用 PR 检查另见 [Halo 合同](../../halo/README.md#首次私有包发布与冷拉取)。下表的建议尚未实现。分类器的 `skip` 只描述其所属检查，不能让未接入分类器的工作流跳过。检查范围由本页维护，镜像内部协议见 [Halo CI 镜像](../../halo/README.md#ci-依赖镜像)。
+
+### 当前事件与执行阶段
+
+四个基础 PR 检查分别为 Docs、Rust checks、Maintenance tools 和 Packages。它们都面向 `dev/main`，订阅 opened、reopened、synchronize、edited，包括草稿，没有路径过滤。Docs 和 Maintenance tools 执行全部步骤。Rust checks 无条件核候选和 Bun，再分类；只有 `checks/full` 才准备 native/Rust 并执行 fmt/Clippy。Packages 每次执行 plan，且在分类前安装 Rust。只有 `full` 才执行 PostgreSQL producer 和 package 矩阵。四者均按 PR 取消旧运行，没有当前部署的 merge queue 或 push 入口。
+
+OCI 工作流另有 PR 和 `dev` push 路径过滤，以及受限手动入口。启动不等于构建：`halo-image-artifact.ts plan` 先绑定来源，再比较环境摘要与验收源码。PR 比较事件 base 与合成候选，父提交必须准确匹配 base/head；push 比较 before 与 after。来源身份不符直接失败。来源已绑定但比较历史不可读时保守构建；手动补建核对完整 revision 和原因后构建。
+
+| 阶段          | 当前决定与证据                                                                                                   |
+| ------------- | ---------------------------------------------------------------------------------------------------------------- |
+| 启动 workflow | 由事件、目标分支及 OCI 的 paths 决定；启动本身没有验收结论                                                       |
+| 选择重任务    | Rust checks 消费 `check-inputs.ts` 四档；Packages 经 `native-packages.ts plan` 选择矩阵；Docs/Maintenance 无选检 |
+| 构建镜像      | `imageInputs` 比较环境摘要，`validationInput` 检查验收源码，`shouldBuild` 给出原因；普通业务 PR 不因 PR 身份构建 |
+| 导出与上传    | 仅在 OCI plan 要求构建时执行；冻结、恢复后验收、完整再导出校验及扫描通过后上传一次                               |
+| 独立下载验收  | 使用 producer 返回的 artifact ID 下载，核来源、run/attempt、归档与完整 OCI 身份；上传成功不能代替此阶段          |
+
+`imageInputs` 包含 Dockerfile、忽略文件、Bun/Node/Rust 版本、PG 构建器与版本、镜像和 Bun 检查工具。它还包含后端/Buildx、Playwright 版本和 Node 支持范围。`validationInput` 当前覆盖整个 `tools/`、`halo/tools/`、`.github/halo-ci/`，以及镜像 workflow、根 package.json 和两份 tsconfig。普通维护工具也可能触发完整 OCI 验收；此范围尚未按真实消费者收窄。
+
+### 变更与检查矩阵
+
+下表按单类输入说明，混合改动合并各项责任。当前四个 PR 检查 workflow 均启动，Docs 和 Maintenance tools 始终执行全部步骤。表中档位由 Rust checks 和 Packages 共用：前者在 `checks/full` 执行 fmt/Clippy，后者仅在 `full` 执行包矩阵，并由 Cargo 消费者扩展包范围。建议目标不免除必要检查或正式审查。
+
+| 输入或事件                                                | 当前实际行为                                                                                                          | 建议目标行为                                                                                                             |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| 根 README/AGENTS、`docs/**/*.md` 纯说明                   | `skip`；Rust 重步骤跳过，Packages 仅计划与汇总；OCI 不启动                                                            | 文档格式、Markdown、离线链接；预览实现与材料未变时复用有效结果，不准备 Rust/PG/镜像                                      |
+| 设计预览、脚本与素材                                      | 已知设计后缀为 `skip`；`tools/preview-design.ts` 为 `tools` 且触发 OCI；两档均跳过 Rust 重步骤                        | 文档、真实预览回归与受影响视觉验收；三份 Halo 共享素材另验网站消费者；无镜像消费者的预览工具不触发 OCI                   |
+| Rust 业务源码、测试及运行资源                             | `full`；执行 fmt/Clippy，Packages 按直接包及传递消费者运行；通常不触发 OCI                                            | Rust 格式、Clippy、依赖边界、完整受影响包及 Halo 相关集成；按消费者选择文档/工具检查                                     |
+| Cargo 清单、锁、build.rs、`.cargo/`、Rust 工具链          | `full/all`；执行 fmt/Clippy；Rust 工具链触发 OCI，Cargo.lock 单独变化不触发                                           | 保留全部包及环境消费者；工具链改变保留完整环境验收，依赖变化不自动等于重建镜像                                           |
+| 迁移、数据库准备与夹具                                    | SQL 显式选择 Domain/Deployment；fixture 源码或 PG 构建器选择 Fixture，再扩展消费者；PG 构建器/版本还触发 OCI          | 保留 SQL 直接嵌入与全部夹具消费者，验证隔离数据库、失败恢复及清理；PG 环境改变保留 OCI 验收                              |
+| 普通 `tools/`、根 JS 清单、锁、tsconfig、`.tool-versions` | 通常 `tools`，跳过 Rust 重步骤；`tools/`、清单、tsconfig 触发 OCI，版本按环境摘要判断；根 bun.lock 单独变化不触发 OCI | 类型、实际工具回归、依赖边界及真实消费者；共享运行时改变覆盖全部消费者，按已核依赖缩小 OCI 验收输入                      |
+| `tools/check-inputs.ts`、`tools/check-packages.ts`        | `full/all`，并触发 OCI；`native-packages.ts` 仍为普通 `tools`                                                         | 分类与 package 编排保留完整相关回归；收窄前证明选择完整、失败传播与未知输入保守行为                                      |
+| 镜像配方、环境版本与构建工具                              | 按环境摘要或验收输入构建；`.github/halo-ci/` 在 Rust 分类中为未知 `full/all`                                          | 环境变化完整构建、恢复、真实消费者、扫描、上传与独立下载；产品矩阵按真实消费者另验                                       |
+| 镜像验收、导出、扫描与下载工具                            | 环境摘要不变也会因验收输入改变而完整构建验收                                                                          | 保留准确候选的完整产物链；验证实现改变后不能复用它自己的旧成功结论                                                       |
+| `halo/package.json` 与网站依赖                            | `skip`，跳过 Rust 重步骤；该清单使 OCI 启动，仅 Playwright/Node 等环境语义变化才构建；Halo 锁单独变化不触发 OCI       | 网站依赖按 Halo 契约验收；区分应用依赖安装与镜像环境，保留环境变化的完整验收                                             |
+| `.github/rulesets/*.json`                                 | 未知路径为 `full/all`，执行 fmt/Clippy 和全部包；OCI 不启动                                                           | 静态核 JSON 结构、准确目标与保护语义；平台启用及阻断/允许行为另按配置授权验收                                            |
+| PR 标题、描述或目标分支编辑                               | `edited` 启动四个检查；机器人改描述也可重跑并取消旧运行；OCI 仍受路径和 plan 限制                                     | 保留 edited；仅元数据变化可在证明验证输入未变后复用。目标、合成候选或实际消费的元数据变化时重新核覆盖                    |
+| 合入基线、仅解决说明文档冲突                              | synchronize 仍启动；分类查看基线到完整 PR 候选，可能仍为 `full`，OCI 也可能仍命中原 PR 镜像改动                       | 与上次已验候选比较相关输入，补文档检查并复用有效计算；共享代码、依赖或环境改变时补验                                     |
+| 缺历史、未知路径、改名或删除                              | 无法核实比较时 `full/all` 且 Halo `run`；未知路径保守 full；分类器按改名两端处理                                      | 保留保守规则与明确原因，覆盖旧、新消费者；OCI 只有已启动且来源绑定有效时才对比较失败保守构建，paths 外未知输入不保证启动 |
+
+### 后续优化验收
+
+Rust checks 已消费现有档位，执行边界见[原生 Rust 检查](#原生-rust-检查)。后续分别处理纯配置分类、Docs/Maintenance 消费者和过宽的镜像验收输入，每片验收明确的工作流或分类责任。每片保留准确候选绑定、edited、未知比较、改名/删除、失败与取消语义。以真实托管运行核对执行或跳过。本文不实现后续建议，不建立缓存或证据服务，也不恢复旧准入控制器。
 
 ## 检查范围
 
-旧 GitHub Actions 检查、缓存、镜像、审查关卡和分支准入工作流已停用，`main` 已移除 Docs 与 Rust 入口。停用同时影响面向 `dev` 的旧 CI；`dev` 的源码与冻结保护仍保留。Dependabot 依赖更新和独立托管审查不属于这组工作流。后续 CI 接入另行验收，旧检查状态不代表新候选已通过验证。
+[OCI 产物工作流](../../.github/workflows/halo-image.yml)按[镜像输入与产物验收](../../halo/README.md#ci-依赖镜像)运行原生构建、恢复后消费者验收和独立下载校验。它只有源码读取权限，不提供包发布、消费者迁移或 VM 接入证据。
 
-本地检查命令、隔离数据库夹具和依赖边界检查继续保留。冻结来源、原操作状态历史与已有恢复材料不随 CI 清理删除。停用工作流和放开 `main` 平台规则不授予合并或部署权限，发布前仍按实际候选完成检查与审查。
+[首次私有包发布](../../.github/workflows/halo-publish.yml)独立消费固定已验产物，权限、未知写入读回和冷拉取边界见 [Halo 合同](../../halo/README.md#首次私有包发布与冷拉取)。[专用 PR 检查](../../.github/workflows/halo-publish-checks.yml)负责 `.github/halo-publish/` 的类型、发布回归及两份工作流的 Actions 语法，不改变 producer 的源码及扫描输入。实际发布和全新 hosted runner 的 job-token 冷消费另取真实原件；单元绿灯不替代这些验收，也不证明 VM 已接入。
 
-纯文档改动运行[文档维护](../README.md#文档维护)规定的检查。实现改动验证当前选定结果及其失败边界，按 [Rust 工作区规则](rust.md#workspace-validation)执行受影响包及消费者的检查。
+旧 GitHub Actions CI、审查关卡和镜像发布入口已停用。dev/main 旧自动准入入口也已停用。两条长期分支采用[普通分支保护](delivery.md#普通分支保护)，强制四项当前原生 CI 通过；其他分支保留原签名规则。适用本地检查、业务验收及当前候选审查仍由交付负责人验收。历史绿灯不提供新候选的验收结论。Dependabot 与独立托管审查不随旧工作流删除。
+
+旧工作流原件移至[历史测试夹具](../../tools/fixtures/retired-workflows/README.md)，保留分类、缓存、镜像和恢复回归。下文明确标注的旧 Rust 汇总、Halo workflow、队列与缓存预热只解释离线协议。当前原生执行见[触发与选检](#ci-触发与选检)；本地分类、package、Halo 与维护工具命令仍按实际输入选择执行。新的选检与平台强制机制分别验收。
+
+文档与设计材料改动运行[文档维护](../README.md#文档维护)规定的检查。设计稿还按[页面验收](../client/pages.md#验收)核对实际视觉与交互。实现改动验证当前选定结果及其失败边界，按 [Rust 工作区规则](rust.md#workspace-validation)执行受影响包及消费者的检查。
 
 普通验证只使用隔离 PostgreSQL、虚构数据和受控供应商替身，不使用生产环境或调用真实供应商。数据库测试还须遵守[操作安全](../database.md#操作安全)及[交付验证](../database.md#交付验证)。真实服务操作另按授权范围执行。
 
 已有失败单独报告，不修复无关工作，不用局部检查声称更广的验收结果。跨能力故障矩阵随真实消费者逐项验收，不要求文档调整实现尚未选定的业务能力。
 
+### 仓库与检查归属
+
+目录按实际消费者区分。[根目录说明](../../README.md)列出现有职责。`assets/` 的默认头像由 Rust 嵌入。`design/` 的页面稿和预览脚本供设计评审；其中的共享令牌、Logo 和草木图也由 Halo 构建消费。Rust 构建与测试不读取设计材料。Docs 工作流的预览传输回归读取实际设计文件。根 `package.json` 管理文档和维护工具，不是客户端应用。网站在 `halo/` 独立管理依赖与检查，不把实现放进设计材料目录。
+
+| 输入范围                                                                                                                 | 当前检查责任                                                                                                      |
+| ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `src/`、`tests/`、`domain/`、`platform/`、`deployment/`、`fixture/`、`assets/`                                           | Rust 格式、Clippy、依赖边界，以及独立 package 构建、测试和 rustdoc；迁移及夹具也是后端输入                        |
+| `halo/`、Halo 工作流、网站消费的共享设计素材                                                                             | Halo 工作流检查协议同步、类型、单元测试、构建和隔离浏览器链路                                                     |
+| `tools/check-inputs.ts`、`tools/check-packages.ts`、Rust 工作流与缓存工作流、Action、Cargo 清单和锁文件、Rust 工具链配置 | 分类、package 矩阵与构建环境的输入，保留完整检查                                                                  |
+| 其余 `tools/`、`.tool-versions`、根 `package.json` 与 `bun.lock`、`tsconfig.json`、Docs 工作流、旧三份审查工作流路径     | 分类器返回 `tools`；本地按实际消费者验证，当前原生工作流并未全部消费该档位                                        |
+| `rustfmt.toml`                                                                                                           | 运行 `tools` 及 Rust 格式和工作区 Clippy，不运行 package 矩阵                                                     |
+| 根 `README.md`、`AGENTS.md`、`halo/README.md`、`docs/**/*.md`、`design/**/*.md`                                          | Docs 工作流执行格式、Markdown 结构和本地链接检查                                                                  |
+| `design/**/*.html`、CSS、预览脚本、图片与许可文本                                                                        | Docs 工作流运行预览传输回归，检查本地链接、图片引用和锚点；视觉、样式、脚本交互、字体及业务正确性仍由设计验收负责 |
+| `.prettierrc.json`、`.markdownlint.jsonc`、`.gitignore`                                                                  | 前两者由文档检查消费；忽略规则也影响 Halo 的源码扫描与本地输入枚举，三者均不是 Rust 构建或测试输入                |
+
+Rust 分类豁免上表列出的 Markdown、三份根配置、`halo/` 和 Halo 工作流。`design/` 还豁免 HTML、CSS、只供页面稿预览的 `.js` 脚本、TXT 文本及 PNG/JPG/JPEG/WebP/AVIF/GIF/SVG 图片，后缀按小写匹配。其他脚本格式、清单、客户端目录或其他未知路径默认执行完整 Rust 检查。混合改动取四档中最高的一档：`skip`、`tools`、`checks`、`full`。Docs 工作流独立运行上述文档检查与预览传输回归。
+
+选检按实际消费者的完整输入决定。共享[输入分类器](../../tools/check-inputs.ts)供 Rust 和 Halo 使用，未知路径保守运行。新消费者开始读取豁免材料时，同片更新输入归属、分类与回归。缓存只加速检查，不代替检查。输入未变时复用有效结果，输入变化后补做受影响检查。分类结果只选择检查，不证明新的工作树已通过验收。
+
+分类包含完整候选的添加、删除及改名两端。[GitHub 的 PR 事件](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request)以合成提交作为 `GITHUB_SHA`。检出提交必须与它准确匹配。PR 候选恰有两个可读取的父提交，第二父准确匹配事件的 PR 头提交。选检读取第一父到候选的完整差异。目标前进后，事件中旧的 `pull_request.base.sha` 不参与选检绑定。CI 选检与独立审查的实际输入分别确认。队列比较仍绑定 `merge_group` 的 `base_sha` 与 `head_sha`。队列检出提交同时匹配事件头提交与 `GITHUB_SHA`，且唯一父提交是事件基线。队列选检读取该基线到候选的完整差异。未知事件、未知提交形状、缺失历史、Git 失败或无法解码的路径均运行完整检查，并报告原因。参数或输出接口错误使任务失败，不得转成成功跳过。队列启用边界见[交付契约](review-gate.md#dev-队列检查)。
+
+本地在仓库根目录运行 `bun tools/check-inputs.ts --base origin/dev`。分类器解析显式基线与 `HEAD`，以两者唯一的最佳共同祖先比较当前候选。路径取共同祖先到暂存区、暂存区到工作树的并集，再纳入未忽略的未跟踪文件。因此已提交、已暂存和未暂存改动均在范围内，两层改动不会互相抵消。被跟踪的忽略文件仍在范围内。分类器隔离调用者的 Git 环境覆盖，并核对脚本、工作目录与仓库根一致。分类器不会 fetch、安装或修改源码和配置。基线或历史不可用、存在多个最佳共同祖先时保守运行。报告给出 Rust 档位、直接受影响的包及 Halo 的运行或跳过决定。Rust 完整检查还给出包含消费者的 package 检查命令；其他检查使用所属文档的命令。
+
+旧 Rust 工作流夹具对 PR 和队列候选分类，并报告最终 `rust` 状态。它与本地分类共用下列四档规则。表中组合描述旧汇总协议；当前 Rust checks 只消费其中的 fmt/Clippy 执行决定，Packages 只消费 package 执行决定。Maintenance tools 仍独立全跑，不受此表中的跳过决定控制。
+
+| 档位     | 维护工具 `tools` | Rust 格式与工作区 Clippy `checks` | 独立 package 矩阵 |
+| -------- | ---------------- | --------------------------------- | ----------------- |
+| `skip`   | 跳过             | 跳过                              | 跳过              |
+| `tools`  | 通过             | 跳过                              | 跳过              |
+| `checks` | 通过             | 通过                              | 跳过              |
+| `full`   | 通过             | 通过                              | 通过              |
+
+当前四个基础 CI 的稳定检查均为 required status checks，且每个 PR 都上报。修改触发条件或选检逻辑时，必须保留稳定检查的上报和失败语义。路径过滤导致 required 检查缺失时可能阻止合并，见 [GitHub 的说明](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks#handling-skipped-but-required-checks)。
+
+CI 分类与最终状态的实现和验收见 [Rust 工作区验证](rust.md#workspace-validation)。自动代码与安全审查保持现有触发方式。通过轻量检查不表示设计稿已经完成页面、真机或生产验收。
+
+### Rust 包选择
+
+当前 Packages 的 plan 先安装 Rust，再分类。只有 `full` 才通过 `native-packages.ts` 调用 package 检查器发现完整矩阵；发现读取元数据，不构建。其他三档输出明确的空计划，由 `Nucleus Packages` 核对下游跳过。发现失败、空或畸形 full 矩阵均失败。旧夹具中的 `changes` 与最终 `rust` 汇总不属于当前部署。
+
+分类器只确定直接受影响的包；[package 检查器](../../tools/check-packages.ts)读取当前 Cargo 元数据，扩展全部传递消费者。生产、开发、构建、可选及目标平台限定的路径依赖都参与扩展。依赖别名不改变包的路径身份，同名注册表依赖不构成工作区依赖。
+
+| 变更输入                                                                                   | 直接受影响的包         |
+| ------------------------------------------------------------------------------------------ | ---------------------- |
+| `src/**`、`tests/**`                                                                       | `nucleus`              |
+| `domain/src/**`                                                                            | `domain`               |
+| `platform/src/**`                                                                          | `platform`             |
+| `deployment/src/**`                                                                        | `deployment`           |
+| `fixture/src/**`、`fixture/postgresql.ts`、`fixture/postgresql.version`                    | `fixture`              |
+| `deployment/roles.sql`、`deployment/prepare.sql`、`deployment/migrations/**/*.sql`         | `domain`、`deployment` |
+| 当前十份 `assets/avatars/*.webp` 默认头像                                                  | `domain`               |
+| 清单、锁文件、工具链、Cargo 配置、构建脚本、分类器、package 检查器、共享 CI 环境及未知输入 | 全部工作区成员         |
+
+SQL 的范围包含 Domain 测试的直接嵌入，不能仅靠 Cargo 依赖方向推断。改名、删除和混合输入取所有原消费者的并集。新增资源或成员不能自动继承旧路径的豁免。未知输入输出 `all`，由 Cargo 发现全部当前成员。`--no-deps` 无法给出非成员路径包的完整依赖链；遇到这类依赖，检查器也保守选择全部成员。无效选择、缺失元数据或不完整成员信息使检查失败，不产生成功的空矩阵。
+
+每个选中包保留独立交付构建、自身测试、doctest 和 rustdoc。选中 Nucleus 时，矩阵生成 `rest` 与 `http` 两组。`http` 运行完整 HTTP 普通集成测试，保留忽略语义；`rest` 负责独立交付构建、其余启用的普通测试、doctest 和 rustdoc。两组都成功才完成该包验证。新增 bin 或集成测试按 Cargo 元数据纳入；禁用测试和 doctest 保持禁用。示例、benchmark、带必需特性的目标或其他不支持的目标形状使发现及分组执行失败，先更新覆盖计划。
+
+选中 Domain 时运行全部四个库测试分片；未选中时不添加分片。Domain 出现无法由现有分片命令覆盖的新测试目标时，矩阵发现失败，先更新验证方式。发现还拒绝重复项、缺失分组及不完整分片。旧缓存预热协议准备全部成员；当前原生 Packages 不恢复缓存。
+
+本地使用分类器报告的 `--affected` 命令。例如 `bun tools/check-packages.ts --affected '["domain"]'` 检查 Domain 及其传递消费者；追加 `--list` 可先查看集合。原有 `--package` 仍只选择显式指定的包，并执行完整验证。CI 的 `--package nucleus --group http|rest` 每次只运行指定组，必须执行两组才能覆盖完整包。选检不省略已知的跨目录输入或语义交互验收；新增消费者时，同片更新归属和回归。
+
+### Halo 验证
+
+[Halo 工作流](../../tools/fixtures/retired-workflows/halo.yml)保持每个 PR 和队列候选都有同一个 `website` 任务。任务先分类，仅明确的 `skip` 省略后续重步骤。重步骤仍检查实际 OpenAPI 快照、生成物同步、类型、单元测试和正式构建，并准备 Node、服务依赖及隔离浏览器验收。分类执行失败使任务失败。`dev` 的必需检查及等待、失败规则由[队列检查契约](review-gate.md#dev-队列检查)统一维护。操作命令见 [Halo 使用说明](../../halo/README.md)。
+
+两个 Rust 验收步骤通过 [Halo 测试入口](../../tools/check-halo-test.ts)运行固定的 HTTP 测试。入口保留快照的普通测试模式和浏览器的忽略测试模式，并核对准确测试名的普通成功结果及最终汇总。入口缺失、忽略状态变化、提前退出或执行失败均不通过。输出格式固定到项目 Rust 工具链；升级时运行实际夹具回归。该检查证明指定测试正常完成，不代替测试内的业务断言，也不证明生产就绪。
+
+Halo 输入包含整个 `halo/`、`design/assets/tokens.css`、`design/assets/logo.png`、`design/assets/halo-botanical.svg`、`.gitignore`、`.tool-versions`、Halo 工作流及分类器与回归。镜像定义、镜像工具、本地运行时准备工具和其复用的 `tools/check-bun.ts` 也触发网站验收。`halo-setup`、`rust-setup` 和 `postgresql` Actions 保守保留为网站环境输入。Halo 的 Tailwind 自动扫描消费本目录 README。实际快照与浏览器命令构建整个 HTTP 测试目标，`--exact` 只筛选运行用例。因此 Rust 源码、测试、夹具、迁移、运行资源、Cargo 清单和锁文件及 Rust 工具链仍触发 Halo。根 `package.json`、`bun.lock` 与 `tsconfig.json` 保守保留为分类器运行环境的输入。
+
+Halo 仅豁免上文的根文档、`docs/**/*.md`、两份文档格式配置，以及上述设计后缀中不属于三份共享素材的文件。分类器另逐一列出已有维护工具及其测试：Bun 版本检查的测试、依赖边界、package 检查，缓存与 Rust 工作流回归，以及设计预览和审查工具。现有 Rust、Docs、缓存、审查工作流和 `rustfmt.toml` 也列入豁免。这些输入没有 Halo 校验消费者。新增工具或配置不自动继承豁免，未知路径仍运行 Halo。混合改动只要包含一个 Halo 输入就运行完整网站校验。Halo 自身变更不触发 Rust package 矩阵，后端及 HTTP 夹具变更仍按原范围检查。
+
+### 维护工具验证
+
+维护工具使用固定的 Bun 和 Rust 工具链。先按[依赖安装规则](../README.md#文档维护)准备根依赖，再运行 `bun run check:tools`。类型检查包含工具、测试和 PostgreSQL 准备脚本。`tools` 任务还执行以下回归及[依赖边界检查](rust.md#dependency-boundaries)：
+
+| 受影响能力                        | 回归命令                                                                                                                                                               |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cargo 依赖边界                    | `bun test tools/check-dependencies.test.ts`                                                                                                                            |
+| 输入分类、package、CI、缓存或 Bun | `bun test tools/check-inputs.test.ts tools/check-packages.test.ts tools/rust-workflow.test.ts tools/cache.test.ts tools/check-bun.test.ts tools/halo-ci-image.test.ts` |
+| 原生 Docs 工作流                  | `bun test tools/docs-workflow.test.ts tools/check-bun.test.ts tools/preview-design.test.ts`                                                                            |
+| 原生维护工具工作流                | `bun test tools/maintenance-tools-workflow.test.ts`                                                                                                                    |
+| 原生 Rust 检查                    | `bun test tools/native-rust-checks-workflow.test.ts`                                                                                                                   |
+| 原生 package 编排                 | `bun test tools/native-packages-workflow.test.ts`                                                                                                                      |
+| Halo 指定验收入口                 | `bun test tools/check-halo-test.test.ts tools/check-inputs.test.ts tools/cache.test.ts`                                                                                |
+| Halo 本地运行时准备               | `bun test tools/halo-local.test.ts tools/halo-browser-smoke.test.ts tools/halo-ci-image.test.ts`                                                                       |
+| OCI 产物与独立下载                | `bun test tools/halo-image-artifact.test.ts tools/halo-local.test.ts tools/halo-browser-smoke.test.ts tools/halo-ci-image.test.ts`                                     |
+
+本地按受影响能力选择回归组；共享输入变化时运行所有消费者。输入未变的有效结果按[证据要求](#证据与自动化)复用。设计预览另按[文档维护](../README.md#文档维护)验证。
+
+工具回归使用临时仓库、受控命令和小型 Rust 夹具。package 与缓存回归实际编译夹具并调用 Clippy；依赖检查读取实际 Cargo 元数据和依赖树。这些检查需要固定 Rust 工具链及 Clippy，但不需要准备 PostgreSQL 或执行后端工作区 Clippy。`checks` 与 package 任务继续拥有后端环境和验证。
+
+### 构建缓存
+
+缓存保存可重建的软件依赖，不保存验收结论。命中后仍执行所选检查；缺失或被回收时按同一契约准备依赖并验证。缓存不得包含临时数据库、角色凭据、证书、私钥、浏览器资料或业务恢复材料。
+
+[缓存工作流](../../tools/fixtures/retired-workflows/cache.yml)只在受保护的 `dev` 上预热。Rust 格式与 Clippy 作业继续使用宿主环境及系统包指纹。独立 package 作业与其预热共用 [package 环境 Action](../../.github/actions/package-setup/action.yml)，复用 Halo 已固定的依赖镜像。镜像预装固定 Rust 工具链、组件和 PostgreSQL 安装，以及 Halo 所需的 Nginx、Node、Bun、浏览器及系统库。两类任务均以非 root 用户运行，先核对镜像输入与软件版本，再按镜像 digest 和各自 owner 恢复 `target/cargo` 依赖。package 缓存按包区分，Halo 使用 `halo-http`；两者不混用。预热只编译交付及测试目标，不运行验收。
+
+Nucleus 的两组共用 `package-nucleus` owner，分别恢复依赖；`dev` 仍按包预热一次。三个 setup Action 默认恢复依赖；PR、队列和 Halo 消费者仍恢复缓存并运行完整检查。只有 `dev` 预热显式启用 `cache-lookup-only`。环境核验仍先执行，精确命中只查询 Rust 缓存，跳过归档传输和依赖编译。探针以 `save-if: false` 禁止保存；正常恢复实例保留原保存策略。
+
+探针正常结束且未精确命中时，预热继续原恢复路径。是否编译以恢复结果为准；另一生产者在两次调用间填入缓存时，精确恢复也跳过编译。固定 Action 在内部捕获部分错误，记录 error 后正常返回 `false`，此时继续恢复并保留诊断。实际步骤失败或取消仍保持原结局，不强行回退。两次调用使用相同固定版本、环境、owner 和 key 输入。
+
+查询命中只证明当时可用，不证明归档完整或后续仍未回收。未命中额外增加一次串行查询及 key 计算。该策略消除预热中未使用的 Rust 归档传输，不保证 PR 或工作流墙钟收益。
+
+镜像构建、发布和版本更新见 [Halo CI 镜像](../../halo/README.md#ci-依赖镜像)。缓存命中不省略镜像输入及工具版本核验，也不替代验收。PostgreSQL 安装来自镜像，每次验收仍创建并清理隔离集群、证书及 Nginx 进程。
+
+Rust 缓存沿用已固定版本的 [rust-cache 契约](https://github.com/Swatinem/rust-cache/blob/6323deb102c322ba6fcbdcafc7e3dddab59af2b6/README.md)。键包含环境、owner 及 Action 的工具链、清单和锁文件输入。默认只保存依赖构建产物，工作区源码仍在当前候选上编译。PostgreSQL 由镜像提供，冷环境也不在各作业内重建。每次仍核对四个程序的版本和可执行性，损坏或版本不符时失败，不把缓存命中视为可用证明。
+
+跨任务可见性遵循 [GitHub 缓存范围](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#restrictions-for-accessing-a-cache)。PR 可读取基线分支的缓存；PR 自己产生的缓存受 merge ref 限制，不能供其他 PR 或基线读取。预热成功不保证下一次命中，实际复用以对应运行日志为准。缓存键、恢复条件或权限变化不得替代审查与队列检查。
+
+### 设计稿审查
+
+文案按[用户可见文案](../client/pages.md#用户可见文案)审查。以普通用户能否理解为准，结合实际画面和动作判断。符合接口语义、没有错字或按钮可点击，不单独证明文案易懂。正式客户端页面也按同一规则验收。
+
+`design/` 的页面稿是评审材料，不是客户端实现。审查核对页面展示的内容与用户流程：目标画面已在本稿内的入口、按钮、菜单与返回控件能按正常分支到达，返回与确认对话可用；只示意操作位置、目标留待后续切片的控件不要求可达；状态与文案不得违背已确认的业务事实和所属接口契约，不得把原因归咎于未经证实的用户行为，应遮蔽的状态不得显示私有资料；本稿所属流程在[页面](../client/pages.md)中适用的状态与结果分支应有对应画面，后续流程按其设计切片另行覆盖；桌面、窄屏和中间宽度下的信息层次、字号、留白、按钮、图片比例与键盘焦点可用；本地链接与图片有效。
+
+预览脚本只为切换和演示这些画面。浏览器历史、往返缓存与刷新恢复、本地材料保存期限、倒计时精度、跨标签页协调，以及状态选择器和示例填充等演示工具的内部一致性，不是设计稿的验收要求；由这些机制演示到的可见状态与文案仍按上段审查。这些机制由对应客户端实现切片按[原操作恢复](../client/recovery.md)与[网站会话](../identity/website.md)以真实浏览器验收。针对它们的审查意见记作实现切片的待办，不阻塞设计稿合并。
+
+## 工具选型
+
+优先复用满足所需契约的现成工具、标准库和维护中的库。选择前核对文档、维护状态及所需行为。复用已有依赖时也核对实际版本与契约，包括输入输出、错误、超时及协议字节语义。
+
+为通用能力增加手写实现或额外限制前，核对上述复用依据。偏离库默认行为时，说明保护的不变量、所属责任和验证方式。简化实现时保留已确认契约；变更契约遵守[设计与实施边界](delivery.md#设计与实施边界)。
+
+确需自行编写的仓库开发维护工具优先使用 TypeScript。范围包括仓库检查、CI 辅助和设计预览等开发工具，沿用固定的 Bun、依赖管理和测试方式。自行实现的范围限于当前消费者所需的能力；用行为验证确认成功、拒绝和失败路径。部署、迁移、换钥及停机运维命令继续由 Rust [deployment crate](../architecture.md#crate-与模块组织) 拥有。
+
+## 源码检查
+
+从本片可观察结果定位入口，沿真实消费者读取输入、构造、使用、持久化、恢复和输出。对照适用规则检查下列边界，不以文件数量或目录形状判断职责。共享部分还须检查受影响的其他消费者，即使其文件没有出现在差异中。
+
+| 检查面       | 检查方法与依据                                                                                                                                                                                               |
+| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 职责与结构   | 按[结构核对](#结构核对)读取实际调用链，检查事实所有权、依赖方向、重复规则及抽象依据；对照[模块组织](../architecture.md#crate-与模块组织)                                                                     |
+| 类型与状态   | 从反序列化到 SQL 编解码及响应，检查语义类型是否保持、构造保证能否绕过、缺席是否有真实含义；对照[受控构造](../architecture.md#类型构造与查询)和 [Rust 输入模型](rust.md#input-and-result-models)              |
+| 实现与库复用 | 按[工具选型](#工具选型)核对新增解析、编码和协议处理的复用依据，比较实际字节和错误行为；Rust 依赖继续遵守[依赖边界](rust.md#dependency-boundaries)                                                            |
+| 失败与后果   | 从错误产生处追到映射、事务判断、恢复、关闭接纳和最终日志，核对资源何时释放；重构后继续检查包装内原因及实际处理；依据[错误规则](rust.md#errors-and-validation)与[原操作恢复](../architecture.md#原操作与恢复) |
+
+命名和残留搜索用于定位候选，随后读取实际调用及所属语义。最终差异检查包含受影响的 SQL、协议值、文档、生成材料和专属依赖。检查方法不要求为每个内部步骤增加模块、包装类型或新测试。
+
+发现强制规则未落实时，指出规则来源与具体边界。声称存在行为缺陷时，给出触发条件和错误后果。现有证据不足则记录验证缺口；尚未成立的场景保留为推断，不把三者混为已证实缺陷。
+
+### 结构核对
+
+在[开发循环](delivery.md#开发循环)的核心边界检查中，读取已形成的实现及真实消费者。沿入口、用例、事实所有者和技术能力核对下列问题，再扩展调用方。
+
+- 每个模块拥有哪些事实与不变量，哪些变化会使它一起修改？用实际类型和调用说明职责。文件更短、目录分层或类型名称不能独立证明边界合理。
+- 事务决定、恢复、保留清理和最终错误处理分别由谁承担？检查查询模块是否混入用例编排，技术能力是否解释业务状态。依赖参数和可见性也要与职责相符。
+- 相似消费者是否遵守同一不变量？读取已有实现，判断共享还是分别维护的依据。共享时迁移完整规则及其校验、错误和测试；差异要有真实契约支持。
+- 新模块、包装或共享抽象解决哪个当前问题？核对是否已有适用的标准库、crate 或项目能力。只因预期未来复用、缩短文件或追求名称整齐而增加的层次，重新评估其必要性。
+- 模块名称在完整路径和调用处是否准确？按 [Rust 模块规则](rust.md#module-layout)核对所拥有的值与职责。改名后继续检查依赖与规则归属，不能用命名改善代替结构调整。
+
+发现职责混杂、规则重复或无依据的间接层时，先修正相关边界。再增加依赖这些边界的调用。只调整当前结果所需范围；独立主题按[实施切片](delivery.md#实施切片)处理。结构判断引用具体源码和适用规则，测试通过不代表结构检查完成。
+
+## 证据与自动化
+
+源码检查回答职责和规则如何落在当前实现；行为测试回答给定输入和故障下出现什么结果。测试预期从业务契约推导，并用适用的公开入口、独立查询或外部调用记录核对。格式、Clippy、依赖检查和文档工具只证明各自配置的检查通过。托管审查另按[仓库规则](../../AGENTS.md#commits-and-review)核对实际覆盖。
+
+[模型行为场景](model-scenarios.md)给出模型政策的验收输入和预期，并说明真实演练所需授权与证据。静态核对和入口、链接检查不证明模型实际遵守规则或完成切换。
+
+把能稳定、准确判定的约束落实到类型、数据库保护、测试或现有检查器。选择设施时核对真实误用和现有覆盖，不为每条偏好增加文字扫描或与实现同构的测试。涉及职责、缺席含义和库契约的判断继续读取源码与权威依据。
+
+在现有任务或 PR 中保留候选、基线、检查范围、结果及必要来源。区分本次运行、复用结果、源码自检和审查结论，说明未覆盖事项。完整验收的项目准备入口见[开发循环](delivery.md#开发循环)。无需另建逐项打勾台账，也不以通过数量宣称生产就绪。
+
+### 输入等价与失效
+
+复用前核对相关源码、测试、验证工具及命令、配置、锁定依赖、工具链与运行环境。记录新候选与原证据的覆盖关系。保留原 source/base/head 和实际合成提交，以及 run/attempt、job 和 artifact 身份。不同 SHA 不必重算全部输入，但旧成功不能改标成新 SHA 已执行。缓存命中或相同环境摘要也不能单独证明全部输入等价。
+
+相关输入改变、无法证明等价或新证据推翻结果时，补做受影响验证。改名或删除包含旧、新消费者；基线更新先核实际组合差异。检查自身实现变化后，原结果不证明新实现有效。输入分类失败、未知路径与不完整历史按[当前选检边界](#ci-触发与选检)处理，不转成成功跳过。
+
+独立审查也保留原候选、基线、提供方、完成结论及发现处置。仅对实际未变的覆盖复用，变更部分补齐审查；没有新线程不能证明新审查完成。正式审查和平台保护继续按[交付规则](delivery.md#审查关卡与证据复用)验收。本地和审查证据复用不豁免当前候选的 required CI。取消只改变准确运行的终态，不生成替代成功；处置冗余运行前确认相关性、有效覆盖及操作授权，不取消当前候选尚需通过的必要运行。
+
+### 文档冲突验收例
+
+下例保留规则恢复前的历史证据与运行终态，不授权在当前 required CI 未通过时合并。
+
+[PR #36](https://github.com/headironc/nucleus/pull/36) 的镜像 head `340b6f33` 合入 [PR #37](https://github.com/headironc/nucleus/pull/37) 后的 dev `ecb3be02`，形成文档整合 head `73ad8b5c`。差异是两份已审 ruleset JSON 和三份文档，唯一冲突位于本页一个段落。其余 748 个跟踪条目的对象与模式未变，环境摘要和验收输入也未变。该实例补做文档格式、Markdown、离线链接、prose 与编号检查，并核对段落整合及两份原审查的有效覆盖。
+
+复用的 [OCI run 40958514715](https://github.com/headironc/nucleus/actions/runs/40958514715) 完成构建、恢复后验收及独立下载。它的实际 source 仍是 `ce5633ac5b243dc0b9db158ddd52a753151c2f88`，artifact 为 `12936560844`，不能记成文档 head 的新执行。新触发的八个冗余重任务保留 `cancelled`。合并后的首次 dev run `40964056245` 绑定 `55506adf`。其构建与下载是工作流自身的集成验收，另由原运行负责者收束。本例不宣称该运行已成功或镜像已发布。
+
 ## 故障注入与证据
 
 故障测试既证明预定故障确实发生，也验证所属业务后果。明确触发条件、到达目标边界的同步信号、实际故障与预期可观察结果。并发测试使用显式同步与超时，不用固定休眠猜交错。
 
+回归测试先证明能抓到所防的缺陷：修复前或临时撤回修复时失败，修复后通过。只在修复后运行过的测试，可能根本没有触发目标情况。无法撤回修复时，用本地临时改动制造该情况，例如注入延迟。由此确认测试依赖所验证的同步或保护。
+
+表驱动的独立场景分别设测试截止，覆盖各自的准备、操作、核对和清理。前一场景不消耗后一场景的预算。业务事务和恢复的截止仍按所属契约单独验收，不能用整组测试耗时替代。
+
+传给被测入口的短预算只用于断言其超时的场景。停止、排空等仍须等待在途工作的场景使用常规预算。用毫秒级预算猜测在途工作的耗时，慢运行器上会变成竞态。
+
+大量历史通过正式办理准备时，分别限制准备循环与后续验收。读取性能仍按公开入口的事务截止核对。
+
 区分查询失败、驱动异常、等待超时和提交未知。断开数据库后端可能使查询失败，却不一定使连接驱动以错误结束。验证两类故障同时发生时，分别断言两类实际结果；只执行注入动作不足以证明覆盖。
 
+核对观察与同步操作是否会推进被测结果。原请求重放、下一轮清理等入口可能补写或改变持久事实；验证原工作已经完成的后果时，先用独立查询核对，再分别验证重放或后续办理。等待完成的同步信号也不能代替这份持久证据。
+
+提交结局未知时，服务可能在恢复失败后立即返回，不等待原事务结束。代理释放只允许转发原 COMMIT，不表示数据库已处理。等待方返回或排空结束也不能证明原事务已有结局。独立观察原事务的持久后果前，先取得原事务持有至结束的锁，或确认原后端已经结束。观察事务在重放或后续办理前结束。核对这类同步时，可在本地让代理释放后延迟转发，确认缺少同步的用例会失败。
+
+数据库的 `idle in transaction` 状态不能唯一标识原工作。定位后端时，使用已绑定的连接标识或准确的原操作锁。验证同库其他事务不会被误认。代理从 [BackendKeyData](https://www.postgresql.org/docs/18/protocol-message-formats.html#PROTOCOL-MESSAGE-FORMATS-BACKENDKEYDATA) 取得每条连接的后端 PID。拦截时返回该连接的标识。取消秘密只透传，不另行保存。写入竞争和恢复仍须沿实际等待图确认后续操作已排队。
+
+代表性读取和恢复反例保留另一笔空闲事务，让它持有无关独占锁。读取反例验证取消、超时和提交确认失败后，原后端确实结束。恢复反例验证原工作与随后失权的永久事实。两者均独立确认无关事务仍在，再显式结束该事务。数据库夹具清理不代替这些观察。
+
+代理先建立释放等待，再报告拦截已到达。释放只唤醒当时已建立的等待，不给后续故障保留通知。回归用例主动结束原后端，再发送迟到及重复的释放。下一条查询等待自己的释放，之后返回完整结果。
+
+部分代理故障按 SQL 文本选择目标语句。按协议状态或任意 Parse 触发的故障不检查查询文本。修改被文本选择器覆盖的查询时，同步更新匹配文本，否则故障不再触发。测试显式断言拦截确实到达，并为等待拦截设截止。文本选择的故障只表现为等不到拦截时，先核对匹配文本是否仍对应当前查询。
+
+读取停在拦截点时，客户端截止和已打开事务的空闲事务超时仍在计时。语句超时只在语句已转发给 PostgreSQL 后计时。在 Parse 之前暂停的故障尚未启动它。需要并发事实时，在读取开始前于独立事务中准备，并当场校验约束。到达拦截点后只提交该事务，再释放读取。多轮注入时，先等到上一轮准确的拦截和原后端结束，再布置下一轮故障。
+
+验证没有额外外呼或其他副作用时，监视覆盖可能产生该后果的完整工作寿命，包括相关恢复、重放和排空。核对替身自身不会隐藏被测行为：悬置首条响应不能阻塞第二条请求的接收，接收时点不能取自测试稍后消费事件的时点。观察窗口与测试设施的限制一并说明。
+
+JSON 日志验收先解析场景的完整事件集合。阶段计数可筛选子集，脱敏检查仍覆盖全部事件。文本检查遍历字段名与字符串值，包含嵌套对象、数组和转义后的文本。完整的非负整数也与敏感值精确比较，防止漏检误写成数字的手机号。状态与耗时按实际类型及契约核对；数字片段碰巧包含手机号，不代表日志泄露。脱敏检查仍与[字段白名单、请求关联和最终失败次数](../architecture.md#就绪与观测)共同验收。
+
 验收结论以实际观察到的故障和后果为限。按本片验收涉及的边界取证，区分调用方结束等待、任务结束、连接终止与外部操作结局。一个边界的结果不代替另一个边界的证据。未观察到的必要行为明确列为验证缺口。
+
+间歇失败先在本地加负载复现，再判断原因。后台循环运行同包测试制造 CPU 压力，同时循环运行目标测试。在可疑提交之前的基线上，用相同条件比较通过率。未经对比，不把失败归因于运行器负载，也不以一次重跑通过作为结论。
+
+子进程安装的诊断钩子会替换全部 panic 内容，CI 日志只剩省略提示。子进程内的断言消息同样不可见。子进程把脱敏后的结果经文件、管道等父进程可读的通道传出，由父进程执行详细断言。

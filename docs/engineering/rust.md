@@ -2,45 +2,40 @@
 
 These rules apply to Rust design, implementation and review in Nucleus. This repository owns this adopted policy, including the project overrides below. Read applicable sections together with [repository instructions](../../AGENTS.md), the affected business documents and [controlled construction and queries](../architecture.md#类型构造与查询). Personal Codex files are not required inputs.
 
-The manifests and local checks enforce only part of these rules. The old CI workflows are retired; see [validation scope](verification.md#检查范围). A missing diagnostic does not waive a requirement; do not claim automated coverage without checking the actual result.
+The manifests and local checks enforce only part of these rules. The legacy CI deployment is retired; workflow definitions remain as [offline fixtures](../../tools/fixtures/retired-workflows/README.md). A missing diagnostic does not waive a requirement; do not claim lint coverage without checking the configured gate.
 
 ## Workspace validation
 
 - Use [the pinned Rust toolchain](../../rust-toolchain.toml) for builds, tests, Clippy and rustdoc. Local validation uses the [package checker](../../tools/check-packages.ts) for per-package builds, tests and rustdoc. Formatting uses a separate toolchain: install it with `rustup toolchain install nightly-2026-09-06 --profile minimal --component rustfmt`, then run `cargo +nightly-2026-09-06 fmt --all -- --check`. Installing it does not change the default build toolchain.
 - Build and test each Cargo workspace package separately. Build the library and binary targets that the package normally delivers, using the package's delivery feature set, and run that package's own tests. A workspace-wide build or test, or an `--all-targets` check, does not replace the per-package build: dependency feature unification can hide a feature missing from one package's declaration. A test build can enable features through dev-dependencies, so the package's tests alone do not replace building its delivered targets.
-- Run `cargo clippy --workspace --all-targets --locked -- -D warnings`. Run `bun tools/check-packages.ts --package PACKAGE` for affected packages, repeating `--package` for affected consumers of shared changes. With no package selection, the checker checks every workspace member, including the root package, `deployment` and `fixture`. Select consumers by reviewing the change; the checker does not infer its impact.
+- For Rust inputs selected by the [check scope](verification.md#仓库与检查归属), run `cargo clippy --workspace --all-targets --locked -- -D warnings`. Follow [package input selection](verification.md#rust-包选择) and run the classifier's `bun tools/check-packages.ts --affected SELECTION` command to include transitive Cargo consumers. `SELECTION` is `all` or a nonempty JSON array of directly affected package names. With no selection, the checker checks every workspace member. `--package PACKAGE` remains an explicit selection and does not add consumers. Use `--list` to inspect the validated selection without building.
 - When a package directly uses a dependency feature, declare that feature in the consuming package's dependency specification. Do not rely on another workspace package to enable it.
 - Run the [dependency boundary checks](#dependency-boundaries) locally. Preserve their coverage when preparing future CI.
 - Before database tests, read [database verification](../database.md#交付验证) for isolation, migrations, runtime identity, fixture lifecycle and host requirements. Apply the shared [check scope](verification.md#检查范围).
-- Local Cargo output keeps its default location unless explicitly overridden. Reusing build artifacts does not skip any required check.
+- The retained offline CI regressions obtain selected package, Domain shard and Nucleus group entries with `--matrix --affected SELECTION`. Matrix discovery does not build or run tests. The retired workflow ran Domain's library tests as shards (`--shard INDEX/TOTAL`, with `--test-threads N` passed to the test harness). The retained package checker supports `--group http` for ordinary HTTP integration tests and `--group rest` for independent delivery build, remaining ordinary tests, doctests and rustdoc; target coverage and refusal rules belong to [package selection](verification.md#rust-包选择). Run every shard or group, or the unpartitioned package check, for complete package validation. Local validation preserves exported `CARGO_TARGET_DIR` and `TMPDIR`.
+- Follow [maintenance tool validation](verification.md#维护工具验证) for the TypeScript tools, their tests and PostgreSQL preparation. Tool changes alone do not require backend workspace validation unless the input classification identifies a Rust consumer.
 
-The package checker runs on the repository's Bun 1.4.2. It reads Cargo metadata with `--locked`, validates every selected name before building, and coalesces duplicate selections. Names must match workspace members exactly; Cargo package patterns and dependencies outside the workspace are not selections. The default manifest belongs to this repository regardless of the caller's working directory. `--manifest-path PATH` selects an explicit workspace, including the disposable workspaces used by its regression tests; Cargo runs from that manifest's directory to retain its toolchain and configuration.
-
-For each selected package, the checker runs `cargo build`, `cargo test` and `cargo doc --no-deps` separately, all with `--locked` and the package's default delivery features. Rustdoc uses `-D warnings`, replacing inherited plain or encoded rustdoc flags. A failed metadata query, invalid selection, empty workspace or failed subprocess ends validation with a nonzero exit status; later steps do not run. The output names the selected packages and active step, and reports success only after all selected checks pass. It neither installs prerequisites nor runs formatting, Clippy, dependency or documentation-maintenance checks. Prepare the pinned PostgreSQL before running packages that use database fixtures, as described in [database verification](../database.md#交付验证).
-
-Install development dependencies with `bun install --frozen-lockfile --ignore-scripts`, then run `bun run check:tools` to type-check the TypeScript tools, their tests and the PostgreSQL preparation script. The [TypeScript configuration](../../tsconfig.json) explicitly loads the pinned Bun and Node type declarations. This check runs `tsc --noEmit`; running scripts or tests with Bun alone does not establish type correctness.
-
-Run `bun test tools/check-packages.test.ts` to exercise the entrypoint through real Cargo in disposable offline workspaces. The tests cover root and non-default members, explicit selections, invalid inputs, lockfile preservation, failure propagation and fatal rustdoc warnings. A feature-isolation example passes workspace builds and package tests but fails the independent production build. These tests verify validation behavior rather than a snapshot of today's package list.
+The retired deployment's classification, package and shard matrix, `rust` gate and cache behavior are preserved by the [Rust workflow](../../tools/fixtures/retired-workflows/rust.yml), the [cache workflow](../../tools/fixtures/retired-workflows/cache.yml), the [host setup](../../.github/actions/rust-setup/action.yml) and [package environment](../../.github/actions/package-setup/action.yml) actions, and the checker's own tests. The [repository input boundaries](verification.md#仓库与检查归属) own which paths require which checks. The retired package jobs used the fixed PostgreSQL installation in the shared dependency image. Cache hits never skip a required check, and a green CI job does not replace review or acceptance evidence.
 
 ## Dependency boundaries
 
-[The dependency checker](../../tools/check_dependencies.py) enforces the existing [package directions](../architecture.md#crate-与模块组织) for normal and build dependencies. A new workspace member requires an explicit boundary in the checker consistent with its architecture owner. Development dependencies remain available for tests.
+[The dependency checker](../../tools/check-dependencies.ts) enforces the existing [package directions](../architecture.md#crate-与模块组织) for normal and build dependencies. A new workspace member requires an explicit boundary in the checker consistent with its architecture owner. Development dependencies remain available for tests.
 
 - Keep crypto ring-only: neither `aws-lc-rs` nor `aws-lc-sys` may appear in `Cargo.lock`, including optional or test dependencies.
 - Packages outside `fixture` exclude `fixture`, embedded PostgreSQL and the other test tools named by the checker from production dependencies. They consume fixture through `dev-dependencies`; fixture itself uses normal dependencies to implement the test library and does not depend on workspace business or application code.
 - Deployment and migration dependencies belong only to deployment's production graph.
-- `domain/test-support` exposes supplier fixture constructors. Enable it only through `dev-dependencies`, never in a delivered package's production graph or default features.
+- `domain/test-support` exposes supplier fixture constructors and the narrow `access::initialize::seed` fixture entrypoint. The seed builds a complete historical initialization, including sealed system roles, the initial Holder and the initialization completion, before fixture services establish their anchors. Its current consumers are the HTTP database and process lifecycle fixtures; Domain's session fixture uses the same entrypoint under `cfg(test)`. Enable the feature only through `dev-dependencies`, never in a delivered package's production graph or default features.
 
-Run these local checks with Python 3.11 or later and the pinned Cargo toolchain. They need no Python packages, database or supplier:
+Run these commands with the repository's pinned Bun and Cargo toolchains. They need no database or supplier. CI uses the same commands before preparing PostgreSQL:
 
 ```bash
-python3 -B tools/test_dependencies.py -v
-python3 -B tools/check_dependencies.py
+bun test tools/check-dependencies.test.ts
+bun tools/check-dependencies.ts
 ```
 
 The checker reads Cargo metadata, `Cargo.lock` and each member's `cargo tree --edges normal,build --target all` output with activated features. Declaration checks include renamed, optional and target-specific dependencies; graph checks include transitive dependencies and default feature forwarding. Each package is resolved separately so test features do not contaminate the production check. Diagnostics identify the consuming package and prohibited dependency or feature. Invalid Cargo input, a missing lockfile or a failed inspection fails the check; the checker does not update manifests or locks or run build scripts.
 
-[Regression tests](../../tools/test_dependencies.py) create disposable workspaces using only local path dependencies and invoke the actual checker and Cargo offline. They exercise allowed development edges and rejected production changes, verify that inputs remain unchanged, and test inspection failures. These tests protect the gate's behavior rather than snapshotting the current dependency list.
+[Regression tests](../../tools/check-dependencies.test.ts) create disposable workspaces using only local path dependencies and invoke the actual checker and Cargo offline. They exercise allowed development edges and rejected production changes, verify that inputs remain unchanged, and test inspection failures. These tests protect the gate's behavior rather than snapshotting the current dependency list.
 
 The graph check covers default production features across target conditions, not every combination of non-default features. When a delivery adds an explicit feature selection, extend the check and per-package build invocation together. [Cargo documents](https://doc.rust-lang.org/cargo/commands/cargo-tree.html#feature-unification) that its tree approximates the build graph; passing this check does not replace separate package builds. It also does not establish module ownership, controlled construction, SQL integrity or recovery correctness; validate those through the affected code and behavior tests.
 
@@ -54,8 +49,87 @@ Regression examples in the same test module exercise the guard with minimal sour
 
 Run the visibility tests alone with `cargo test -p domain --locked receipt_construction_stays_private`. These syntax checks cover the declaration modules, without expanding macros or inspecting arbitrary factories in other modules. They do not prove the validation performed by private constructors or recovery paths; keep their behavior tests and review. If a receipt moves or needs an API beyond direct field reads, review the new boundary and update its checks with the owning implementation.
 
+## History and kernel boundaries
+
+This section describes constraints on existing consumers awaiting simplification. The [current architecture](../architecture.md#应用内核) stops expansion of the executor, sealed state, anchors, generic value kinds and retention framework. New badge code uses ordinary functions and transactions. Keep the existing loaders, source guard and tests while consumers still depend on them; remove each dependency together with its complete migration, not by disabling checks.
+
+These rules apply to code built on [`domain::history`](../architecture.md#状态历史模块) and the [application kernel](../architecture.md#应用内核). The executor runs Workforce directory configuration, Center affiliations, institutional and Workforce roles, institutional and domain assignments, Grant admission and lifecycle commands, invitation creation, adjustment, withdrawal and acceptance, admin initialization and appointments, account suspension and resumption, logout, mobile completion, online real-name correction, and self and management cancellation. Center, roles, Holder, Grant, Invitation, Account and Session consume `State`, `Record`, `Token`, `Verified`, transitions, anchors and startup scanning. Current authority authenticates the applicable Holder or Grant and Role state; historical reads authenticate the records they consume. Account, role, Holder and Grant terminal states retain permanent tombstones. Session and its records form a removable short-lived group.
+
+[`domain::access::holder`](../../domain/src/access/holder.rs) owns the institutional state, appointment records and cancellation projections. Each appointment fixes its selected role `change_id`; Holder advances its own sequence. Grant similarly owns domain assignments, suspension, resumption, termination and admission-loss projections. Its first assignment starts at sequence 1 and fixes its role change. Initialization and R2 create Holder, Account and Person at sequence 1. Account and Grant transitions use their own sequence, and Session no longer captures personal order. Person owns its origin, correction and cancellation records and sealed current revision; Workforce uses its own object sequence. See [time and personal order](../architecture.md#时间与个人顺序). Admin initialization, appointments and system corrections use the same verified `App` and executor with runtime credentials.
+
+`kernel::keys` supplies envelopes for Center values and the shared completion inputs. Holder and Account deliver projections with their existing cancellation and correction consumers. The history anchors bind Account's person and number locators and Session's authentication and receipt locators to authenticated states, including expected absence. General value kinds and further kernel expansion are retired; the [delivery plan](delivery.md#架构内核与状态封印) instead schedules consumer migrations.
+
+- Implement the [history module contract](../architecture.md#状态历史模块) with private fields. A protected state, record or value type decodes only through its `decode` function, which requires a `Token`. It does not implement `TryFrom<Row>`, `FromSql` or `Deserialize`, because a visible conversion would let another module decode a protected row without verification.
+- Existing protected consumers obtain `Verified` only through authenticated loading. `history::Seed`, compiled only for tests or `test-support`, may construct sealed state and record fixtures, persist paired changes through the kind's fixed writes, and install their anchors after fixture commit. Keep fixture construction out of production builds.
+- Transition functions and each command's `decide` receive the transaction time as an argument instead of reading a clock, and make no database or supplier calls.
+- The required syn-based test `protected_sql_stays_with_its_owner` enforces protected-SQL ownership in Domain's non-test sources. It rejects protected-table string literals outside the declared source paths below and `domain::history`, including macro arguments and quoted table names, following the [C1 receipt guard](#c1-receipt-boundaries). Role and Grant queries have explicit owners alongside their state and record declarations. Holder SQL stays in `access/holder.rs`; the [permission manifest](../../domain/src/database/permissions/manifest.rs) uses the same owners' table constants. The 55 tables and views below match the [source guard](../../domain/src/history/guard.rs). Fixture helpers compiled with `test-support` follow the same ownership boundary. Do not add new badge tables to this sealing guard. Existing protected-table changes keep the guard accurate until that consumer migrates. This source check does not establish business correctness or replace behavior tests.
+- Implement each command's closed `Rejection` by hand, including its status and application code; do not add a procedural-macro crate for it. `FaultKind` is a closed enum of typed causes, not `dyn Error`.
+
+The guard's source paths are relative to `domain/src`:
+
+| Protected table                 | Declared source paths                                                                                                                     |
+| ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `center.profiles`               | `center/affiliation/profile.rs`                                                                                                           |
+| `identity.revisions`            | `identity/person/revision.rs`                                                                                                             |
+| `identity.persons`              | `identity/person/state.rs`                                                                                                                |
+| `identity.origins`              | `identity/person/record.rs`                                                                                                               |
+| `identity.corrections`          | `identity/person/record.rs`                                                                                                               |
+| `identity.cancellations`        | `identity/person/record.rs`                                                                                                               |
+| `identity.changes`              | `identity/person/record.rs`; fixed-source projections also use `identity/account/record.rs`, `access/holder.rs`, `access/grant/record.rs` |
+| `center.affiliations`           | `center/affiliation/database.rs`                                                                                                          |
+| `center.completions`            | `kernel/completion.rs`                                                                                                                    |
+| `content.columns`               | `content/column/state.rs`                                                                                                                 |
+| `content.changes`               | `content/column/change.rs`, `content/column/navigation.rs` (fixed creation-source pairing)                                                |
+| `content.navigations`           | `content/column/navigation.rs`                                                                                                            |
+| `content.appends`               | `content/column/navigation.rs`                                                                                                            |
+| `content.completions`           | `kernel/completion.rs`                                                                                                                    |
+| `workforce.completions`         | `kernel/completion.rs`                                                                                                                    |
+| `workforce.numbers`             | `workforce/number/state.rs`                                                                                                               |
+| `workforce.revisions`           | `workforce/number/revision.rs`                                                                                                            |
+| `workforce.allocations`         | `workforce/number/record.rs`                                                                                                              |
+| `workforce.corrections`         | `workforce/number/record.rs`                                                                                                              |
+| `workforce.recoveries`          | `workforce/number/record.rs`                                                                                                              |
+| `workforce.revocations`         | `workforce/number/record.rs`                                                                                                              |
+| `workforce.transitions`         | `workforce/number/record.rs`                                                                                                              |
+| `access.roles`                  | `access/role/state.rs`, `access/role/database.rs`                                                                                         |
+| `access.changes`                | `access/role/change.rs`, `access/role/database.rs`                                                                                        |
+| `access.completions`            | `kernel/completion.rs`                                                                                                                    |
+| `access.holders`                | `access/holder.rs`                                                                                                                        |
+| `access.appointments`           | `access/holder.rs`                                                                                                                        |
+| `access.projections`            | `access/holder.rs`                                                                                                                        |
+| `access.grants`                 | `access/grant/state.rs`, `access/grant/record.rs`, `access/grant/database.rs`                                                             |
+| `access.assignments`            | `access/grant/record.rs`, `access/assignment/database.rs`                                                                                 |
+| `access.suspensions`            | `access/grant/record.rs`                                                                                                                  |
+| `access.resumptions`            | `access/grant/record.rs`                                                                                                                  |
+| `access.terminations`           | `access/grant/record.rs`                                                                                                                  |
+| `access.losses`                 | `access/grant/record.rs`                                                                                                                  |
+| `access.invitations`            | `access/grant/invitation/state.rs`, `access/grant/invitation/record.rs`, `access/grant/invitation/database.rs`                            |
+| `access.creations`              | `access/grant/invitation/record.rs`                                                                                                       |
+| `access.adjustments`            | `access/grant/invitation/record.rs`                                                                                                       |
+| `access.withdrawals`            | `access/grant/invitation/record.rs`                                                                                                       |
+| `access.acceptances`            | `access/grant/invitation/record.rs`                                                                                                       |
+| `access.invitation_transitions` | `access/grant/invitation/record.rs`                                                                                                       |
+| `identity.accounts`             | `identity/account/state.rs`                                                                                                               |
+| `identity.creations`            | `identity/account/record.rs`                                                                                                              |
+| `identity.suspensions`          | `identity/account/record.rs`                                                                                                              |
+| `identity.resumptions`          | `identity/account/record.rs`                                                                                                              |
+| `identity.replacements`         | `identity/account/record.rs`                                                                                                              |
+| `identity.logouts`              | `identity/account/record.rs`                                                                                                              |
+| `identity.projections`          | `identity/account/record.rs`                                                                                                              |
+| `identity.portraits`            | `identity/account/record.rs`                                                                                                              |
+| `identity.uploads`              | `identity/avatar/upload.rs`                                                                                                               |
+| `identity.publications`         | `identity/avatar/upload.rs`, `identity/avatar/retention.rs`                                                                               |
+| `identity.deletions`            | `identity/avatar/retention.rs`                                                                                                            |
+| `identity.sessions`             | `identity/session/state.rs`                                                                                                               |
+| `identity.issuances`            | `identity/session/state.rs`                                                                                                               |
+| `identity.revocations`          | `identity/session/state.rs`                                                                                                               |
+| `identity.completions`          | `kernel/completion.rs`                                                                                                                    |
+
 ## Module layout
 
+- Prefer one complete word for a source filename, using its existing module path to supply context. Do not invent abbreviations or empty module layers to make a name shorter.
+- Name a module for the business value or concrete responsibility it owns, and assess the full path at its actual call sites. Avoid vague action or state labels such as `lookup` and `protected`; a number's hash belongs with that number. Check the responsibility before choosing a replacement name, rather than substituting another generic label.
+- Use the same module name for the same responsibility at comparable boundaries, as in `challenge::credentials` and `message::credentials`. Consistent names do not require merging distinct supplier value types or validation rules.
 - When a module has both `<name>.rs` and a corresponding `<name>/` directory, place the module root in `<name>/mod.rs` instead of beside the directory. For example, `user.rs` and `user/profile.rs` become `user/mod.rs` and `user/profile.rs`.
 - Keep a leaf module without a corresponding directory in a single `<name>.rs` file.
 - Keep module declaration blocks and their imports together.
@@ -79,6 +153,7 @@ Within a file, keep a type definition and its associated `impl` blocks together.
 - Treat acronyms as words in type names, as in `HttpClient` and `Uuid`; review this even when Clippy reports no violation.
 - Use module context to omit redundant prefixes, as in `session::Token`, `Id`, or `Error`, while keeping names unambiguous at their use sites.
 - Name business models for the concepts they represent. Do not replace the business name with a generic storage label such as `Stored`.
+- Name operations for the resource lifecycle action they perform, such as `create_session` for creating a Session. Avoid a broad interaction label such as `login` for that action. Preserve names required by an external protocol or SDK at its boundary.
 - Use enum context to avoid redundant variant names, as in `Status::Active`.
 - Keep the names in one state set consistent in grammatical form and meaning.
 - Keep standard predicate method names such as `is_empty()`. Provide `is_empty()` alongside a public `len()`. Review predicate names in addition to automated checks.
@@ -91,8 +166,10 @@ Within a file, keep a type definition and its associated `impl` blocks together.
 - Use `into_*` for conversions that consume the source value.
 - Choose among these three by what the conversion does to the source; a passing lint check does not establish the naming contract.
 - Do not require a `try_` prefix solely because a function returns `Result`.
-- Name queries by their purpose, as in `find_user_by_mobile`.
-- In Nucleus, `find_*` returns `Option`; `fetch_*` returns `Result`. Preserve both failure and absence in the result model when the operation has both outcomes.
+- Name queries for the result in their module and call context, as in `challenge::find_receipt` or registration's `database::fetch_accounts`. Add `by_*` when the lookup route distinguishes the query, as in `find_by_operation` or `find_account_by_mobile`. Do not concatenate every SQL condition into the name. Use business terms even when storage compares hashes.
+- Use `find_*` for a query with meaningful absence, returning `Option<T>` or `Result<Option<T>, E>`. Preserve technical failure separately from a missing result.
+- Use `fetch_*` for a required value or a collection, returning `Result<T, E>` or `Result<Vec<T>, E>`. An empty collection is a normal result, not an optional value.
+- A query may verify proof or integrity before constructing its result; keep those guarantees without turning its name into a generic validation action. Name validation, locking and business actions for their actual responsibility. Do not change return types or remove checks to fit a name.
 - Name local variables of type `Option<T>` `option`. After extracting the contained value, name it by its meaning.
 - Allow variable shadowing as one concept moves through successive representations.
 - Use distinct names such as `raw_mobile` and `mobile` when both representations remain relevant.
@@ -119,6 +196,7 @@ Within a file, keep a type definition and its associated `impl` blocks together.
 - Introduce a local newtype for a distinct application meaning or invariant not already represented by an available type, not for every string or number.
 - Name an entity's identifier type `Id` inside its module, as in `user::Id` and `role::Id`.
 - Keep noninterchangeable business values distinct even when their representation is the same string or UUID type. Credentials and identifiers for different protocols or roles may share format validation without sharing a business type.
+- Preserve the owning identifier type across internal calls, enum payloads and cryptographic bindings. `pub(crate)` visibility does not justify replacing `account::Id` or `session::Id` with an interchangeable `Uuid`. Expose raw bytes only at the encoding boundary that requires them.
 - Use the owning module to distinguish otherwise ambiguous `Id` types, as in `user::Id` and `role::Id`. Name reference fields, parameters, local variables and getters for the referenced entity or role, as in `message_id` or `worker_id`. Keep `id` for an entity's own identifier, and preserve the reference meaning across SQL decoding and the domain API. Preserve externally defined field names at serialization boundaries.
 - A shared macro may generate a separate `Id` newtype in each owning module.
 - Express timeout units through a suitable existing type, such as `Duration` or an SDK unit type. Use a `Millisecond` newtype when the contract needs distinct millisecond semantics or additional invariants.
@@ -126,10 +204,14 @@ Within a file, keep a type definition and its associated `impl` blocks together.
 ## Input and result models
 
 - Group parameters with a common meaning into an input struct with a clear responsibility; use nesting for actual ownership or invariants.
+- Prefer existing controlled value types for JSON fields, with validating `Deserialize` implementations that reuse their constructors or parsers. Do not retain a `String` solely to parse it after deserialization. Keep cross-field rules, identity binding and current-state decisions with their owners.
+- Receive temporary secret text into a zeroizing buffer before parsing, including owned strings buffered by Serde's internally tagged enums. A string visitor or convenience derive that discards an ordinary `String` without clearing it does not preserve this boundary. Convert validation failures into safe deserialization diagnostics without exposing the input or an unsafe nested cause.
 - Prefer a struct for an ordinary response and an enum when its valid forms are mutually exclusive. When a field is valid only in certain states, place it in the corresponding enum variants rather than combining a separate status with independently optional fields. Keep `Option` within a variant when absence remains valid in that state.
-- Use `Option<T>` only when absence is a valid state. Acquire resources required throughout an object's usable lifetime before returning it, and store them directly. Do not introduce `None` merely to defer required construction; retain optionality when the actual lifecycle permits absence.
+- Prefer complete values and explicit states; avoid `Option<T>` unless absence has a specific, valid meaning in that state. Inspect the call chain before introducing or propagating optionality. Resolve temporary absence at its owning boundary, and pass the required value once it has been established.
+- Acquire resources required throughout an object's usable lifetime before returning it, and store them directly. Do not introduce `None` merely to defer required construction; retain optionality when the actual lifecycle permits absence.
+- Do not reduce `Option` usage with sentinel values, fabricated defaults, unchecked extraction, or an enum that merely renames `Some` and `None`. Prefer fewer concepts and valid state combinations while preserving legitimate absence and failure handling.
 - Keep database `Row`, column selection, and decoding inside the fixed query's implementation. Return the model or projection needed by current callers, and choose query scope from the actual business flow.
-- Express fallible row-to-model conversion with `TryFrom<Row>` rather than an equivalent inherent `decode` or `from_row` method.
+- Express fallible row-to-model conversion with `TryFrom<Row>` rather than an equivalent inherent `decode` or `from_row` method. Protected history kinds are the exception: they decode only through `domain::history`, as described in [history and kernel boundaries](#history-and-kernel-boundaries).
 - When database callers consume semantic value types, use the driver's applicable conversion traits, such as `FromSql` and `ToSql`, to preserve those invariants across decoding and encoding instead of repeatedly dismantling and rebuilding values in business code. Inspect derived and manual conversions for unchecked construction; add only implementations needed by actual consumers.
 
 ## Settings
@@ -148,8 +230,8 @@ Within a file, keep a type definition and its associated `impl` blocks together.
 - Inspect the dependency's error variants, structured causes and caller handling before wrapping errors. Add a wrapper only for missing meaning or context. Preserve input, construction, technical, business and unknown-outcome distinctions, with transport mapping, transaction decisions and retries at their owners. Apply the [project error and redaction contract](../architecture.md#类型构造与查询).
 - Prefer `#[from]` and `?` for simple wrapping when the adopted error library supports them. Use one explicit `From` implementation at the semantic owner when conversion must classify the source error's contents.
 - Prefer an early return for a completed success path when it leaves common failure handling afterward. Convert nested results at the boundary that owns them, without intermediate rewrapping or repeated termination branches. Complete required finalization before returning.
-- When persistence, recovery or termination also fails, preserve both the primary failure and the later failure, together with the operation's known or unknown outcome. Use the actual error type for each cause; do not route a narrow termination error through the enclosing operation's error enum solely for uniformity.
-- Preserve handling classifications through error wrappers. Decisions such as closing admission or prohibiting retries must still recognize the relevant underlying causes rather than matching only the outer variant. Keep those decisions with their existing owners.
+- When persistence, recovery or termination also fails, preserve both the primary failure and the later failure, together with the operation's known or unknown outcome. Use the actual error type for each cause; do not route a narrow termination error through the enclosing operation's error enum solely for uniformity. On the [kernel executor](../architecture.md#错误模型), a technical failure is one `Fault`: the primary cause is its kind, and each later finalization, rollback or recovery failure is appended with its own typed cause. Commands do not define per-module combined, rollback, not-committed or observation variants.
+- Preserve handling classifications through error wrappers. Decisions such as closing admission or prohibiting retries must still recognize the relevant underlying causes rather than matching only the outer variant. Keep those decisions with their existing owners. On the kernel executor, code that finds stored-fact damage returns `Corrupt` at the point of discovery, and the executor closes admission; commands do not close it themselves.
 - In Nucleus, error conversion takes no closures: use `#[from]` with `?`, `match`, or a named function.
 - Log errors with `Debug`, never `Display`, only at the final handling boundary. Preserve useful safe context without exposing supplier payloads, secrets or raw database detail; sanitize unsafe causes before formatting.
 - Scope helpers and extension traits to the errors they actually handle; do not extend every `Result` with behavior that belongs only to database failures.

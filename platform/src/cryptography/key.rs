@@ -1,11 +1,15 @@
 //! Nonnegative numeric versions used by cryptographic envelopes and key files.
 
+use std::str::FromStr;
+
 use bytes::BytesMut;
 use derive_more::AsRef;
+use serde::Deserialize;
 use thiserror::Error;
 use tokio_postgres::types::{FromSql, IsNull, ToSql, Type, to_sql_checked};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, AsRef)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, AsRef, Deserialize)]
+#[serde(try_from = "String")]
 pub struct Id(i64);
 
 impl Id {
@@ -14,6 +18,26 @@ impl Id {
             return Err(Error);
         }
         Ok(Self(id))
+    }
+}
+
+impl FromStr for Id {
+    type Err = ParseError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let id: i64 = value.parse()?;
+        if id.to_string() != value {
+            return Err(ParseError::Canonical);
+        }
+        Ok(Self::new(id)?)
+    }
+}
+
+impl TryFrom<String> for Id {
+    type Error = ParseError;
+
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        value.parse()
     }
 }
 
@@ -50,6 +74,16 @@ impl ToSql for Id {
 #[error("key id must be a nonnegative signed 64-bit integer")]
 pub struct Error;
 
+#[derive(Debug, Error)]
+pub enum ParseError {
+    #[error("key id is not a signed 64-bit integer")]
+    Number(#[from] std::num::ParseIntError),
+    #[error("key id must be nonnegative")]
+    Value(#[from] Error),
+    #[error("key id must use canonical decimal text")]
+    Canonical,
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
@@ -57,6 +91,32 @@ mod tests {
     use tokio_postgres::types::{FromSql, ToSql, Type};
 
     use crate::cryptography::key::{Error, Id};
+
+    #[test]
+    fn deserializes_only_canonical_nonnegative_versions() {
+        for value in [0_i64, i64::MAX] {
+            let json = serde_json::to_string(&value.to_string()).expect("decimal JSON string");
+            let id: Id = serde_json::from_str(&json).expect("canonical key id");
+            assert_eq!(*id.as_ref(), value);
+        }
+        for value in [
+            "",
+            "-1",
+            "-0",
+            "+7",
+            "07",
+            " 7",
+            "7 ",
+            "9223372036854775808",
+        ] {
+            assert!(value.parse::<Id>().is_err());
+            let json = serde_json::to_string(value).expect("JSON string");
+            assert!(serde_json::from_str::<Id>(&json).is_err());
+        }
+        for json in ["null", "7", "true", "[]", "{}"] {
+            assert!(serde_json::from_str::<Id>(json).is_err());
+        }
+    }
 
     #[test]
     fn decodes_only_valid_bigint_versions() {

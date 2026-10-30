@@ -1,0 +1,206 @@
+name: Packages
+
+on:
+  pull_request:
+    branches: [dev, main]
+    types: [opened, reopened, synchronize, edited]
+
+concurrency:
+  group: ${{ github.workflow }}-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    name: Package plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      tier: ${{ steps.inputs.outputs.tier }}
+      affected: ${{ steps.inputs.outputs.packages }}
+      packages: ${{ steps.matrix.outputs.packages }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .tool-versions
+      - name: Check candidate and Bun
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          printf 'repository=%s run=%s attempt=%s candidate=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA"
+          bun tools/check-bun.ts
+      - name: Install Rust toolchain
+        run: |
+          bun -e '
+          const { toolchain } = Bun.TOML.parse(await Bun.file("rust-toolchain.toml").text());
+          const result = Bun.spawnSync(["rustup", "toolchain", "install", toolchain.channel, "--profile", toolchain.profile,
+            ...toolchain.components.flatMap(component => ["--component", component])], { stdout: "inherit", stderr: "inherit" });
+          process.exit(result.exitCode);
+          '
+          rustc --version
+          cargo --version
+      - name: Classify actual candidate
+        id: inputs
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          MERGE_SHA: ${{ github.sha }}
+        run: bun tools/check-inputs.ts --ci
+      - name: Discover and validate complete matrix
+        id: matrix
+        env:
+          TIER: ${{ steps.inputs.outputs.tier }}
+          AFFECTED: ${{ steps.inputs.outputs.packages }}
+        run: bun tools/native-packages.ts plan
+
+  postgresql:
+    name: Build PostgreSQL
+    needs: plan
+    if: needs.plan.outputs.tier == 'full'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+      sha256: ${{ steps.pack.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .tool-versions
+      - name: Check candidate and Bun
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          bun tools/check-bun.ts
+          test "$(id -u)" != 0
+      - name: Install PostgreSQL build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends --no-remove build-essential bison flex perl curl pkg-config libssl-dev libicu-dev libreadline-dev zlib1g-dev libxml2-dev
+      - name: Build and verify PostgreSQL 18.4
+        run: bun fixture/postgresql.ts
+      - name: Archive verified installation
+        id: pack
+        run: bun tools/package-postgresql.ts pack
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        id: upload
+        with:
+          name: package-postgresql-${{ github.run_id }}-${{ github.run_attempt }}
+          path: target/package-postgresql/
+          if-no-files-found: error
+          compression-level: 0
+
+  packages:
+    name: Package ${{ matrix.package }} ${{ matrix.shard }}${{ matrix.group }}
+    needs: [plan, postgresql]
+    if: needs.plan.outputs.tier == 'full'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .tool-versions
+      - name: Check candidate and Bun
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          printf 'repository=%s run=%s attempt=%s candidate=%s\n' "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SHA"
+          bun tools/check-bun.ts
+          test "$(id -u)" != 0
+      - name: Install native runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends --no-remove build-essential pkg-config libssl-dev libicu-dev libreadline-dev zlib1g-dev libxml2-dev
+      - name: Install Rust toolchain
+        run: |
+          bun -e '
+          const { toolchain } = Bun.TOML.parse(await Bun.file("rust-toolchain.toml").text());
+          const result = Bun.spawnSync(["rustup", "toolchain", "install", toolchain.channel, "--profile", toolchain.profile,
+            ...toolchain.components.flatMap(component => ["--component", component])], { stdout: "inherit", stderr: "inherit" });
+          process.exit(result.exitCode);
+          '
+          rustc --version
+          cargo --version
+      - name: Require producer artifact identity
+        env:
+          ARTIFACT_ID: ${{ needs.postgresql.outputs.artifact-id }}
+        run: test -n "$ARTIFACT_ID" && test "${ARTIFACT_ID//[0-9]/}" = ''
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
+        with:
+          artifact-ids: ${{ needs.postgresql.outputs.artifact-id }}
+          merge-multiple: true
+          path: target/package-postgresql/
+          digest-mismatch: error
+      - name: Verify and install producer PostgreSQL
+        env:
+          POSTGRESQL_SHA256: ${{ needs.postgresql.outputs.sha256 }}
+        run: bun tools/package-postgresql.ts unpack
+      - name: Create private fixture scope
+        run: bun tools/package-postgresql.ts temp
+      - name: Check selected package
+        env:
+          PACKAGE: ${{ matrix.package }}
+          SHARD: ${{ matrix.shard }}
+          GROUP: ${{ matrix.group }}
+        run: |
+          bun -e '
+          const args = ["tools/check-packages.ts", "--package", process.env.PACKAGE, "--test-threads", "2"];
+          if (process.env.SHARD) args.push("--shard", process.env.SHARD);
+          if (process.env.GROUP) args.push("--group", process.env.GROUP);
+          const result = Bun.spawnSync([process.execPath, ...args], { stdout: "inherit", stderr: "inherit" });
+          process.exit(result.exitCode);
+          '
+      - name: Check and clean private PostgreSQL scope
+        if: always()
+        run: bun tools/package-postgresql.ts cleanup
+
+  finalcheck:
+    name: Nucleus Packages
+    needs: [plan, postgresql, packages]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .tool-versions
+      - name: Require complete package results
+        if: ${{ !cancelled() }}
+        env:
+          CANCELLED: "false"
+          PLAN_RESULT: ${{ needs.plan.result }}
+          POSTGRESQL_RESULT: ${{ needs.postgresql.result }}
+          PACKAGES_RESULT: ${{ needs.packages.result }}
+          TIER: ${{ needs.plan.outputs.tier }}
+          AFFECTED: ${{ needs.plan.outputs.affected }}
+          PACKAGE_NAMES: ${{ needs.plan.outputs.packages }}
+          MATRIX: ${{ needs.plan.outputs.matrix }}
+        run: |
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          bun tools/native-packages.ts finish
+      - name: Reject cancelled package workflow
+        if: ${{ cancelled() }}
+        run: |
+          echo 'Package workflow cancelled; no successful package result' >&2
+          exit 1

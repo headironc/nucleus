@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="司籍处网站退出本次登录及结果确认设计。" />
+    <title>账户状态 · 司籍处</title>
+    <link rel="icon" href="assets/logo.png" />
+    <link rel="stylesheet" href="assets/tokens.css" />
+    <link rel="stylesheet" href="assets/halo-home.css" />
+    <link rel="stylesheet" href="assets/halo-account.css" />
+    <link rel="stylesheet" href="assets/halo-logout.css" />
+    <script src="assets/halo-logout.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#logout">跳到主要内容</a>
+    <div class="preview-tools" aria-label="设计预览工具">
+      <div class="preview-caption">
+        <strong>HALO · 设计预览</strong><span>虚构资料，不执行真实退出</span>
+      </div>
+      <button
+        class="preview-toggle"
+        type="button"
+        aria-expanded="false"
+        aria-controls="preview-tools-content"
+      >
+        展开预览工具
+      </button>
+      <div class="preview-tools-content" id="preview-tools-content">
+        <div class="preview-controls">
+          <label for="scenario-picker">页面状态</label
+          ><select id="scenario-picker"></select>
+        </div>
+        <details class="design-notes">
+          <summary>演示设置与状态依据</summary>
+          <div>
+            <p id="state-basis"></p>
+            <p>
+              本稿只演示退出本次登录与核对这次退出。全部资料均为虚构，不发送请求，不读写真实登录或恢复材料。
+            </p>
+            <p>本稿不覆盖退出全部设备、微信解绑、暂停、换号或注销。</p>
+            <label class="demo-setting" for="submit-outcome"
+              >明确确认后的演示结果<select id="submit-outcome">
+                <option value="complete">确定完成</option>
+                <option value="pending">结果待确认</option>
+                <option value="submit-limited">首次请求受限 · 未受理</option>
+                <option value="submit-session-invalid">
+                  首次请求认证无效 · 未受理
+                </option>
+                <option value="request-mismatch">
+                  请求与此前退出信息不一致
+                </option>
+                <option value="storage-failed">首次保存失败 · 尚未提交</option>
+              </select></label
+            >
+            <p>
+              未知退出的登录入口带固定站内意图。已有账户登录并读取本人资料后，可正常返回本页，再读取当前账户并查询此前退出；不保存真实恢复材料，也不接受任意返回地址或操作标识。以下工具仅切换虚构返回情形。
+            </p>
+            <div class="demo-actions">
+              <button type="button" data-demo="same-account">
+                模拟同账户新登录</button
+              ><button type="button" data-demo="other-account">
+                模拟切到其他账户</button
+              ><button type="button" data-demo="material-missing">
+                模拟查询信息缺失</button
+              ><button type="button" data-demo="end-wait">结束示例等待</button>
+            </div>
+            <p>
+              页面中的重新读取均为一次有界演示，不自动循环。结果依据见
+              docs/identity/revocation.md；账户读取见
+              docs/identity/current.md；恢复见 docs/client/recovery.md。
+            </p>
+          </div>
+        </details>
+      </div>
+    </div>
+    <header class="site-header">
+      <div class="container header-inner">
+        <a class="brand" href="halo-home.html" aria-label="司籍处首页"
+          ><img src="assets/logo.png" width="56" height="56" alt="" /><span
+            class="brand-copy"
+            ><strong>司籍处</strong><span>中医药文化宣传与推广中心</span></span
+          ></a
+        >
+        <nav class="account-navigation" aria-label="网站导航">
+          <a href="halo-account.html">个人账户</a
+          ><a class="public-return" href="halo-home.html">返回首页 ↗</a>
+        </nav>
+      </div>
+    </header>
+    <main class="logout-layout" id="logout" tabindex="-1">
+      <div class="page-heading">
+        <div>
+          <p class="section-kicker">账户管理</p>
+          <h1 id="page-title" tabindex="-1">账户状态</h1>
+          <p class="page-introduction" id="page-introduction">
+            正在读取当前账户资料，请稍候。
+          </p>
+        </div>
+      </div>
+      <div class="logout-columns" id="logout-columns">
+        <section
+          class="logout-panel"
+          id="logout-content"
+          aria-live="polite"
+          aria-labelledby="stage-title"
+        >
+          <span class="reading-symbol" aria-hidden="true"></span>
+          <h2 id="stage-title">正在读取登录状态</h2>
+          <p class="stage-description">读取完成后，可以查看当前账户资料。</p>
+        </section>
+        <aside
+          class="logout-guide"
+          id="logout-guide"
+          aria-labelledby="guide-title"
+          hidden
+        >
+          <p class="section-kicker">本次退出的范围</p>
+          <h2 id="guide-title">账户仍会保留</h2>
+          <ul>
+            <li>保留账户、实名与微信绑定。</li>
+            <li>员工服务授权与已提交的办理不受本次退出影响。</li>
+            <li>其他登录可继续按各自条件使用。</li>
+          </ul>
+          <div id="result-guide">
+            <div class="guide-separator"></div>
+            <h3>查询退出结果</h3>
+            <p>
+              暂时没有结果不表示退出失败。同一账户的有效登录可以查询此前退出的结果；若登录已无法使用，请重新登录同一账户。查询不会再次提交退出。
+            </p>
+          </div>
+        </aside>
+      </div>
+      <noscript
+        ><p class="page-notice">
+          请开启 JavaScript 查看本页设计演示。
+        </p></noscript
+      >
+    </main>
+    <footer class="account-footer"><span>司籍处 · 本人账户</span></footer>
+    <dialog
+      class="preview-dialog"
+      id="leave-dialog"
+      aria-labelledby="leave-title"
+      aria-describedby="leave-description"
+    >
+      <div class="dialog-heading">
+        <span>此前退出结果尚未确定</span
+        ><button
+          class="dialog-close"
+          type="button"
+          data-action="stay"
+          aria-label="关闭"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m6 6 12 12M18 6 6 18" />
+          </svg>
+        </button>
+      </div>
+      <h2 id="leave-title">暂时离开此页？</h2>
+      <p id="leave-description">
+        此前的退出请求已经发出，离开此页不会取消请求。此前退出结果尚未确定，请使用同一账户继续查询。
+      </p>
+      <div class="dialog-actions">
+        <button class="button primary" type="button" data-action="stay">
+          留在此页</button
+        ><button class="button" type="button" data-action="leave">
+          暂时离开
+        </button>
+      </div>
+    </dialog>
+  </body>
+</html>

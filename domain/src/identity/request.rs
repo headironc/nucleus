@@ -3,13 +3,15 @@ use std::{
     str::FromStr,
 };
 
-use base64::{DecodeSliceError, Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use bytes::BytesMut;
 use derive_more::AsRef;
+use serde::{Deserialize, Deserializer};
 use sha2::{Digest, Sha256};
-use strum::{AsRefStr, EnumString};
 use subtle::ConstantTimeEq;
-use thiserror::Error;
+use tokio_postgres::types::{FromSql, IsNull, ToSql, Type, to_sql_checked};
 use zeroize::Zeroizing;
+
+pub use crate::identity::credential::ParseError;
 
 /// The client-supplied secret that proves an original R1 request.
 pub struct Secret(Zeroizing<[u8; 32]>);
@@ -40,23 +42,46 @@ impl FromStr for Secret {
     type Err = ParseError;
 
     fn from_str(input: &str) -> Result<Self, Self::Err> {
-        if input.len() != 43 {
-            return Err(ParseError::Length);
-        }
+        Ok(Self(crate::identity::credential::parse(input)?))
+    }
+}
 
-        let mut bytes = Zeroizing::new([0_u8; 32]);
-        let decoded_len = URL_SAFE_NO_PAD.decode_slice(input, &mut bytes[..])?;
-        if decoded_len != bytes.len() {
-            return Err(ParseError::Length);
-        }
-
-        Ok(Self(bytes))
+impl<'de> Deserialize<'de> for Secret {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let input = Zeroizing::<String>::deserialize(deserializer)?;
+        input.parse().map_err(serde::de::Error::custom)
     }
 }
 
 /// The SHA-256 proof of the original client secret.
 #[derive(AsRef)]
 pub struct Proof([u8; 32]);
+
+impl<'a> FromSql<'a> for Proof {
+    fn from_sql(
+        kind: &Type,
+        raw: &'a [u8],
+    ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(Self(<&[u8]>::from_sql(kind, raw)?.try_into()?))
+    }
+    fn accepts(kind: &Type) -> bool {
+        <&[u8] as FromSql>::accepts(kind)
+    }
+}
+
+impl ToSql for Proof {
+    fn to_sql(
+        &self,
+        kind: &Type,
+        output: &mut BytesMut,
+    ) -> Result<IsNull, Box<dyn std::error::Error + Send + Sync>> {
+        self.0.as_slice().to_sql(kind, output)
+    }
+    fn accepts(kind: &Type) -> bool {
+        <&[u8] as ToSql>::accepts(kind)
+    }
+    to_sql_checked!();
+}
 
 impl PartialEq for Proof {
     fn eq(&self, other: &Self) -> bool {
@@ -72,28 +97,10 @@ impl Debug for Proof {
     }
 }
 
-/// Why a client request secret cannot be reconstructed from text.
-#[derive(Debug, Error)]
-pub enum ParseError {
-    #[error("request secret must encode 32 bytes without padding")]
-    Length,
-    #[error("invalid request secret encoding")]
-    Decode(#[from] DecodeSliceError),
-}
-
-/// The client-declared session delivery for an original request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, EnumString, AsRefStr)]
-pub enum Transport {
-    #[strum(serialize = "cookie")]
-    Cookie,
-    #[strum(serialize = "bearer")]
-    Bearer,
-}
-
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
-    use crate::identity::request::{ParseError, Secret, Transport};
+    use crate::identity::request::{ParseError, Secret};
 
     const ORIGINAL: &str = "AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8";
     const BYTES: [u8; 32] = [
@@ -111,6 +118,33 @@ mod tests {
             .parse::<Secret>()
             .expect("URL-safe alphabet is valid");
         assert_eq!(url_safe.as_ref(), &[0xff; 32]);
+    }
+
+    #[test]
+    fn deserializes_validated_secret_text_without_exposing_invalid_values() {
+        for json in [
+            r#""AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8""#,
+            r#""\u0041AECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8""#,
+        ] {
+            let secret: Secret = serde_json::from_str(json).expect("canonical secret");
+            assert_eq!(secret.as_ref(), &BYTES);
+            let secret: Secret =
+                serde_json::from_value(serde_json::from_str(json).expect("owned text"))
+                    .expect("owned canonical secret");
+            assert_eq!(secret.as_ref(), &BYTES);
+        }
+        for invalid in [
+            "fictional-private-secret",
+            "!AECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8",
+        ] {
+            let error = serde_json::from_value::<Secret>(serde_json::json!(invalid))
+                .expect_err("invalid secret");
+            assert!(!format!("{error:?}").contains(invalid));
+            assert!(!error.to_string().contains(invalid));
+        }
+        for invalid in ["null", "123", "true", "[]", "{}"] {
+            assert!(serde_json::from_str::<Secret>(invalid).is_err());
+        }
     }
 
     #[test]
@@ -158,31 +192,6 @@ mod tests {
             assert!(matches!(
                 input.parse::<Secret>(),
                 Err(ParseError::Decode(_))
-            ));
-        }
-    }
-
-    #[test]
-    fn accepts_only_exact_session_transport_values() {
-        for (input, expected) in [("cookie", Transport::Cookie), ("bearer", Transport::Bearer)] {
-            let transport = input
-                .parse::<Transport>()
-                .expect("fixed transport is valid");
-            assert_eq!(transport, expected);
-            assert_eq!(transport.as_ref(), input);
-        }
-
-        for invalid in [
-            "",
-            "Cookie",
-            "BEARER",
-            " cookie",
-            "bearer ",
-            "cookie,bearer",
-        ] {
-            assert!(matches!(
-                invalid.parse::<Transport>(),
-                Err(strum::ParseError::VariantNotFound)
             ));
         }
     }

@@ -6,6 +6,7 @@
     "moduleResolution": "bundler",
     "types": ["bun", "node"],
     "strict": true,
+    "allowImportingTsExtensions": true,
     "noEmit": true
   },
   "include": ["tools/**/*.ts", "fixture/postgresql.ts"]
