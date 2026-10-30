@@ -78,6 +78,9 @@ pub enum Fault {
     PausedCommit,
     PausedMobileLookup,
     LostCommitBeforeSessionRead,
+    StalledExchangesBatch,
+    StalledExchangeRead,
+    StalledExchangeRelations,
 }
 
 struct Control {
@@ -246,6 +249,9 @@ impl Proxy {
                 Fault::PausedCommit => 53,
                 Fault::PausedMobileLookup => 54,
                 Fault::LostCommitBeforeSessionRead => 55,
+                Fault::StalledExchangesBatch => 56,
+                Fault::StalledExchangeRead => 57,
+                Fault::StalledExchangeRelations => 58,
             },
             Ordering::SeqCst,
         );
@@ -976,6 +982,24 @@ async fn relay(
                     .any(|bytes| bytes == b"SELECT id, person_id FROM identity.revisions WHERE ($1::uuid IS NULL OR id>$1) ORDER BY id LIMIT 128")
             {
                 36
+            } else if message[0] == b'P'
+                && message
+                    .windows(b"SELECT operation_id FROM identity.exchanges WHERE".len())
+                    .any(|bytes| bytes == b"SELECT operation_id FROM identity.exchanges WHERE")
+            {
+                56
+            } else if message[0] == b'P'
+                && message
+                    .windows(b"FROM identity.exchanges WHERE operation_id=$1".len())
+                    .any(|bytes| bytes == b"FROM identity.exchanges WHERE operation_id=$1")
+            {
+                57
+            } else if message[0] == b'P'
+                && message
+                    .windows(b"SELECT NOT EXISTS (SELECT 1 FROM identity.exchanges exchange".len())
+                    .any(|bytes| bytes == b"SELECT NOT EXISTS (SELECT 1 FROM identity.exchanges exchange")
+            {
+                58
             } else if control.fault.load(Ordering::SeqCst) == 38 && message[0] == b'P'
                 && message
                     .windows(b"FROM workforce.numbers state".len())
@@ -1103,12 +1127,12 @@ async fn relay(
                     .compare_exchange(stalled, 0, Ordering::SeqCst, Ordering::SeqCst)
                     .is_ok()
             {
-                if matches!(stalled, 28 | 32..=36 | 38 | 39 | 44..=48 | 52) {
+                if matches!(stalled, 28 | 32..=36 | 38 | 39 | 44..=48 | 52 | 56..=58) {
                     // Keep PostgreSQL's idle timeout from racing the read deadline.
                     stalled_query.store(true, Ordering::SeqCst);
                 }
                 control.pause(&backend_pid).await?;
-                if matches!(stalled, 28 | 32..=36 | 38 | 39 | 44..=48 | 52) {
+                if matches!(stalled, 28 | 32..=36 | 38 | 39 | 44..=48 | 52 | 56..=58) {
                     stalled_query.store(false, Ordering::SeqCst);
                     resumed.notify_one();
                 }

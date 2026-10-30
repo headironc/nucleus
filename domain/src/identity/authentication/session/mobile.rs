@@ -11,7 +11,10 @@ use uuid::Uuid;
 
 use super::{Creation, Outcome, Receipt, Session, database, inconsistent};
 use crate::{
-    database::transaction::{self, Completion, Known},
+    database::{
+        transaction::{self, Completion, Known},
+        verification,
+    },
     history::Read,
     identity::{
         account,
@@ -855,27 +858,33 @@ pub(super) async fn verify_all(
 ) -> Result<(), Error> {
     let mut cursor: Option<operation::Id> = None;
     loop {
-        let rows = client.query("SELECT operation_id FROM identity.exchanges WHERE ($1::uuid IS NULL OR operation_id>$1) ORDER BY operation_id LIMIT 128", &[&cursor]).await?;
-        if rows.is_empty() {
+        let complete = verification::Stage::ExchangesBatch
+            .batch(TRANSACTION_BUDGET, async {
+                let rows = client.query("SELECT operation_id FROM identity.exchanges WHERE ($1::uuid IS NULL OR operation_id>$1) ORDER BY operation_id LIMIT 128", &[&cursor]).await?;
+                let complete = rows.len() < 128;
+                for row in rows {
+                    let operation: operation::Id = row.try_get(0)?;
+                    let exchange = find(client, operation)
+                        .await?
+                        .ok_or(inconsistent("startup exchange remains in its snapshot"))?;
+                    exchange.validate(now)?;
+                    if !settings.accepts(&session::Origin::MiniMobile(exchange.app_id)) {
+                        return Err(inconsistent(
+                            "retained mini-program exchange requires its configured application identity",
+                        ));
+                    }
+                    keys.input.fetch(exchange.key_id)?;
+                    keys.challenge.fetch(exchange.lookup_key_id)?;
+                    cursor = Some(operation);
+                }
+                Ok::<_, Error>(complete)
+            })
+            .await??;
+        if complete {
             break;
         }
-        for row in rows {
-            let operation: operation::Id = row.try_get(0)?;
-            let exchange = find(client, operation)
-                .await?
-                .ok_or(inconsistent("startup exchange remains in its snapshot"))?;
-            exchange.validate(now)?;
-            if !settings.accepts(&session::Origin::MiniMobile(exchange.app_id)) {
-                return Err(inconsistent(
-                    "retained mini-program exchange requires its configured application identity",
-                ));
-            }
-            keys.input.fetch(exchange.key_id)?;
-            keys.challenge.fetch(exchange.lookup_key_id)?;
-            cursor = Some(operation);
-        }
     }
-    let valid: bool = client.query_one("SELECT NOT EXISTS (SELECT 1 FROM identity.exchanges exchange LEFT JOIN identity.authentications authentication ON authentication.exchange_id=exchange.id WHERE (exchange.status='resolved' AND authentication.id IS NULL AND exchange.finished_at + interval '24 hours' > $1) OR (authentication.id IS NOT NULL AND (exchange.status<>'resolved' OR ROW(exchange.operation_id,exchange.app_id,exchange.proof,exchange.hash,exchange.key_id,exchange.finished_at) IS DISTINCT FROM ROW(authentication.operation_id,authentication.app_id,authentication.proof,authentication.hash,authentication.key_id,authentication.finished_at))))", &[&now]).await?.try_get(0)?;
+    let valid: bool = verification::Stage::ExchangeRelations.query(TRANSACTION_BUDGET, client.query_one("SELECT NOT EXISTS (SELECT 1 FROM identity.exchanges exchange LEFT JOIN identity.authentications authentication ON authentication.exchange_id=exchange.id WHERE (exchange.status='resolved' AND authentication.id IS NULL AND exchange.finished_at + interval '24 hours' > $1) OR (authentication.id IS NOT NULL AND (exchange.status<>'resolved' OR ROW(exchange.operation_id,exchange.app_id,exchange.proof,exchange.hash,exchange.key_id,exchange.finished_at) IS DISTINCT FROM ROW(authentication.operation_id,authentication.app_id,authentication.proof,authentication.hash,authentication.key_id,authentication.finished_at))))", &[&now])).await??.try_get(0)?;
     if !valid {
         return Err(inconsistent(
             "exchange and retained authentication preserve their original conclusion",

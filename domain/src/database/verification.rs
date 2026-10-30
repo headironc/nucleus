@@ -35,6 +35,8 @@ pub enum Stage {
     MessagesOpen,
     MessagesBatch,
     MessagesClose,
+    ExchangesBatch,
+    ExchangeRelations,
     AuthenticationsOpen,
     AuthenticationsBatch,
     AuthenticationAccountsOpen,
