@@ -140,7 +140,7 @@ export class Controller {
             message: "此前退出结果已无法继续查看。请检查当前登录状态。" });
         }
       } else if ((this.view.phase === "account" || this.view.phase === "sessions") && this.view.logoutPending && !this.selectedLogout()) {
-        this.publish({ logoutPending: false, canRecover: false,
+        this.publish({ logoutPending: false, canRecover: false, canCheck: true,
           message: "此前退出结果已无法继续查看，不表示此前退出失败。" });
       }
     } catch {

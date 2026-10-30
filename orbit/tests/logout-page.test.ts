@@ -10,9 +10,10 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 type NativePage = { data: Record<string, any>; onShow(): void; onHide(): void; recover(): void;
   authorize(event: { detail: { code: string } }): void; logoutCurrent(): void; logoutAll(): void };
 
-async function native(scope: "current" | "all") {
+async function native(scope: "current" | "all", later = false) {
   const platform = new FakePlatform();
-  platform.setStorageSync(storageKey, { version: 1, session: { ...session(), accountId: ids.account } });
+  platform.setStorageSync(storageKey, { version: 1, session: { ...session(later ? ids.later : ids.session), accountId: ids.account },
+    ...(later ? { logouts: [{ operation: ids.registration, accountId: ids.account, sessionId: ids.session, scope, createdAt: epoch, deadline: epoch + 600000 }] } : {}) });
   let application: any, definition: any, modal: any, now = epoch;
   const context = { wx: Object.assign(platform, { showModal(value: unknown) { modal = value; } }),
     App(value: unknown) { application = value; }, getApp() { return application; }, Page(value: unknown) { definition = value; },
@@ -29,15 +30,17 @@ async function native(scope: "current" | "all") {
   showing.page.onShow(); await platform.next(0); platform.reply(0, { code: "ok", account: account() });
   if (scope === "all") {
     await platform.next(1); platform.reply(1, { code: "ok", sessions: [
-      { id: ids.session, source: "mini", createdAt: "2026-10-30T08:00:00Z", current: true },
+      { id: later ? ids.later : ids.session, source: "mini", createdAt: "2026-10-30T08:00:00Z", current: true },
     ] });
   }
   await tick();
   const index = platform.requests.length;
-  if (scope === "current") showing.page.logoutCurrent(); else showing.page.logoutAll();
-  modal.success({ confirm: true }); await platform.next(index);
+  if (!later) {
+    if (scope === "current") showing.page.logoutCurrent(); else showing.page.logoutAll();
+    modal.success({ confirm: true }); await platform.next(index);
+  }
   const original = platform.records().logouts![0];
-  platform.disconnect(index); await tick();
+  if (!later) { platform.disconnect(index); await tick(); }
   return { ...showing, platform, application, original, load, setNow(value: number) { now = value; } };
 }
 
@@ -81,6 +84,17 @@ test.each(["current", "all"] as const)("native %s offers current-login checking 
     expect(h.page.data.canLogin).toBe(false);
     h.platform.storageReadFails = false;
   }
+});
+
+test.each(["current", "all"] as const)("native %s restores the current-state action when a later-session displayed page outlives original materials", async scope => {
+  const h = await native(scope, true);
+  expect(h.page.data.phase).toBe(scope === "current" ? "account" : "sessions");
+  expect(actions(h.source, h.page)).toEqual([{ binding: "recover", text: "查看退出结果" }]);
+  const count = h.platform.requests.length;
+  h.setNow(epoch + 600001); h.application.onShow();
+  expect(actions(h.source, h.page)).toEqual([{ binding: scope === "current" ? "check" : "refresh", text: scope === "current" ? "刷新个人资料" : "刷新列表" }]);
+  expect(h.platform.records().session?.id).toBe(ids.later);
+  expect(h.platform.requests).toHaveLength(count);
 });
 
 test.each(["current", "all"] as const)("native %s requires login only after 401 and preserves the later login after previous success", async scope => {
