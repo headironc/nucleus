@@ -1,0 +1,11 @@
+{
+  "pages": ["pages/home/index", "pages/account/index"],
+  "window": {
+    "navigationBarTitleText": "司籍处",
+    "navigationBarBackgroundColor": "#f8f6ef",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f8f6ef"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

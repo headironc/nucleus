@@ -1,0 +1,22 @@
+{
+  "name": "orbit",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.4",
+  "engines": { "node": ">=26 <27" },
+  "scripts": {
+    "generate": "node tools/protocol.ts",
+    "typecheck": "node node_modules/typescript-compiler/bin/tsc --noEmit && node node_modules/typescript-compiler/bin/tsc -p tsconfig.tools.json --noEmit",
+    "test": "bun test tests",
+    "build": "bun tools/build.ts"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.4",
+    "@types/node": "26.6.6",
+    "ajv": "8.20.0",
+    "ajv-formats": "3.0.1",
+    "openapi-typescript": "7.13.0",
+    "typescript": "5.9.3",
+    "typescript-compiler": "npm:typescript@7.0.2"
+  }
+}

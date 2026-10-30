@@ -1,0 +1,11 @@
+{
+  "appid": "wx18bcc48946802540",
+  "projectname": "nucleus-orbit",
+  "miniprogramRoot": "./build/",
+  "compileType": "miniprogram",
+  "setting": {
+    "es6": false,
+    "enhance": false,
+    "minified": false
+  }
+}

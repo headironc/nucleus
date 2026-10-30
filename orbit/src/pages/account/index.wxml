@@ -1,0 +1,54 @@
+<view class="page account">
+  <view class="eyebrow">司籍处 · 本人账户</view>
+  <view class="page-title">{{phase === 'registration' ? '创建个人账户' : '个人账户'}}</view>
+  <view class="notice" wx:if="{{message}}" role="status">{{message}}</view>
+
+  <!-- snapshot:login:start -->
+  <view class="intro-card" wx:if="{{canLogin}}">
+    <view class="card-title">手机号登录</view>
+    <view class="body-copy">请主动授权微信绑定的手机号。手机号验证不会关联微信身份。</view>
+    <button class="primary" open-type="getPhoneNumber" bindgetphonenumber="authorize" disabled="{{busy}}">使用手机号登录</button>
+    <view class="small-copy">首次使用将在验证后进入注册。</view>
+  </view>
+  <!-- snapshot:login:end -->
+
+  <!-- snapshot:registration:start -->
+  <view class="intro-card" wx:if="{{phase === 'registration'}}">
+    <view class="card-title">填写实名资料</view>
+    <view class="body-copy">用于建立你的个人账户。请按本人居民身份证填写。</view>
+    <view class="field-label">姓名</view>
+    <input class="field" value="{{inputName}}" bindinput="inputName" maxlength="64" placeholder="填写本人姓名" disabled="{{busy}}" />
+    <view class="field-label">居民身份证号</view>
+    <input class="field" value="{{inputIdNumber}}" bindinput="inputIdNumber" type="idcard" maxlength="18" placeholder="18 位居民身份证号" disabled="{{busy}}" />
+    <button class="primary" bindtap="submit" disabled="{{busy}}">提交注册</button>
+    <view class="small-copy">注册后可查看个人账户，员工服务需另行开通。</view>
+  </view>
+  <!-- snapshot:registration:end -->
+
+  <!-- snapshot:account:start -->
+  <view class="intro-card" wx:if="{{phase === 'account'}}">
+    <view class="profile">
+      <image class="avatar" wx:if="{{avatar &amp;&amp; !avatarFailed}}" src="{{avatar}}" mode="aspectFit" binderror="avatarError" />
+      <view class="avatar avatar-placeholder" wx:else>人</view>
+      <view><view class="profile-name">{{name}}</view><view class="small-copy">当前已登录的本人账户</view></view>
+    </view>
+    <view class="small-copy" wx:if="{{avatarFailed}}">图片暂时无法加载</view>
+    <view class="detail-row"><text>居民身份证号</text><text>尾号 {{suffix}}</text></view>
+    <view class="detail-row"><text>微信身份</text><text>{{bound ? '已关联' : '未关联'}}</text></view>
+    <button class="secondary" bindtap="check" disabled="{{busy}}">刷新个人资料</button>
+    <button class="text-button" bindtap="switchAccount" disabled="{{busy}}">切换账户</button>
+    <view class="separator"></view>
+    <button class="secondary" bindtap="logoutCurrent" disabled="{{busy || logoutPending}}">退出本次登录</button>
+    <button class="text-button danger" bindtap="logoutAll" disabled="{{busy || logoutPending}}">退出全部设备</button>
+  </view>
+  <!-- snapshot:account:end -->
+
+  <view class="actions" wx:if="{{phase !== 'account' &amp;&amp; canCheck}}">
+    <button class="secondary" bindtap="check" disabled="{{busy}}">检查登录状态</button>
+  </view>
+  <view class="notice" wx:if="{{logoutPending}}">此前退出结果仍待确认。</view>
+  <button class="secondary" wx:if="{{canRecover}}" bindtap="recover" disabled="{{busy}}">{{logoutPending ? '查看本次退出结果' : '检查本次办理结果'}}</button>
+  <button class="text-button" wx:if="{{canReset}}" bindtap="restartLogin" disabled="{{busy}}">重新验证手机号</button>
+  <view class="small-copy" wx:if="{{busy}}">请稍候…</view>
+  <navigator class="home-link" url="/pages/home/index" open-type="reLaunch">返回公开首页</navigator>
+</view>
