@@ -456,7 +456,13 @@ fn http_validates_requests_before_business_work_and_describes_actual_routes() {
                     assert_eq!(value["components"]["schemas"][schema]["properties"]["code"]["pattern"], "^[0-9]{6}$");
                 }
                 let paths = value["paths"].as_object().expect("paths");
-                assert_eq!(paths.len(), 93);
+                assert_eq!(paths.len(), 94);
+                assert_eq!(paths["/api/v1/sessions"]["get"]["operationId"], "listOwnSessions");
+                assert_eq!(paths["/api/v1/sessions/{id}"]["delete"]["operationId"], "revokeOtherSession");
+                let active = &value["components"]["schemas"]["session.Active"];
+                assert_eq!(active["required"], serde_json::json!(["id", "source", "createdAt", "current"]));
+                assert_eq!(active["maxProperties"], 4);
+                assert_eq!(value["components"]["schemas"]["session.Source"]["enum"], serde_json::json!(["website", "mini"]));
                 assert_eq!(paths["/api/v1/accounts/current/avatar"]["put"]["operationId"], "replaceAvatar");
                 assert_eq!(paths["/api/v1/replacements/{id}"]["get"]["operationId"], "avatarReplacement");
                 let upload_content = paths["/api/v1/accounts/current/avatar"]["put"]["requestBody"]["content"].as_object().expect("raw upload media");
@@ -580,7 +586,7 @@ fn http_validates_requests_before_business_work_and_describes_actual_routes() {
                 let original = &value["components"]["schemas"]["revocation.Original"];
                 assert_eq!(original["required"], serde_json::json!(["scope", "initiatorId"]));
                 assert_eq!(resolve(&original["properties"]["initiatorId"])["format"], "uuid");
-                assert_eq!(resolve(&original["properties"]["scope"])["enum"], serde_json::json!(["current", "all"]));
+                assert_eq!(resolve(&original["properties"]["scope"])["enum"], serde_json::json!(["current", "all", "other"]));
                 assert!(value["paths"]["/api/v1/revocations"]["head"].is_object());
                 for (path,method) in [("/api/v1/sessions/current","delete"),("/api/v1/sessions","delete"),("/api/v1/revocations","get"),("/api/v1/revocations","head"),("/api/v1/accounts/current","get"),("/api/v1/accounts/current","head"),("/api/v1/accounts/current/role","get"),("/api/v1/accounts/current/role","head"),("/api/v1/roles","get"),("/api/v1/roles","head")] {
                     let operation = &value["paths"][path][method];
@@ -789,7 +795,7 @@ fn http_validates_requests_before_business_work_and_describes_actual_routes() {
             assert!(response.headers()["allow"].to_str().expect("allowed methods").contains("GET"));
             assert_eq!(response.json::<serde_json::Value>().await.expect("health method JSON"), serde_json::json!({"code":"method_not_allowed"}));
         }
-        for (path, expected, code) in [("/api/v1/codes", 405, "method_not_allowed"), ("/api/v1/sessions", 405, "method_not_allowed"), ("/api/v1/registrations", 405, "method_not_allowed")] {
+        for (path, expected, code) in [("/api/v1/codes", 405, "method_not_allowed"), ("/api/v1/sessions", 400, "invalid_input"), ("/api/v1/registrations", 405, "method_not_allowed")] {
             let response = client.get(format!("{base}{path}")).header("operation-id", OPERATION).header("x-real-ip", "invalid").header("origin", "https://attacker.invalid").send().await.expect("route refusal");
             assert_eq!(response.status(), expected);
             assert_eq!(response.headers()["cache-control"], "no-store");
@@ -803,7 +809,7 @@ fn http_validates_requests_before_business_work_and_describes_actual_routes() {
             assert_eq!(response.status(), 400);
             assert_eq!(response.json::<serde_json::Value>().await.expect("fallback error"), serde_json::json!({"code":"invalid_input"}));
             let response = client.head(format!("{base}{path}")).header("operation-id", OPERATION).send().await.expect("fallback HEAD");
-            assert_eq!(response.status(), if path == "/openapi/v1.json" {200} else {405});
+            assert_eq!(response.status(), match path { "/openapi/v1.json" => 200, "/api/v1/sessions" => 401, _ => 405 });
             assert_eq!(response.headers()["cache-control"], "no-store");
             assert_eq!(response.headers()["x-content-type-options"], "nosniff");
             assert!(response.bytes().await.expect("HEAD body").is_empty());

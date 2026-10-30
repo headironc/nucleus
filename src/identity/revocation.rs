@@ -1,4 +1,4 @@
-//! Website logout and a separate read of the original account-scoped completion.
+//! Own session listing and logout for website cookies and mini-program Bearer.
 
 use axum::{
     body::Bytes,
@@ -20,12 +20,25 @@ use crate::{
     extension::Extension,
     identity::{Context, current},
     json::Json,
+    path::Path,
     query::Query,
     response::{Common, Failure},
 };
 
 pub(super) fn router(context: &Context) -> OpenApiRouter<Context> {
     OpenApiRouter::new()
+        .routes(routes!(list).map(|router| {
+            router.route_layer(middleware::from_fn_with_state(
+                context.clone(),
+                current::authenticate_mobile,
+            ))
+        }))
+        .routes(routes!(revoke_other).map(|router| {
+            router.route_layer(middleware::from_fn_with_state(
+                context.clone(),
+                current::authenticate_mobile,
+            ))
+        }))
         .routes(routes!(revoke).map(|router| {
             router.route_layer(middleware::from_fn_with_state(
                 context.clone(),
@@ -82,6 +95,111 @@ struct Revocation {
 enum Scope {
     Current,
     All,
+    Other,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(as = session::Source)]
+enum Source {
+    Website,
+    Mini,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[schema(as = session::Active, max_properties = 4)]
+struct Session {
+    id: session::Id,
+    source: Source,
+    created_at: DateTime<Utc>,
+    current: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+#[schema(as = session::Collection, max_properties = 2)]
+struct Sessions {
+    code: &'static str,
+    sessions: Vec<Session>,
+}
+
+#[utoipa::path(get, path = "/sessions", operation_id = "listOwnSessions",
+    description = "Lists only the authenticated account's effective sessions in session-ID order. Each item contains only id, source (website or mini), createdAt and current. Qualification and membership are checked in one snapshot. Accepts a selected website cookie under read-origin rules, or an exclusive mini-program Bearer token. Cache-Control is no-store.",
+    params(("Operation-Id"=Uuid, Header, description="This request UUID"),
+        ("Session-Id"=Option<Uuid>, Header, description="Website cookie mode only"),
+        ("Authorization"=Option<String>, Header, description="Exclusive mini-program Bearer token")),
+    responses((status=200,description="Own effective sessions",body=Sessions),
+        (status=400,description="invalid_input",body=Failure),
+        (status=401,description="authentication_invalid",body=Failure),
+        (status=403,description="permission_denied",body=Failure),
+        (status=413,description="invalid_input",body=Failure),
+        (status=429,description="rate_limited",body=Failure,headers(("Retry-After"=u64,description="Wait seconds before another attempt"))),
+        (status=500,description="internal_error",body=Failure),
+        (status=503,description="dependency_unavailable",body=Failure)))]
+async fn list(
+    Extension(actor): Extension<Actor>,
+    State(context): State<Context>,
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
+    if let Err(status) = empty(body) {
+        return failed(status, Common::InvalidInput);
+    }
+    crate::route::query(
+        "session_list",
+        context.services.revocation().sessions(&actor),
+        |sessions| {
+            Json(Sessions {
+                code: "ok",
+                sessions: sessions
+                    .into_iter()
+                    .map(|session| Session {
+                        id: session.id(),
+                        source: match session.origin() {
+                            session::Origin::WebsiteMessage(_) => Source::Website,
+                            session::Origin::MiniMobile(_) => Source::Mini,
+                        },
+                        created_at: session.created_at(),
+                        current: session.current(),
+                    })
+                    .collect(),
+            })
+            .into_response()
+        },
+    )
+    .await
+}
+
+#[utoipa::path(delete, path = "/sessions/{id}", operation_id = "revokeOtherSession",
+    description = "Revokes exactly one other effective session of the authenticated account. Rejects the acting session with 409 current_session. Foreign, unknown, expired and revoked targets uniformly return 404 resource_not_found. Locks and rechecks the actor, account and target before deciding. The operation binds the exact target; original recovery uses GET /revocations with scope other and the fixed singleton revocations set. Success preserves the acting session and never clears a cookie. Website requires exact Origin; Bearer is exclusive with website credentials.",
+    params(("id"=Uuid,Path,description="Other own effective session UUID"),
+        ("Operation-Id"=Uuid,Header,description="Original logout operation UUID"),
+        ("Session-Id"=Option<Uuid>,Header,description="Website cookie mode only"),
+        ("Authorization"=Option<String>,Header,description="Exclusive mini-program Bearer token")),
+    responses((status=200,description="Other session revoked; acting session retained",body=Receipt),
+        (status=400,description="invalid_input; no request body is accepted",body=Failure),
+        (status=401,description="authentication_invalid",body=Failure),
+        (status=403,description="permission_denied",body=Failure),
+        (status=404,description="resource_not_found",body=Failure),
+        (status=409,description="current_session or request_mismatch",body=Failure),
+        (status=413,description="invalid_input",body=Failure),
+        (status=429,description="rate_limited",body=Failure,headers(("Retry-After"=u64,description="Wait seconds before another attempt"))),
+        (status=500,description="internal_error",body=Failure),
+        (status=503,description="dependency_unavailable or outcome_unknown",body=Failure)))]
+async fn revoke_other(
+    Extension(operation_id): Extension<operation::Id>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<session::Id>,
+    State(context): State<Context>,
+    body: Result<Bytes, BytesRejection>,
+) -> Response {
+    perform(
+        operation_id,
+        actor,
+        context,
+        body,
+        revocation::Scope::Other(id),
+    )
+    .await
 }
 
 #[derive(Serialize, ToSchema)]
@@ -166,7 +284,8 @@ async fn perform(
         return failed(status, Common::InvalidInput);
     }
     let id = actor.session_id();
-    let cookie = actor.origin().transport() == "cookie";
+    let cookie =
+        actor.origin().transport() == "cookie" && !matches!(scope, revocation::Scope::Other(_));
     crate::route::command(
         context
             .services
@@ -225,6 +344,7 @@ async fn read(
                 scope: match result.scope() {
                     revocation::Scope::Current => Scope::Current,
                     revocation::Scope::All => Scope::All,
+                    revocation::Scope::Other(_) => Scope::Other,
                 },
                 initiator_id: result.initiator_id(),
             });
