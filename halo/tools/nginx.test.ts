@@ -136,10 +136,11 @@ http {
       expect(response.headers.get("cache-control")).toBe("private, max-age=60");
       expect(response.headers.get("x-content-type-options")).toBe("nosniff");
       expect(response.headers.get("referrer-policy")).toBe("no-referrer");
-      expect(received.at(-1)).toMatchObject({
-        url: avatar + "?fixture=upload",
-        bytes,
-      });
+      const actual = received.at(-1)!;
+      expect(actual.url).toBe(avatar + "?fixture=upload");
+      expect(actual.method).toBe("PUT");
+      expect(actual.bytes.length).toBe(bytes.length);
+      expect(actual.bytes.equals(bytes)).toBe(true);
     }
 
     for (const bytes of [image, Buffer.alloc(8 * 1024 * 1024)]) {
@@ -150,19 +151,19 @@ http {
       expect(response.headers.get("set-cookie")).toBeNull();
       expect(response.headers.get("x-content-type-options")).toBe("nosniff");
       expect(response.headers.get("referrer-policy")).toBe("no-referrer");
-      expect(received.at(-1)).toMatchObject({
-        url: photo + "?fixture=upload",
-        method: "POST",
-        bytes,
-        headers: {
-          "content-type": "image/webp",
-          "session-id": "11111111-1111-4111-8111-111111111111",
-          "operation-id": "22222222-2222-4222-8222-222222222222",
-          cookie: "fixture=badge",
-          "x-real-ip": "127.0.0.1",
-        },
+      const actual = received.at(-1)!;
+      expect(actual.url).toBe(photo + "?fixture=upload");
+      expect(actual.method).toBe("POST");
+      expect(actual.bytes.length).toBe(bytes.length);
+      expect(actual.bytes.equals(bytes)).toBe(true);
+      expect(actual.headers).toMatchObject({
+        "content-type": "image/webp",
+        "session-id": "11111111-1111-4111-8111-111111111111",
+        "operation-id": "22222222-2222-4222-8222-222222222222",
+        cookie: "fixture=badge",
+        "x-real-ip": "127.0.0.1",
       });
-      expect(received.at(-1)!.headers["x-forwarded-for"]).toBeUndefined();
+      expect(actual.headers["x-forwarded-for"]).toBeUndefined();
     }
     const refused = await send(photo + "?fixture=refusal", image, "POST");
     expect(refused.status).toBe(503);
@@ -184,12 +185,12 @@ http {
       expect(response.status).toBe(201);
       expect(await response.text()).toBe("upstream");
       expect(response.headers.get("cache-control")).toBe("no-store");
-      expect(received.at(-1)).toMatchObject({
-        url: application + "?fixture=submit",
-        method: "POST",
-        bytes,
-        headers: { "content-type": "application/json" },
-      });
+      const actual = received.at(-1)!;
+      expect(actual.url).toBe(application + "?fixture=submit");
+      expect(actual.method).toBe("POST");
+      expect(actual.bytes.length).toBe(bytes.length);
+      expect(actual.bytes.equals(bytes)).toBe(true);
+      expect(actual.headers["content-type"]).toBe("application/json");
     }
 
     for (const [path, size, method] of [
