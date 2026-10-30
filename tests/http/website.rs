@@ -464,9 +464,8 @@ fn browser_c1_preserves_original_send() {
                             ).expect("affiliation Person ID");
                             let center: String = affiliation_observer.client().query_one(
                                 r#"SELECT jsonb_build_object(
-                                    'completions',(SELECT jsonb_agg(to_jsonb(completion) ORDER BY operation_id) FROM center.completions completion),
-                                    'affiliations',(SELECT jsonb_agg(to_jsonb(affiliation) ORDER BY sequence) FROM center.affiliations affiliation),
-                                    'profiles',(SELECT jsonb_agg(to_jsonb(profile) ORDER BY id) FROM center.profiles profile)
+                                    'affiliations',(SELECT jsonb_agg(to_jsonb(affiliation) ORDER BY created_at,id) FROM center.affiliations affiliation),
+                                    'audit',(SELECT jsonb_agg(to_jsonb(event) ORDER BY id) FROM audit.events event WHERE target_type='center.affiliation')
                                 )::text"#, &[],
                             ).await.expect("independent center snapshot").get(0);
                             let non_center: String = affiliation_observer.client().query_one(
@@ -495,7 +494,7 @@ fn browser_c1_preserves_original_send() {
                             let center: serde_json::Value = serde_json::from_str(&center).expect("center JSON");
                             match phase {
                                 "original-before" => {
-                                    for name in ["completions", "affiliations", "profiles"] {
+                                    for name in ["affiliations", "audit"] {
                                         assert!(center[name].is_null(), "first affiliation begins without {name}");
                                     }
                                     affiliation_original_before = Some((center.to_string(), non_center.clone()));
@@ -503,36 +502,26 @@ fn browser_c1_preserves_original_send() {
                                 "dropped-before" => {
                                     let before = affiliation_original_before.as_ref().expect("original before-state observed");
                                     assert_eq!(&non_center, &before.1, "first fill changes only center affiliation facts");
-                                    let operation = marker["operation"].as_str().expect("dropped original operation");
-                                    let operation = uuid::Uuid::parse_str(operation).expect("original operation ID");
-                                    let completions = center["completions"].as_array().expect("one center completion");
+                                    uuid::Uuid::parse_str(marker["operation"].as_str().expect("diagnostic operation")).expect("diagnostic operation ID");
                                     let affiliations = center["affiliations"].as_array().expect("one affiliation");
-                                    let profiles = center["profiles"].as_array().expect("one profile");
-                                    assert_eq!(completions.len(), 1, "the dropped success has one original completion");
-                                    assert_eq!(affiliations.len(), 1, "the dropped success has one original affiliation");
-                                    assert_eq!(profiles.len(), 1, "the dropped success has one profile");
-                                    let completion = &completions[0];
+                                    let events = center["audit"].as_array().expect("one atomic audit");
+                                    assert_eq!(events.len(), 1, "the dropped success has one audit event");
+                                    assert_eq!(affiliations.len(), 1, "the dropped success has one retained affiliation");
+                                    let event = &events[0];
                                     let affiliation = &affiliations[0];
-                                    let profile = &profiles[0];
-                                    assert_eq!(completion["family"], "center_affiliation");
-                                    assert_eq!(completion["action"], "fill");
-                                    assert_eq!(completion["subject"], "session");
-                                    assert_eq!(completion["operation_id"], operation.to_string());
-                                    assert_eq!(completion["person_id"], person.to_string());
+                                    assert_eq!(event["action"], "fill");
+                                    assert_eq!(event["actor_id"], person.to_string());
+                                    assert_eq!(event["target_type"], "center.affiliation");
+                                    assert_eq!(event["target_id"], affiliation["id"]);
+                                    assert_eq!(event["details"], serde_json::json!({}));
                                     assert_eq!(affiliation["person_id"], person.to_string());
-                                    assert_eq!(affiliation["operation_id"], operation.to_string());
-                                    assert_eq!(affiliation["sequence"], 1);
-                                    assert_eq!(profile["id"], person.to_string());
-                                    assert_eq!(profile["affiliation_id"], affiliation["id"]);
-                                    assert_eq!(profile["sequence"], 1);
-                                    assert_eq!(profile["created_at"], affiliation["created_at"]);
-                                    assert_eq!(completion["created_at"], affiliation["created_at"]);
+                                    assert_eq!(affiliation.as_object().expect("retained fact").len(), 5);
                                     affiliation_dropped = Some((center.to_string(), non_center.clone()));
                                 }
                                 "dropped-after" => {
                                     let before = affiliation_dropped.as_ref().expect("dropped state observed");
-                                    assert_eq!(&non_center, &before.1, "original replay changes no unrelated fact");
-                                    assert_eq!(&center.to_string(), &before.0, "original replay adds no second completion or fact");
+                                    assert_eq!(&non_center, &before.1, "current refresh changes no unrelated fact");
+                                    assert_eq!(&center.to_string(), &before.0, "current refresh appends no fact or audit");
                                 }
                                 "read-before" => {
                                     affiliation_read_before = Some(format!("{center}\n{non_center}"));
@@ -546,11 +535,12 @@ fn browser_c1_preserves_original_send() {
                                 }
                                 "conflict-after" => {
                                     let before = affiliation_conflict_before.as_ref().expect("conflict before-state observed");
-                                    assert_eq!(&format!("{center}\n{non_center}"), before, "a new operation key cannot create a second affiliation fact");
+                                    assert_eq!(&format!("{center}\n{non_center}"), before, "a new confirmation cannot create a second first-fill fact or audit");
                                 }
                                 _ => unreachable!(),
                             }
                             affiliation_checked.insert(phase);
+                            logs.record("affiliation_observed", serde_json::json!({"phase":phase}));
                             std::fs::write(path.with_extension("ack"), "ok").expect("affiliation snapshot acknowledgement");
                         }
                     }
@@ -620,6 +610,7 @@ fn browser_c1_preserves_original_send() {
                 "success": browser_status.success(),
                 "code": browser_status.code(),
             }));
+            logs.record("affiliation_observations", serde_json::json!({"observed":affiliation_checked,"expected":7}));
             // Preserve completed business observations even if a later browser step fails.
             if admission.complete() {
                 logs.record("admission_acceptance", admission.evidence());
@@ -628,6 +619,7 @@ fn browser_c1_preserves_original_send() {
                 logs.record("allocation_acceptance", allocation.evidence());
             }
             assert!(browser_status.success(), "browser acceptance failed");
+            assert_eq!(affiliation_checked.len(), 7, "all affiliation phases have independent fact and audit evidence");
             let media = std::fs::read_to_string(material.path().join("media.jsonl"))
                 .expect("real signed-image reads through the fictional media entry");
             let mut images = 0_usize;

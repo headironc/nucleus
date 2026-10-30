@@ -280,18 +280,18 @@ Cookie 对象断言可能通过通用 `value` 字段携带秘密，因此该字�
 
 `/account` 的“政治面貌”进入 `/account/affiliation`。页面分别确认当前账户、读取当前政治面貌并读取固定名称，不占员工服务资格；已有值只读。只有可信 `404 affiliation_unset` 开放首次填写，身份、当前值或名称读取失败都不转为未填。固定名称不写入客户端常量，`app/protocol/affiliation.ts` 只接受按 `01` 至 `13` 升序、名称唯一且完整的 13 项响应；PUT 正文只为 `{affiliation:code}`，可信成功只接纳 `{code:"ok"}`，不从回执推断当前值或时间。
 
-`app/affiliation/controller.ts` 拥有页面内存中的原操作、当前值读取和失败分类；`app/affiliation/marker.ts` 拥有 `halo:affiliation` 的最小会话标记。标记、结果未知、固定原键重试、当前值独立读取和离开提示的规则见[页面文案](../docs/client/pages.md#网站本人政治面貌)及[客户端恢复](../docs/client/recovery.md)。政治面貌值、选择、名称、摘要与原请求正文不写入存储、URL 或日志。
+`app/affiliation/controller.ts` 拥有明确填写、当前值读取和失败处理。提交未取得响应时只提示刷新，读取成功后直接展示普通当前记录或未填写页面。可信创建成功提示保留，随后读取失败只影响当前记录展示。`app/affiliation/marker.ts` 只清理旧 `halo:affiliation` 键，失败不锁页，不改其他路由状态。敏感值不持久保存，具体动作与离页提示见[页面文案](../docs/client/pages.md#网站本人政治面貌)及[客户端恢复](../docs/client/recovery.md)。
 
-协议、标记和状态机可运行：
+协议、标记清理和页面行为可运行：
 
 ```bash
 cd halo
 bun run test -- app/protocol/affiliation.test.ts app/affiliation/marker.test.ts app/affiliation/controller.test.ts
 ```
 
-受控浏览器检查可运行 `bun run test:browser -- tests/affiliation.spec.ts`。夹具构建实际页面与样式，使用真实会话选择、真实 IndexedDB 与 BroadcastChannel，并由受控响应覆盖首次读取、13 个选项、成功与成功后的独立当前读取、各类首次拒绝、401/403、结果未知与同键原重试、标记存在或损坏、迟到响应、账户切换、离页、聚焦、四种宽度及明暗主题。受控响应不代替真实 Cookie、数据库事务或 Nginx 验收。
+受控浏览器检查可运行 `bun run test:browser -- tests/affiliation.spec.ts`。夹具构建实际页面与样式，使用真实会话选择、真实 IndexedDB 与 BroadcastChannel。覆盖首次读取、13 个选项、可信成功及读取失败、各类拒绝、401/403、提交无响应后的普通刷新、再次明确填写、旧标记及存储不可用、迟到响应、账户切换、离页、聚焦、四种宽度及明暗主题。受控响应不代替真实 Cookie、数据库事务或 Nginx 验收。
 
-真实组合验收在现有登录场景内使用独立虚构账户首次填写政治面貌，丢弃真实成功回包后以同一 Operation-Id 和正文重试，再分别读取当前值并以新键触发冲突。浏览器核对页面、Cookie 与固定原键；Rust 在首次提交和重放前后独立比较中心政治面貌、完成、人员档案与非中心账户、人员、会话、授权和终止事实。重放不新增第二条政治面貌事实，当前读取和冲突不改变业务事实。运行方式仍为 `HALO_NGINX=/usr/sbin/nginx bun tools/check-halo-test.ts browser`；受控浏览器检查、类型检查和单元测试都不能替代该验收。
+真实组合验收在现有登录场景内使用独立虚构账户首次填写政治面貌。丢弃真实成功回包后刷新并展示当前记录，页面 PUT 仍为一次。刷新及明确的冲突探测不新增业务事实。七个数据库观察点由 Rust 在隔离库独立比较政治面貌及其他业务事实，覆盖历史、加密绑定、审计及最多一次首次填写。完整真实验收在前后端准确集成候选上执行，入口为 `HALO_NGINX=/usr/sbin/nginx bun tools/check-halo-test.ts browser`；受控页面检查、类型检查和单元测试都不能替代该验收。
 
 ### 机构入口开通员工服务
 

@@ -1335,7 +1335,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
   );
   await ownHistory(other, original!.id, registeredAccount.personId);
 
-  await test.step("real first affiliation fill, dropped success and original replay", async () => {
+  await test.step("real first affiliation fill, dropped success and read-only state refresh", async () => {
     const person = registeredAccount.personId;
     let writes = 0;
     let originalOperation = "";
@@ -1345,6 +1345,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
       async (route) => {
         if (route.request().method() !== "PUT") return route.continue();
         writes++;
+        expect(writes).toBe(1);
         const operation = route.request().headers()["operation-id"]!;
         const body = route.request().postData()!;
         if (writes === 1) {
@@ -1353,18 +1354,12 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
           const response = await route.fetch();
           expect(response.status()).toBe(200);
           expect(await response.json()).toEqual({ code: "ok" });
-          // The backend committed. Prove that original fact before any replay,
+          // The backend committed. Prove that original fact before any refresh,
           // then drop the response so the browser observes an unknown outcome.
           await affiliationObservation(person, "dropped", "before", operation);
           await route.abort("connectionclosed");
           return;
         }
-        expect(operation).toBe(originalOperation);
-        expect(body).toBe(originalBody);
-        const response = await route.fetch();
-        expect(response.status()).toBe(200);
-        expect(await response.json()).toEqual({ code: "ok" });
-        await route.fulfill({ response });
       },
     );
     await other.goto("/account/affiliation");
@@ -1397,21 +1392,29 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     ).toBeVisible();
     await other.getByRole("button", { name: "确认填写" }).click();
     await expect(
-      other.getByRole("heading", { name: "暂时无法确认填写结果" }),
+      other.getByRole("heading", { name: "未能确认填写结果" }),
     ).toBeVisible();
     await expect(
       other.getByRole("button", { name: "重试本次填写" }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     expect(originalOperation).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
     expect(JSON.parse(originalBody)).toEqual({ affiliation: "04" });
 
-    await other.getByRole("button", { name: "重试本次填写" }).click();
+    await other
+      .getByRole("button", { name: "刷新", exact: true })
+      .click();
+    await expect(
+      other.getByRole("heading", { name: "当前政治面貌" }),
+    ).toBeVisible();
+    await expect(
+      other.getByRole("heading", { name: "未能确认填写结果" }),
+    ).toHaveCount(0);
     await expect(
       other.getByRole("heading", { name: "政治面貌已填写" }),
-    ).toBeVisible();
-    expect(writes).toBe(2);
+    ).toHaveCount(0);
+    expect(writes).toBe(1);
     await affiliationObservation(person, "dropped", "after", originalOperation);
     await other.unroute("**/api/v1/accounts/current/affiliation");
 
@@ -1423,7 +1426,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
         response.request().method() === "GET" &&
         response.status() === 200,
     );
-    await other.getByRole("button", { name: "查看当前政治面貌" }).click();
+    await other.reload();
     const current = await (await currentResponse).json();
     expect(current).toMatchObject({
       code: "ok",
@@ -1432,7 +1435,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     expect(Number.isFinite(Date.parse(current.affiliation.createdAt))).toBe(
       true,
     );
-    await expect(other.locator(".current-panel")).toContainText("民革会员");
+    await expect(other.locator(".record-panel")).toContainText("民革会员");
     await affiliationObservation(person, "read", "after");
 
     await affiliationObservation(person, "conflict", "before");

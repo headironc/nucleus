@@ -420,53 +420,52 @@ async fn history_by_person(
 }
 
 #[utoipa::path(put, path = "/accounts/current/affiliation", operation_id = "createCurrentAffiliation",
-    description = "Record the current person's first affiliation without institutional or Workforce permission. Requires exact Origin; supplied Sec-Fetch-Site must be same-origin. Success returns only code: ok and preserves the session cookie. Original-operation and conflict rules: docs/center/affiliation.md#http-契约.",
+    description = "Record the current person's first affiliation without institutional or Workforce permission. Requires exact Origin; supplied Sec-Fetch-Site must be same-origin. Operation-Id is diagnostic only, without deduplication or replay. Success returns only code: ok and preserves the session cookie. Refresh current state after an unknown outcome; never automatically repeat PUT. Rules: docs/center/affiliation.md#http-契约.",
     params(("Operation-Id" = uuid::Uuid, Header, description = "Required operation UUID"),
         ("Session-Id" = uuid::Uuid, Header, description = "Required website session UUID"),
         ("Origin" = String, Header, description = "Required exact configured origin")),
     request_body(content = affiliation::Input, content_type = "application/json"),
-    responses((status = 200, description = "First affiliation recorded or original completion confirmed", body = Receipt),
+    responses((status = 200, description = "First affiliation recorded", body = Receipt),
         (status = 400, description = "invalid_input", body = Failure), (status = 401, description = "authentication_invalid", body = Failure),
-        (status = 403, description = "permission_denied", body = Failure), (status = 409, description = "request_mismatch or state_conflict", body = Failure),
+        (status = 403, description = "permission_denied", body = Failure), (status = 409, description = "state_conflict", body = Failure),
         (status = 413, description = "invalid_input; body exceeds 8 KiB", body = Failure), (status = 415, description = "invalid_input", body = Failure),
         (status = 422, description = "invalid_input", body = Failure), (status = 429, description = "rate_limited", body = Failure, headers(("Retry-After" = u64, description = "Wait seconds"))),
         (status = 500, description = "internal_error", body = Failure), (status = 503, description = "dependency_unavailable or outcome_unknown", body = Failure)))]
 async fn create(
     Extension(actor): Extension<Actor>,
-    Extension(operation_id): Extension<operation::Id>,
+    Extension(_operation_id): Extension<operation::Id>,
     State(service): State<affiliation::Service>,
     Json(input): Json<affiliation::Input>,
 ) -> Response {
-    route::command(service.create(actor, operation_id, input), |()| {
+    route::command(service.create(actor, input), |()| {
         Json(Receipt { code: "ok" }).into_response()
     })
     .await
 }
 
 #[utoipa::path(put, path = "/persons/{id}/affiliation", operation_id = "correctPersonAffiliation",
-    description = "Append an affiliation for a confirmed other person with institution.affiliations.correct. Requires exact Origin; supplied Sec-Fetch-Site must be same-origin. Success returns only code: ok and preserves the session cookie. Target confirmation, institutional levels and replay rules: docs/center/affiliation.md#http-契约.",
+    description = "Append an affiliation for a confirmed other person with institution.affiliations.correct, including same-value corrections. Requires exact Origin; supplied Sec-Fetch-Site must be same-origin. Operation-Id is diagnostic only, without deduplication or replay. Success returns only code: ok and preserves the session cookie. An unknown outcome requires a fresh authorized state check and manual confirmation. Rules: docs/center/affiliation.md#http-契约.",
     params(("id" = person::Id, Path, description = "Confirmed permanent target person"),
         ("Operation-Id" = uuid::Uuid, Header, description = "Required operation UUID"),
         ("Session-Id" = uuid::Uuid, Header, description = "Required website session UUID"),
         ("Origin" = String, Header, description = "Required exact configured origin")),
     request_body(content = affiliation::management::Input, content_type = "application/json"),
-    responses((status = 200, description = "Correction recorded or original completion confirmed", body = Receipt),
+    responses((status = 200, description = "Correction recorded", body = Receipt),
         (status = 400, description = "invalid_input", body = Failure), (status = 401, description = "authentication_invalid", body = Failure),
         (status = 403, description = "permission_denied", body = Failure), (status = 404, description = "target_unavailable", body = Failure),
-        (status = 409, description = "target_changed or request_mismatch", body = Failure),
+        (status = 409, description = "target_changed", body = Failure),
         (status = 413, description = "invalid_input; body exceeds 8 KiB", body = Failure), (status = 415, description = "invalid_input", body = Failure),
         (status = 422, description = "invalid_input", body = Failure), (status = 429, description = "rate_limited", body = Failure, headers(("Retry-After" = u64, description = "Wait seconds"))),
         (status = 500, description = "internal_error", body = Failure), (status = 503, description = "dependency_unavailable or outcome_unknown", body = Failure)))]
 async fn correct(
     Extension(actor): Extension<Actor>,
-    Extension(operation_id): Extension<operation::Id>,
+    Extension(_operation_id): Extension<operation::Id>,
     Extension(person_id): Extension<person::Id>,
     State(service): State<affiliation::Service>,
     Json(input): Json<affiliation::management::Input>,
 ) -> Response {
-    route::command(
-        service.correct(actor, operation_id, person_id, input),
-        |()| Json(Receipt { code: "ok" }).into_response(),
-    )
+    route::command(service.correct(actor, person_id, input), |()| {
+        Json(Receipt { code: "ok" }).into_response()
+    })
     .await
 }

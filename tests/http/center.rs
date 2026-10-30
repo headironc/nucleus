@@ -56,7 +56,7 @@ fn affiliation_values_http_exposes_only_the_fixed_vocabulary_to_current_sessions
                 "SELECT NOT EXISTS(SELECT 1 FROM access.grants WHERE person_id=$1) AND NOT EXISTS(SELECT 1 FROM access.holders holder JOIN access.permissions permission ON permission.role_id=holder.role_id WHERE holder.person_id=$1)",
                 &[&person_id],
             ).await.expect("no Workforce or management authority").get::<_, bool>(0));
-            let facts = "SELECT jsonb_build_object('session',(SELECT to_jsonb(session) FROM identity.sessions session WHERE id=$1::text::uuid),'profiles',(SELECT jsonb_agg(to_jsonb(profile)) FROM center.profiles profile),'affiliations',(SELECT jsonb_agg(to_jsonb(affiliation)) FROM center.affiliations affiliation),'completions',(SELECT jsonb_agg(to_jsonb(completion)) FROM center.completions completion))::text";
+            let facts = "SELECT jsonb_build_object('session',(SELECT to_jsonb(session) FROM identity.sessions session WHERE id=$1::text::uuid),'affiliations',(SELECT jsonb_agg(to_jsonb(affiliation)) FROM center.affiliations affiliation),'audit',(SELECT jsonb_agg(to_jsonb(event)) FROM audit.events event WHERE target_type='center.affiliation'))::text";
             let before: String = observer.client().query_one(facts, &[&member.0]).await.expect("original persistent facts").get(0);
             for method in [reqwest::Method::GET, reqwest::Method::HEAD] {
                 for origin in [true, false] {
@@ -111,13 +111,13 @@ fn affiliation_values_http_exposes_only_the_fixed_vocabulary_to_current_sessions
                 .json(&json!({"affiliation":"01"})).send().await.expect("first fill consumer");
             assert_eq!(response.status(), 200);
             let owner = connections(&server, &name, "postgres").recover().await.expect("isolated privilege owner");
-            owner.client().batch_execute("REVOKE SELECT ON center.profiles,center.affiliations FROM clerk").await.expect("deny political-data reads");
+            owner.client().batch_execute("REVOKE SELECT ON center.affiliations FROM clerk").await.expect("deny political-data reads");
             let filled: String = observer.client().query_one("SELECT to_jsonb(session)::text FROM identity.sessions session WHERE id=$1::text::uuid", &[&member.0]).await.expect("session before dictionary read").get(0);
             let response = request(Some(&member), reqwest::Method::GET).header("origin", "https://example.com").send().await.expect("dictionary independent of private values");
             assert_eq!(response.status(), 200);
             assert_eq!(response.json::<serde_json::Value>().await.expect("same fixed vocabulary"), expected);
             assert_eq!(observer.client().query_one("SELECT to_jsonb(session)::text FROM identity.sessions session WHERE id=$1::text::uuid", &[&member.0]).await.expect("session preserved").get::<_,String>(0), filled);
-            owner.client().batch_execute("GRANT SELECT ON center.profiles,center.affiliations TO clerk").await.expect("restore isolated privileges");
+            owner.client().batch_execute("GRANT SELECT ON center.affiliations TO clerk").await.expect("restore isolated privileges");
             owner.terminate().await.expect("owner ended");
 
             let response = client.post(format!("{base}/api/v1/accounts/{}/suspensions", account.get::<_,Uuid>("id")))
@@ -166,7 +166,7 @@ fn affiliation_values_http_exposes_only_the_fixed_vocabulary_to_current_sessions
 }
 
 #[test]
-fn affiliation_correction_http_confirms_targets_and_returns_only_completion() {
+fn affiliation_correction_http_confirms_targets_and_returns_only_success() {
     let server = server();
     Runtime::new().expect("runtime").block_on(async {
         timeout(Duration::from_secs(40),async {
@@ -214,20 +214,20 @@ fn affiliation_correction_http_confirms_targets_and_returns_only_completion() {
                 request
             };
             for operation in [&original,&Uuid::new_v4().to_string(),&original] {
-                let response=client.execute(correction(operation,&input)).await.expect("new, same-value or replayed correction");
+                let response=client.execute(correction(operation,&input)).await.expect("every confirmed correction appends");
                 assert_eq!(response.status(),200); assert_eq!(response.headers()["cache-control"],"no-store"); assert!(!response.headers().contains_key("set-cookie"));
                 assert_eq!(response.json::<serde_json::Value>().await.expect("minimal completion"),json!({"code":"ok"}));
             }
             let response=client.execute(correction(&original,&json!({"target":target,"affiliation":"13"}))).await.expect("different original code");
-            assert_eq!(response.status(),409); assert_eq!(response.json::<serde_json::Value>().await.expect("mismatch"),json!({"code":"request_mismatch"}));
-            assert_eq!(history_count(&base,&administrator,person_id).await,2,"one row per new operation");
+            assert_eq!(response.status(),200); assert_eq!(response.json::<serde_json::Value>().await.expect("diagnostic IDs do not bind input"),json!({"code":"ok"}));
+            assert_eq!(history_count(&base,&administrator,person_id).await,4,"one row per successful correction including repeated diagnostic IDs");
             assert_eq!(observer.client().query_one("SELECT expires_at FROM identity.sessions WHERE id=$1::text::uuid",&[&member.0]).await.expect("target session unchanged").get::<_,chrono::DateTime<chrono::Utc>>(0),row.get::<_,chrono::DateTime<chrono::Utc>>("expires_at"));
             let response=request(&member,reqwest::Method::POST,"/api/v1/accounts/current/cancellations").header("origin","https://example.com").json(&json!({"accountId":account_id,"personId":person_id,"revisionId":revision_id})).send().await.expect("actual cancellation"); assert_eq!(response.status(),200);
             let response=request(&administrator,reqwest::Method::PUT,&path).header("origin","https://example.com").json(&input).send().await.expect("stale account target");
             assert_eq!(response.status(),409); assert_eq!(response.json::<serde_json::Value>().await.expect("target change"),json!({"code":"target_changed"}));
             let response=request(&administrator,reqwest::Method::PUT,&path).header("origin","https://example.com").json(&json!({"target":{"type":"person","personId":person_id,"revisionId":revision_id},"affiliation":"13"})).send().await.expect("permanent person correction");
             assert_eq!(response.status(),200); assert_eq!(response.json::<serde_json::Value>().await.expect("same minimal person result"),json!({"code":"ok"}));
-            assert_eq!(history_count(&base,&administrator,person_id).await,3,"permanent appended history");
+            assert_eq!(history_count(&base,&administrator,person_id).await,5,"permanent appended history");
             let spec=client.get(format!("{base}/openapi/v1.json")).send().await.expect("OpenAPI").json::<serde_json::Value>().await.expect("schema");
             let route=&spec["paths"]["/api/v1/persons/{id}/affiliation"]["put"];
             assert_eq!(route["operationId"],"correctPersonAffiliation");
@@ -462,17 +462,16 @@ fn affiliation_http_preserves_identity_and_exposes_only_qualified_current_values
             let original=Uuid::new_v4();
             for (identity,operation,code,status,result) in [
                 (&member,original,"01",200,"ok"),
-                (&member,original,"01",200,"ok"),
-                (&member,original,"13",409,"request_mismatch"),
+                (&member,original,"01",409,"state_conflict"),
+                (&member,original,"13",409,"state_conflict"),
                 (&member,Uuid::new_v4(),"01",409,"state_conflict"),
-                (&administrator,original,"01",409,"request_mismatch"),
             ] {
                 let response=request(identity,operation).header("origin","https://example.com").json(&json!({"affiliation":code})).send().await.expect("first fill or replay");
                 assert_eq!(response.status(),status);assert_eq!(response.headers()["cache-control"],"no-store");assert!(!response.headers().contains_key("set-cookie"));
                 assert_eq!(response.json::<serde_json::Value>().await.expect("minimal result"),json!({"code":result}));
                 assert_eq!(own_history_count(&base,&member).await+own_history_count(&base,&administrator).await,1,"one permanent result after each request");
             }
-            let row=observer.client().query_one("SELECT affiliation.person_id=account.person_id AS own, affiliation.operator_id=person.revision_id AS current, octet_length(affiliation.value) AS sealed, affiliation.value, affiliation.created_at, session.expires_at FROM center.affiliations affiliation JOIN identity.sessions session ON session.id=$1::text::uuid JOIN identity.accounts account ON account.id=session.account_id JOIN identity.persons person ON person.id=account.person_id WHERE affiliation.operation_id=$2",&[&member.0,&original]).await.expect("independent HTTP effect");
+            let row=observer.client().query_one("SELECT affiliation.person_id=account.person_id AS own, affiliation.operator_id=person.revision_id AS current, octet_length(affiliation.value) AS sealed, affiliation.value, affiliation.created_at, session.expires_at FROM center.affiliations affiliation JOIN identity.sessions session ON session.id=$1::text::uuid JOIN identity.accounts account ON account.id=session.account_id JOIN identity.persons person ON person.id=account.person_id WHERE affiliation.person_id=account.person_id",&[&member.0]).await.expect("independent HTTP effect");
             assert!(row.get::<_,bool>("own") && row.get::<_,bool>("current"));assert_eq!(row.get::<_,i32>("sealed"),39);
             let created_at=row.get::<_,chrono::DateTime<chrono::Utc>>("created_at");
             for request in [read(&member,reqwest::Method::GET).header("origin","https://example.com"),read(&member,reqwest::Method::GET).header("sec-fetch-site","same-origin")] {
@@ -484,9 +483,12 @@ fn affiliation_http_preserves_identity_and_exposes_only_qualified_current_values
             assert_eq!(response.status(),200);assert_eq!(response.headers()["cache-control"],"no-store");assert!(!response.headers().contains_key("set-cookie"));assert!(response.bytes().await.expect("empty HEAD").is_empty());
             let response=read(&administrator,reqwest::Method::GET).header("origin","https://example.com").send().await.expect("separate person's current value");
             assert_eq!(response.status(),404);assert_eq!(response.json::<serde_json::Value>().await.expect("own unset result"),json!({"code":"affiliation_unset"}));
-            let retained=observer.client().query_one("SELECT affiliation.value, affiliation.created_at, session.expires_at, (SELECT count(*) FROM center.affiliations) AS count FROM center.affiliations affiliation JOIN identity.sessions session ON session.id=$1::text::uuid WHERE affiliation.operation_id=$2",&[&member.0,&original]).await.expect("independent read effects");
+            let retained=observer.client().query_one("SELECT affiliation.value, affiliation.created_at, session.expires_at, (SELECT count(*) FROM center.affiliations) AS count FROM center.affiliations affiliation JOIN identity.sessions session ON session.id=$1::text::uuid JOIN identity.accounts account ON account.id=session.account_id WHERE affiliation.person_id=account.person_id",&[&member.0]).await.expect("independent read effects");
             assert_eq!(retained.get::<_,Vec<u8>>("value"),row.get::<_,Vec<u8>>("value"));assert_eq!(retained.get::<_,chrono::DateTime<chrono::Utc>>("created_at"),created_at);
             assert_eq!(retained.get::<_,chrono::DateTime<chrono::Utc>>("expires_at"),row.get::<_,chrono::DateTime<chrono::Utc>>("expires_at"));assert_eq!(retained.get::<_,i64>("count"),1);
+            let response=request(&administrator,original).header("origin","https://example.com").json(&json!({"affiliation":"01"})).send().await.expect("diagnostic ID is reusable by another person");
+            assert_eq!(response.status(),200);
+            assert_eq!(own_history_count(&base,&member).await+own_history_count(&base,&administrator).await,2);
             let spec=client.get(format!("{base}/openapi/v1.json")).header("x-real-ip","203.0.151.202").send().await.expect("OpenAPI").json::<serde_json::Value>().await.expect("schema");
             let route=&spec["paths"][path]["put"];assert_eq!(route["operationId"],"createCurrentAffiliation");
             for (method,operation) in [("get","currentAffiliation"),("head","currentAffiliationHead")] {
@@ -557,8 +559,8 @@ fn affiliation_history_http_returns_only_the_current_persons_paginated_values() 
             let response = http_client().put(format!("{base}/api/v1/accounts/current/affiliation")).header("session-id",&member.0).header("cookie",&member.1).header("operation-id",original.to_string()).header("x-real-ip","203.0.155.202").json(&json!({"affiliation":"01"})).send().await.expect("actual first fill");
             assert_eq!(response.status(),200);
             let observer = connections(&server,&name,"clerk").recover().await.expect("independent observer");
-            let facts = "SELECT affiliation.value,affiliation.created_at,session.expires_at,(SELECT count(*) FROM center.affiliations) AS count FROM center.affiliations affiliation JOIN identity.sessions session ON session.id=$1::text::uuid WHERE affiliation.operation_id=$2";
-            let before = observer.client().query_one(facts,&[&member.0,&original]).await.expect("original stored facts");
+            let facts = "SELECT affiliation.value,affiliation.created_at,session.expires_at,(SELECT count(*) FROM center.affiliations) AS count FROM center.affiliations affiliation JOIN identity.sessions session ON session.id=$1::text::uuid JOIN identity.accounts account ON account.id=session.account_id WHERE affiliation.person_id=account.person_id";
+            let before = observer.client().query_one(facts,&[&member.0]).await.expect("original stored facts");
             let created_at: chrono::DateTime<chrono::Utc> = before.get("created_at");
             for (query,expected) in [("",true),("?page=1&size=1",true),("?size=100",true),("?page=2&size=1",false),("?page=9223372036854775807&size=1",false)] {
                 let response = read(&member,reqwest::Method::GET,query).header("origin","https://example.com").send().await.expect("history page");
@@ -570,7 +572,7 @@ fn affiliation_history_http_returns_only_the_current_persons_paginated_values() 
             assert_eq!(response.status(),200); assert!(response.bytes().await.expect("HEAD body").is_empty());
             let response = read(&administrator,reqwest::Method::GET,"").header("origin","https://example.com").send().await.expect("administrator's own scope");
             assert_eq!(response.status(),200); assert_eq!(response.json::<serde_json::Value>().await.expect("private person history"),json!({"code":"ok","count":0,"affiliations":[]}));
-            let after = observer.client().query_one(facts,&[&member.0,&original]).await.expect("read effects");
+            let after = observer.client().query_one(facts,&[&member.0]).await.expect("read effects");
             assert_eq!(after.get::<_,Vec<u8>>("value"),before.get::<_,Vec<u8>>("value")); assert_eq!(after.get::<_,chrono::DateTime<chrono::Utc>>("created_at"),created_at);
             assert_eq!(after.get::<_,chrono::DateTime<chrono::Utc>>("expires_at"),before.get::<_,chrono::DateTime<chrono::Utc>>("expires_at")); assert_eq!(after.get::<_,i64>("count"),1);
             let spec = client.get(format!("{base}/openapi/v1.json")).header("x-real-ip","203.0.155.203").send().await.expect("OpenAPI").json::<serde_json::Value>().await.expect("schema");
@@ -632,7 +634,7 @@ fn affiliation_failures_retain_safe_read_and_cancelled_write_diagnostics() {
             assert_eq!(
                 errors.len(),
                 4,
-                "one failure per read and one final write failure through drain: {text}"
+                "one failure per read and one final unknown write failure: {text}"
             );
             let read = errors
                 .iter()
@@ -702,12 +704,11 @@ fn affiliation_failures_retain_safe_read_and_cancelled_write_diagnostics() {
                 .expect("server request UUID");
             let event = errors
                 .iter()
-                .find(|event| event["fields"]["stage"] == "command")
-                .expect("cancelled write failure recorded once");
-            assert_eq!(event["target"], "domain::kernel::error");
-            assert_eq!(event["fields"]["stage"], "command");
+                .find(|event| event["fields"]["stage"] == "affiliation_write")
+                .expect("unknown write failure recorded once");
+            assert_eq!(event["target"], "domain::center::affiliation::command");
+            assert_eq!(event["fields"]["stage"], "affiliation_write");
             assert_eq!(event["fields"]["kind"], "unknown");
-            assert_eq!(event["fields"]["operation_id"], OPERATION);
             let span = event["spans"]
                 .as_array()
                 .expect("inherited spans")
@@ -759,42 +760,48 @@ fn affiliation_failures_retain_safe_read_and_cancelled_write_diagnostics() {
                 let application = Application::start(proxy_connections(&name, &proxy), keys(0),
                     services(8).expect("settings"),
                     process::Settings::new(Duration::from_secs(5)).expect("stop"), supplier.client(), message_at(sms.address(), sms.authority())).await.expect("startup");
-                let (base, stop, mut task) = running(application).await;
+                let (base, stop, task) = running(application).await;
                 let actor = issued_session_for(&base, &mut sms, "13900000000").await;
+                let member = issued_session_for(&base, &mut sms, "13800138000").await;
                 let client = http_client();
                 let rejected = client.put(format!("{base}/api/v1/accounts/current/affiliation")).header("session-id", &actor.0).header("cookie", &actor.1).header("operation-id", Uuid::new_v4().to_string()).header("x-real-ip", "203.0.152.1").json(&json!({"affiliation":"sensitive-affiliation"})).send().await.expect("redacted invalid input");
                 assert_eq!(rejected.status(), 422);
                 let owner = connections(&server, &name, "postgres").recover().await.expect("isolated observer");
-                owner.client().batch_execute("REVOKE SELECT ON center.profiles FROM clerk").await.expect("isolated query denial");
+                let target: Uuid = owner.client().query_one("SELECT person_id FROM identity.accounts account JOIN identity.sessions session ON session.account_id=account.id WHERE session.id=$1::text::uuid", &[&member.0]).await.expect("existing other person").get(0);
+                owner.client().batch_execute("REVOKE SELECT ON center.affiliations FROM clerk").await.expect("isolated query denial");
                 let response = client.get(format!("{base}/api/v1/accounts/current/affiliation")).header("session-id", &actor.0).header("cookie", &actor.1).header("operation-id", READ_OPERATION).header("x-real-ip", "203.0.152.3").send().await.expect("read failure");
                 assert_eq!(response.status(), 503);assert_eq!(response.headers()["cache-control"],"no-store");assert!(!response.headers().contains_key("set-cookie"));
                 assert_eq!(response.json::<serde_json::Value>().await.expect("safe failure"),json!({"code":"dependency_unavailable"}));
                 let response = client.get(format!("{base}/api/v1/accounts/current/affiliations")).header("session-id", &actor.0).header("cookie", &actor.1).header("operation-id", HISTORY_OPERATION).header("x-real-ip", "203.0.152.5").send().await.expect("history query failure");
                 assert_eq!(response.status(),503); assert_eq!(response.headers()["cache-control"],"no-store"); assert!(!response.headers().contains_key("set-cookie"));
                 assert_eq!(response.json::<serde_json::Value>().await.expect("no false empty history"),json!({"code":"dependency_unavailable"}));
-                let response = client.get(format!("{base}/api/v1/persons/{}/affiliations",Uuid::new_v4())).header("session-id",&actor.0).header("cookie",&actor.1).header("operation-id",MANAGEMENT_OPERATION).header("x-real-ip","203.0.152.6").send().await.expect("qualified management query failure");
+                let response = client.get(format!("{base}/api/v1/persons/{target}/affiliations")).header("session-id",&actor.0).header("cookie",&actor.1).header("operation-id",MANAGEMENT_OPERATION).header("x-real-ip","203.0.152.6").send().await.expect("qualified management query failure");
                 assert_eq!(response.status(),503); assert_eq!(response.headers()["cache-control"],"no-store"); assert!(!response.headers().contains_key("set-cookie"));
                 assert_eq!(response.json::<serde_json::Value>().await.expect("management read failure is not absence"),json!({"code":"dependency_unavailable"}));
-                owner.client().batch_execute("GRANT SELECT ON center.profiles TO clerk").await.expect("restore isolated runtime privilege");
+                owner.client().batch_execute("GRANT SELECT ON center.affiliations TO clerk").await.expect("restore isolated runtime privilege");
                 let response = client.get(format!("{base}/api/v1/accounts/current/affiliation")).header("session-id", &actor.0).header("cookie", &actor.1).header("operation-id", Uuid::new_v4().to_string()).header("x-real-ip", "203.0.152.4").send().await.expect("read after query failure");
                 assert_eq!(response.status(),404);assert_eq!(response.json::<serde_json::Value>().await.expect("still unfilled"),json!({"code":"affiliation_unset"}));
                 assert_eq!(owner.client().query_one("SELECT count(*) FROM center.affiliations", &[]).await.expect("read failures preserve facts").get::<_,i64>(0),0);
                 proxy.arm(fixture::database_proxy::Fault::DelayedCommit);
                 let caller = tokio::spawn(client.put(format!("{base}/api/v1/accounts/current/affiliation")).header("session-id", &actor.0).header("cookie", &actor.1).header("operation-id", OPERATION).header("x-real-ip", "203.0.152.2").json(&json!({"affiliation":"01"})).send());
                 timeout(Duration::from_secs(3), proxy.intercepted()).await.expect("original commit response lost");
-                proxy.arm(fixture::database_proxy::Fault::StalledAffiliation); proxy.release();
-                timeout(Duration::from_secs(3), proxy.intercepted()).await.expect("independent recovery suspended before its fact read");
-                caller.abort(); assert!(caller.await.expect_err("caller cancelled").is_cancelled());
-                let row = owner.client().query_one("SELECT encode(value,'hex') FROM center.affiliations WHERE operation_id=$1::text::uuid", &[&OPERATION]).await.expect("original fact before recovery");
-                std::fs::write(std::env::var_os("NUCLEUS_TEST_AFFILIATION_LOG").expect("private expected file"), serde_json::to_vec(&[actor.1.split_once('=').expect("cookie token").1.to_owned(), row.get::<_,String>(0)]).expect("expected material")).expect("private expected fixture values");
-                owner.client().batch_execute("BEGIN; SET LOCAL session_replication_role=replica; UPDATE center.affiliations SET value=set_byte(value,38,get_byte(value,38) # 1); COMMIT").await.expect("damage only the isolated retained value");
-                stop.send(()).expect("stop during accepted recovery");
-                assert!(timeout(Duration::from_millis(30), &mut task).await.is_err(), "shutdown retains the accepted work");
+                let response = caller.await.expect("ordinary request waiter").expect("unknown response");
+                assert_eq!(response.status(), 503);
+                assert_eq!(response.json::<serde_json::Value>().await.expect("safe unknown outcome"), json!({"code":"outcome_unknown"}));
                 proxy.release();
-                let (application, result) = task.await.expect("drained server"); result.expect("actual work completed before stop"); drop(application);
-                assert_eq!(owner.client().query_one("SELECT count(*) FROM center.affiliations", &[]).await.expect("recovery did not write another fact").get::<_,i64>(0),1);
+                timeout(Duration::from_secs(3), async {
+                    loop {
+                        if owner.client().query_one("SELECT count(*) FROM center.affiliations", &[]).await.expect("original commit observer").get::<_, i64>(0) == 1 { break; }
+                        tokio::task::yield_now().await;
+                    }
+                }).await.expect("original backend completes without another write");
+                let row = owner.client().query_one("SELECT encode(value,'hex') FROM center.affiliations", &[]).await.expect("current retained fact");
+                std::fs::write(std::env::var_os("NUCLEUS_TEST_AFFILIATION_LOG").expect("private expected file"), serde_json::to_vec(&[actor.1.split_once('=').expect("cookie token").1.to_owned(), row.get::<_,String>(0)]).expect("expected material")).expect("private expected fixture values");
+                stop.send(()).expect("stop after ordinary transaction ended");
+                let (application, result) = task.await.expect("drained server"); result.expect("server stopped"); drop(application);
+                assert_eq!(owner.client().query_one("SELECT count(*) FROM center.affiliations", &[]).await.expect("no recovery or repeat write").get::<_,i64>(0),1);
                 owner.terminate().await.expect("observer ended"); proxy.stop().await;
-                assert_eq!(supplier.calls.load(Ordering::SeqCst), 1); assert!(timeout(Duration::from_millis(30), sms.request()).await.is_err()); sms.stop().await;
+                assert_eq!(supplier.calls.load(Ordering::SeqCst), 2); assert!(timeout(Duration::from_millis(30), sms.request()).await.is_err()); sms.stop().await;
             }).await.expect("bounded failed recovery diagnostic");
         });
     });
