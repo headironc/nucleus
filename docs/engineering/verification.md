@@ -68,6 +68,8 @@ OCI 构建、恢复后验收、独立下载及首次私有包发布的冷拉取�
 
 ## CI 触发与选检
 
+Cladiron 消费成功候选的机器 receipt，生产与消费合同见[批准机器合同](review-approval.md#ci-receipt)。基础四项及 Halo publication checks 在成功路径上传；工作流成功、artifact 上传、App 核验与真实批准分别取证。OCI 专用链路尚未提供该消费者需要的 receipt，适用时阻塞批准，不使用基础 CI 代替。
+
 本节区分当前自动行为与建议目标。下表覆盖 Docs、Rust checks、Maintenance tools、Packages 和 OCI producer 五份基础工作流；首次私有包发布及其专用 PR 检查另见 [Halo 合同](../../halo/README.md#首次私有包发布与冷拉取)。下表的建议尚未实现。分类器的 `skip` 只描述其所属检查，不能让未接入分类器的工作流跳过。检查范围由本页维护，镜像内部协议见 [Halo CI 镜像](../../halo/README.md#ci-依赖镜像)。
 
 ### 当前事件与执行阶段

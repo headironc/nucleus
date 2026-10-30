@@ -1,0 +1,176 @@
+import { requestBodies, type Binding } from "./identity.ts";
+import { readFileSync } from "node:fs";
+import { bindCubicReview } from "./reviews.ts";
+import { cubic, repository } from "./identity.ts";
+const bodies: {
+  summary: string;
+  code: string;
+  security: string;
+  cubic: string;
+} = JSON.parse(
+  readFileSync(new URL("./provider-bodies.json", import.meta.url), "utf8"),
+);
+
+// Complete provider layouts are deidentified. All PR/commit/comment/review/check
+// identities here are synthetic; App/Bot identities are the public provider contract.
+export const b: Binding = {
+  pr: 1,
+  head: "1".repeat(40),
+  base: "2".repeat(40),
+  merge: "a".repeat(40),
+};
+export function fixtureReview(review: any) {
+  return {
+    ...review,
+    node_id: review.node_id ?? `review-${review.id}`,
+    user: {
+      ...review.user,
+      node_id: review.user.node_id ?? `bot-${review.user.id}`,
+    },
+  };
+}
+export function cubicReviewNode(review: any, pr = b.pr) {
+  const r = fixtureReview(review),
+    edited = review.lastEditedAt ?? null;
+  const times = [
+    r.submitted_at,
+    r.published_at ?? r.submitted_at,
+    ...(edited === null ? [] : [edited]),
+  ];
+  const latest = times.reduce((a, b) =>
+    Date.parse(b) > Date.parse(a) ? b : a,
+  );
+  const author = {
+    __typename: r.user.type,
+    id: r.user.node_id,
+    databaseId: r.user.id,
+  };
+  return {
+    id: r.node_id,
+    fullDatabaseId: String(r.id),
+    repository: { nameWithOwner: repository },
+    pullRequest: { number: pr },
+    author,
+    body: r.body,
+    state: r.state,
+    commit: { oid: r.commit_id },
+    submittedAt: r.submitted_at,
+    createdAt: r.created_at ?? r.submitted_at,
+    publishedAt: r.published_at ?? r.submitted_at,
+    updatedAt: r.updated_at ?? latest,
+    lastEditedAt: edited,
+    editor: edited === null ? null : { ...author },
+    includesCreatedEdit: r.includesCreatedEdit ?? false,
+  };
+}
+export function boundFixtureReviews(
+  reviews: any[],
+  binding = b,
+  now = Date.now(),
+) {
+  return reviews.map((r) =>
+    r.user?.id === cubic.bot
+      ? bindCubicReview(
+          fixtureReview(r),
+          cubicReviewNode(r, binding.pr),
+          binding.pr,
+          now,
+        )
+      : r,
+  );
+}
+export function providerFixture(binding = b) {
+  const owner = { id: 19648989, login: "headironc", type: "User" };
+  const codex = {
+    id: 199175422,
+    login: "chatgpt-codex-connector[bot]",
+    type: "Bot",
+  };
+  const at = (value: string) => `2026-10-30T${value}Z`;
+  const comments: any[] = [
+    ...requestBodies(binding)
+      .slice(0, 2)
+      .map((body, i) => ({
+        id: 100 + i,
+        node_id: `request-${100 + i}`,
+        lastEditedAt: null,
+        user: owner,
+        body,
+        created_at: at("10:33:50"),
+        updated_at: at("10:33:50"),
+      })),
+    {
+      id: 201,
+      user: codex,
+      performed_via_github_app: { id: 1144995 },
+      created_at: at("13:05:00"),
+      updated_at: at("13:09:08"),
+      // The observed layout has null security flags. Positive combinations
+      // synthesize an explicit full-head disposition; null is tested separately.
+      body: bodies.summary
+        .replaceAll(
+          '"has_any_findings":null,"has_unresolved_findings":null',
+          '"has_any_findings":false,"has_unresolved_findings":false',
+        )
+        .replaceAll("1".repeat(40), binding.head)
+        .replaceAll("`1111111`", `\`${binding.head.slice(0, 7)}\``)
+        .replaceAll(
+          '"pullRequestNumber":1',
+          `"pullRequestNumber":${binding.pr}`,
+        )
+        .replaceAll("example/repository", "headironc/nucleus"),
+    },
+    {
+      id: 202,
+      user: codex,
+      performed_via_github_app: { id: 1144995 },
+      created_at: at("13:07:00"),
+      updated_at: at("13:07:00"),
+      body: bodies.code.replaceAll("1111111111", binding.head.slice(0, 10)),
+    },
+    {
+      id: 203,
+      user: codex,
+      performed_via_github_app: { id: 1144995 },
+      created_at: at("13:09:05"),
+      updated_at: at("13:09:05"),
+      body: bodies.security.replaceAll("1111111111", binding.head.slice(0, 10)),
+    },
+  ];
+  const reviews: any[] = [
+    {
+      id: 301,
+      user: { id: 191113872, login: "cubic-dev-ai[bot]", type: "Bot" },
+      state: "COMMENTED",
+      commit_id: binding.head,
+      submitted_at: at("10:35:04"),
+      body: bodies.cubic
+        .replaceAll("example/repository", "headironc/nucleus")
+        .replaceAll("example%2Frepository", "headironc%2Fnucleus")
+        .replaceAll("1".repeat(40), binding.head)
+        .replaceAll("/pull/1?", `/pull/${binding.pr}?`)
+        .replaceAll("/nucleus/1?", `/nucleus/${binding.pr}?`)
+        .replaceAll("/nucleus/1/", `/nucleus/${binding.pr}/`)
+        .replaceAll("%2Fpull%2F1", `%2Fpull%2F${binding.pr}`),
+    },
+  ];
+  const checks: any[] = [
+    {
+      id: 401,
+      app: { id: 1082092 },
+      name: "cubic · AI code reviewer",
+      head_sha: binding.head,
+      status: "completed",
+      conclusion: "success",
+      started_at: at("10:33:55"),
+      completed_at: at("10:35:08"),
+      output: {
+        annotations_count: 0,
+        summary:
+          "AI review completed with 1 review. No issues found in 41 files.",
+        text: null,
+      },
+    },
+  ];
+  return { comments, reviews, checks };
+}
