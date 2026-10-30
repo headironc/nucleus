@@ -26,6 +26,11 @@
 /halo/.react-router
 /halo/test-results
 /halo/playwright-report
+/orbit/node_modules
+/orbit/build
+/orbit/test-build
+/orbit/.generated
+/orbit/project.private.config.json
 /.cache/nucleus-tools/
 /storage
 
