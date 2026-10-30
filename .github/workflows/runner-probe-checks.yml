@@ -19,7 +19,7 @@ concurrency:
 jobs:
   checks:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -40,6 +40,11 @@ jobs:
           echo "$RUNNER_TEMP/go/bin" >> "$GITHUB_PATH"
       - run: bun install --frozen-lockfile --ignore-scripts
       - run: ./node_modules/.bin/tsc -p .github/runner-probe/tsconfig.json --noEmit
+      - name: Prepare real private PostgreSQL regression runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends --no-remove build-essential bison flex perl curl pkg-config libssl-dev libicu-dev libreadline-dev zlib1g-dev libxml2-dev
+          bun fixture/postgresql.ts
       - run: bun test ./.github/runner-probe
       - run: test -z "$(gofmt -l .github/runner-probe/render-bootstrap.go)"
       - name: Check runner workflow syntax

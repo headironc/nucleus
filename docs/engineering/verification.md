@@ -72,9 +72,17 @@ plan 直接调用现分类器。无法核实比较时保守选择 full/all；畸
 
 `fail_after_checks` 是默认 false 的 Boolean 输入。省略或关闭时沿用成功路径。仅显式开启且前序步骤全部成功时，在完整 platform 检查后输出固定 `RUNNER_PROBE_EXPECTED_FAILURE` marker，再以 42 退出。marker 包含准确 run、attempt、source 和固定原因，写入既有 artifact 范围内的 `runner-probe-failure.log`。输入不接受命令、路径或自定义故障文本。前序自然失败不会伪造该 marker；后续清理和上传仍以 `always()` 执行，也不会把原失败变为成功。
 
+`cancel_after_checks` 同样默认为 false，与失败输入互斥。来源检查在 checkout 和私有资源准备前拒绝冲突组合。完整 platform 成功后，专用 helper 在既有私有 TMPDIR 内启动 PostgreSQL 18.4，只监听独占 Unix socket。helper 持续拥有 cluster 和固定 `pg_sleep(3600)` 查询；独立 SQL 确认同一 backend 活动后才发布 READY。白名单投影绑定 run、attempt、source、PID、启动时间和 data/socket 路径，不输出环境或凭据。
+
+启动步骤返回后，先上传独立命名的 `runner-probe-pre-interrupt` artifact，再进入等待步骤。等待再次核对同一活动 backend，输出 `RUNNER_PROBE_CANCEL_WAITING`。现场负责人确认预上传成功、等待步骤正在运行且 job/runner/VM 身份一致后，才向准确 run 发送一次普通取消。早期 READY、查询自然结束、排队取消或命令退出均不能替代这个边界。job 仍采用原生 45 分钟上限，不接受任意命令、路径或时限输入。
+
+等待的 INT/TERM 保持非零结果，并请求原 helper 有界停止。独立 `always()` 步骤先按所有权、PID 启动时间和 data 路径核对，再停止原 PG/query；已结束的原身份允许重复收尾，PID 重用或失配拒绝操作。局部初始化失败也由 helper 收尾，失败不会因补救成功而变绿。随后原 `package-postgresql.ts cleanup` 独立扫描整个范围；发现泄漏仍报错。最终 artifact 保留 helper 和扫描诊断，名称与中断前 artifact 分开。
+
+取消验收要求原 run/job 均为 cancelled、活 PG 前态和取消触发准确、有序 PG/容器清理成功、诊断完整，以及 GARM 自动注销 runner、回收准确 VM/根盘、释放容量并恢复 disabled 的原件。仅靠 VM 销毁封闭资源时，报告有序清理未通过。源码合并和本地信号测试不证明真实 Actions 取消、容器信号传播或自动回收；超时、重启和双容量各自验收。
+
 默认成功验收同时要求完整 package 检查、PG scan empty、TMPDIR removed、原 run/job 成功终态，以及 GARM 自动回收对应 VM 的证据。失败验收另须证明前序完整检查成功、固定 marker、步骤退出码 42 和原 run/job 的 failure 终态。清理、artifact 上传与自动销毁证据仍须完整。取消、超时、bootstrap 或其他前序失败不能充当预期失败。硬终止可能阻止清理，单有 `always()` 不证明资源已回收。现场负责人持有唯一 dispatch、运行观察和 VM 生命周期责任；源码检查与合并不代替实际验收，也不证明全部 CI 已迁移。
 
-[专用 PR 检查](../../.github/workflows/runner-probe-checks.yml)执行 `.github/runner-probe/` 的类型与回归，覆盖实际来源拒绝、只读权限、完整命令、日志失败传播和清理条件。固定 actionlint 1.7.12 核两份工作流，额外 runner 标签由 `.github/actionlint.yaml` 声明。产品代码、镜像及 fixture 输入未变时按下文复用原证据；当前 required CI 仍须通过，回归不启动 VM 或 registry 操作。
+[专用 PR 检查](../../.github/workflows/runner-probe-checks.yml)执行 `.github/runner-probe/` 的类型与回归，覆盖实际来源拒绝、只读权限、完整命令、日志失败传播和清理条件。取消 helper 回归构建固定 PG 18.4，运行真实私有 cluster，核活动 SQL、INT/TERM、部分失败、身份拒绝及失败收尾；测试终态核进程消失和原私有范围清理。固定 actionlint 1.7.12 核两份工作流，额外 runner 标签由 `.github/actionlint.yaml` 声明。产品代码、镜像及 fixture 输入未变时按下文复用原证据；当前 required CI 仍须通过，回归不启动 VM 或 registry 操作。
 
 #### 专用 JIT 启动模板
 
