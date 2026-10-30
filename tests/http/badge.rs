@@ -107,7 +107,22 @@ fn fixed_badges_use_trusted_preview_and_private_resources_without_request_dedupl
             assert_eq!(request(reqwest::Method::GET,&resource_path,&institution,false).send().await.expect("resource denied").status(),404);
             assert_eq!(get("/api/v1/workforce/current/applications/not-a-uuid",&manager).send().await.expect("path").status(),400);
             let head=request(reqwest::Method::HEAD,&resource_path,&manager,false).send().await.expect("HEAD");assert_eq!(head.status(),200);assert!(head.bytes().await.expect("no HEAD body").is_empty());
+            for (index,path) in ["/api/v1/workforce/current/applications".to_owned(),format!("/api/v1/workforce/current/applications/{}",ids[0]),resource_path.clone()].into_iter().enumerate() {
+                let denied=client.get(format!("{base}{path}")).header("operation-id",Uuid::new_v4().to_string()).header("session-id",&manager.0).header("cookie",&manager.1).header("origin","https://other.example").header("x-real-ip",format!("203.0.175.{}",index+1)).send().await.expect("conditional origin refusal");
+                assert_eq!(denied.status(),403);
+                assert_eq!(denied.json::<Value>().await.expect("safe origin refusal"),json!({"code":"permission_denied"}));
+            }
             let schema=client.get(format!("{base}/openapi/v1.json")).send().await.expect("schema").json::<Value>().await.expect("OpenAPI");
+            for path in ["/api/v1/workforce/application-template","/api/v1/workforce/application-photos","/api/v1/workforce/applications/preview","/api/v1/workforce/applications","/api/v1/workforce/current/applications","/api/v1/workforce/current/applications/{id}","/api/v1/workforce/application-resources/{id}"] {
+                let route=&schema["paths"][path];
+                let operation=if route.get("post").is_some() {&route["post"]} else {&route["get"]};
+                for (status,code) in [("400","invalid_input"),("403","permission_denied"),("413","invalid_input"),("415","invalid_input"),("429","rate_limited"),("500","internal_error")] {
+                    if let Some(response)=operation["responses"].get(status) {
+                        assert_eq!(response["description"],code,"the real response's code must be consumable from {path} {status}");
+                    }
+                }
+                assert!(operation["responses"]["429"]["headers"].get("Retry-After").is_some());
+            }
             assert!(schema["paths"]["/api/v1/workforce/applications"]["post"]["parameters"].as_array().expect("headers").iter().any(|parameter|parameter["name"]=="Operation-Id"));
             assert!(!schema["paths"]["/api/v1/workforce/application-resources/{id}"]["get"]["parameters"].as_array().expect("resource headers").iter().any(|parameter|parameter["name"]=="Operation-Id"));
             stop.send(()).expect("stop HTTP");let (mut application,result)=task.await.expect("HTTP exited");result.expect("HTTP completed");application.stop().await.expect("drain");supplier.task.abort();assert!((&mut supplier.task).await.expect_err("fixture task aborted").is_cancelled());sms.stop().await;
