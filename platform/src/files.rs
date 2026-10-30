@@ -286,10 +286,15 @@ impl ExclusiveDirectory {
 pub struct Reader(File);
 
 impl Reader {
-    pub fn read(mut self, expected_size: u64) -> Result<Vec<u8>, Error> {
+    pub fn verify_size(&self, expected_size: u64) -> Result<(), Error> {
         if self.0.metadata()?.len() != expected_size {
             return Err(Error::Identity);
         }
+        Ok(())
+    }
+
+    pub fn read(mut self, expected_size: u64) -> Result<Vec<u8>, Error> {
+        self.verify_size(expected_size)?;
         let length = usize::try_from(expected_size).map_err(|_| Error::Identity)?;
         let mut bytes = vec![0; length];
         self.0.read_exact(&mut bytes)?;
@@ -450,6 +455,34 @@ mod tests {
         fn open(&self) -> Directory {
             self.settings().open().expect("real private filesystem")
         }
+    }
+
+    #[test]
+    fn metadata_verification_preserves_the_unread_body_and_checks_length() {
+        use std::io::Seek as _;
+
+        let fixture = Fixture::new();
+        let directory = fixture.open();
+        let bytes = b"private resource";
+        directory
+            .publish(&["head"], "resource", "candidate", bytes)
+            .expect("private file");
+        let mut reader = directory
+            .open(&["head"], "resource")
+            .expect("safe file")
+            .expect("present file");
+        reader
+            .verify_size(bytes.len() as u64)
+            .expect("metadata length");
+        assert!(matches!(
+            reader.verify_size(bytes.len() as u64 + 1),
+            Err(Error::Identity)
+        ));
+        assert_eq!(reader.0.stream_position().expect("unread offset"), 0);
+        assert_eq!(
+            reader.read(bytes.len() as u64).expect("unchanged body"),
+            bytes
+        );
     }
 
     #[test]

@@ -389,6 +389,7 @@ impl Service {
         actor: &Actor,
         id: ResourceId,
         capacity: Arc<OwnedSemaphorePermit>,
+        head: bool,
     ) -> Result<Resource, Error> {
         self.app.registry().ready()?;
         let settings = self.settings()?.clone();
@@ -409,9 +410,15 @@ impl Service {
         .await
         .map_err(|_| Error::Timeout)?;
         let (size, media_type, photo_person) = finish(self, lease, result, false).await?;
-        let permit = Arc::clone(&self.processing)
-            .try_acquire_owned()
-            .map_err(|_| Error::Busy)?;
+        let permit = if head {
+            None
+        } else {
+            Some(
+                Arc::clone(&self.processing)
+                    .try_acquire_owned()
+                    .map_err(|_| Error::Busy)?,
+            )
+        };
         let bytes = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             let _capacity = capacity;
@@ -422,22 +429,31 @@ impl Service {
             } else {
                 &["workforce"]
             };
-            settings
+            let file = settings
                 .directory
                 .open(segments, &id.to_string())?
-                .ok_or(Error::MissingFile)?
-                .read(size)
-                .map_err(Error::from)
+                .ok_or(Error::MissingFile)?;
+            if head {
+                file.verify_size(size)?;
+                Ok(Vec::new())
+            } else {
+                file.read(size).map_err(Error::from)
+            }
         })
         .await
         .map_err(|_| Error::Worker)??;
-        Ok(Resource { bytes, media_type })
+        Ok(Resource {
+            bytes,
+            media_type,
+            size,
+        })
     }
 }
 
 pub struct Resource {
     pub bytes: Vec<u8>,
     pub media_type: String,
+    pub size: u64,
 }
 
 /// A failed COMMIT stays unknown. The lease is never returned before an acknowledged end.
@@ -685,7 +701,7 @@ mod tests {
             let service = service.clone();
             let actor = actor.clone();
             let capacity = Arc::clone(&capacity);
-            tokio::spawn(async move { service.resource(&actor, id, capacity).await })
+            tokio::spawn(async move { service.resource(&actor, id, capacity, false).await })
         };
         timeout(Duration::from_secs(5), async {
             while service.processing.available_permits() != 1 {
@@ -1060,19 +1076,30 @@ mod tests {
                 let List::Full {count,applications} = services.application().list(&manager,Pagination::new(1,20).expect("page")).await.expect("history") else {panic!("active full history")};
                 assert_eq!(count,4); assert_eq!(applications.len(),4);
                 assert!(matches!(services.application().detail(&institution,ids[0]).await,Err(Error::TargetUnavailable)));
-                assert!(matches!(services.application().resource(&institution,photo.resource_id,read_capacity()).await,Err(Error::TargetUnavailable)));
-                let original_file=services.application().resource(&manager,photo.resource_id,read_capacity()).await.expect("original private photo").bytes;
+                assert!(matches!(services.application().resource(&institution,photo.resource_id,read_capacity(),false).await,Err(Error::TargetUnavailable)));
+                let original_file=services.application().resource(&manager,photo.resource_id,read_capacity(),false).await.expect("original private photo").bytes;
+                let processing = Arc::clone(&services.application().processing).try_acquire_many_owned(2).expect("occupy actual processing capacity");
+                let metadata=Box::pin(services.application().resource(&manager,photo.resource_id,read_capacity(),true)).await.expect("HEAD avoids occupied processing slots");
+                assert!(metadata.bytes.is_empty());
+                assert_eq!(metadata.size,original_file.len() as u64);
+                assert_eq!(metadata.media_type,"image/webp");
+                assert!(matches!(Box::pin(services.application().resource(&institution,photo.resource_id,read_capacity(),true)).await,Err(Error::TargetUnavailable)));
+                drop(processing);
                 let private=&services.application().settings().expect("configured storage").directory;
                 let person: person::Id = observer.client().query_one("SELECT person_id FROM workforce.photos WHERE id=$1", &[&photo.photo_id]).await.expect("photo owner").get(0);
                 let person_path = person.to_string();
                 let segments = ["workforce", "photos", &person_path];
                 assert!(private.publish(&segments,&photo.resource_id.to_string(),&uuid::Uuid::new_v4().to_string(),b"replacement bytes").is_err(),"a retained resource cannot be overwritten");
-                assert_eq!(services.application().resource(&manager,photo.resource_id,read_capacity()).await.expect("unchanged photo").bytes,original_file);
+                assert_eq!(services.application().resource(&manager,photo.resource_id,read_capacity(),false).await.expect("unchanged photo").bytes,original_file);
                 assert!(matches!(services.application().prepare_photo(&manager,"image/webp".to_owned(),original_file.clone()).await,Err(Error::PhotoCapacity)), "new preparation stops at the retained-file limit");
                 assert_eq!(observer.client().query_one("SELECT count(*) FROM workforce.photos",&[]).await.expect("no rejected photo metadata").get::<_,i64>(0),1);
                 assert_eq!(observer.client().query_one("SELECT count(*) FROM audit.events WHERE action='workforce.photo.prepared'",&[]).await.expect("no rejected photo audit").get::<_,i64>(0),1);
                 private.remove(&segments,&photo.resource_id.to_string()).expect("isolated missing-file injection");
-                assert!(matches!(services.application().resource(&manager,photo.resource_id,read_capacity()).await,Err(Error::MissingFile)));
+                assert!(matches!(services.application().resource(&manager,photo.resource_id,read_capacity(),false).await,Err(Error::MissingFile)));
+                assert!(matches!(Box::pin(services.application().resource(&manager,photo.resource_id,read_capacity(),true)).await,Err(Error::MissingFile)));
+                private.publish(&segments,&photo.resource_id.to_string(),&uuid::Uuid::new_v4().to_string(),b"wrong length").expect("isolated size mismatch");
+                assert!(matches!(Box::pin(services.application().resource(&manager,photo.resource_id,read_capacity(),true)).await,Err(Error::File(_))));
+                private.remove(&segments,&photo.resource_id.to_string()).expect("remove malformed fixture");
                 private.publish(&segments,&photo.resource_id.to_string(),&uuid::Uuid::new_v4().to_string(),&original_file).expect("restore retained fixture bytes");
                 let delete = serde_json::from_value::<directory::Delete<directory::department::Item>>(json!({"expected":department})).expect("confirmed department deletion").into_items();
                 assert!(matches!(Box::pin(services.directory().delete(manager.clone(),operation(),directory::Target::Department(department.id()),delete)).await,Err(crate::kernel::Error::Rejected(directory::Rejection::InUse))));
@@ -1112,7 +1139,7 @@ mod tests {
                 observer.client().batch_execute("COMMIT").await.expect("observation ended");
                 proxy.release();
                 assert!(matches!(services.application().list(&manager,Pagination::new(1,20).expect("page")).await.expect("refresh after unknown"),List::Full {count:6,..}));
-                assert!(services.application().resource(&manager,photo.resource_id,read_capacity()).await.is_ok(),"unknown commit never deletes a referenced file");
+                assert!(services.application().resource(&manager,photo.resource_id,read_capacity(),false).await.is_ok(),"unknown commit never deletes a referenced file");
                 timeout(Duration::from_secs(3),async {
                     let mut cadence=tokio::time::interval(Duration::from_millis(10));
                     loop {cadence.tick().await;if observer.client().query_one("SELECT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity WHERE pid=$1)",&[&original_backend]).await.expect("original backend state").get::<_,bool>(0){break;}}
@@ -1123,7 +1150,8 @@ mod tests {
                 assert_eq!(restricted["access"],"restricted");
                 assert_eq!(restricted["count"],6);
                 assert!(restricted["applications"].as_array().expect("summaries").iter().all(|item|item.as_object().expect("summary").len()==4));
-                assert!(matches!(services.application().resource(&manager,photo.resource_id,read_capacity()).await,Err(Error::TargetUnavailable)));
+                assert!(matches!(services.application().resource(&manager,photo.resource_id,read_capacity(),false).await,Err(Error::TargetUnavailable)));
+                assert!(matches!(Box::pin(services.application().resource(&manager,photo.resource_id,read_capacity(),true)).await,Err(Error::TargetUnavailable)));
                 assert!(matches!(services.application().submit(&manager,Input {kind:Kind::Issuance,selections,expected:preview.snapshot}).await,Err(Error::Denied)));
                 owner.terminate().await.expect("owner stopped"); observer.terminate().await.expect("observer stopped");
                 services.close(); services.drain().await.expect("drain"); context.stop().await.expect("context stopped"); proxy.stop().await; supplier.stop().await;

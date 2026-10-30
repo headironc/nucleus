@@ -5,7 +5,7 @@ use std::sync::Arc;
 use axum::{
     body::Bytes,
     extract::{ConnectInfo, DefaultBodyLimit, Request, State, rejection::BytesRejection},
-    http::{HeaderMap, HeaderValue, StatusCode, header},
+    http::{HeaderMap, HeaderValue, Method, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
 };
@@ -381,19 +381,28 @@ async fn resource(
     Extension(actor): Extension<Actor>,
     Extension(id): Extension<ResourceId>,
     Extension(capacity): Extension<Arc<OwnedSemaphorePermit>>,
+    method: Method,
     Query(_): Query<Empty>,
     bytes: Result<Bytes, BytesRejection>,
 ) -> Response {
     if let Err(status) = super::validate_empty(bytes) {
         return invalid(status);
     }
-    respond(service.resource(&actor, id, capacity).await, |resource| {
-        (
-            [(header::CONTENT_TYPE, resource.media_type)],
-            resource.bytes,
-        )
-            .into_response()
-    })
+    respond(
+        service
+            .resource(&actor, id, capacity, method == Method::HEAD)
+            .await,
+        |resource| {
+            (
+                [
+                    (header::CONTENT_TYPE, resource.media_type),
+                    (header::CONTENT_LENGTH, resource.size.to_string()),
+                ],
+                resource.bytes,
+            )
+                .into_response()
+        },
+    )
 }
 
 async fn target(Path(id): Path<String>, mut request: Request, next: Next) -> Response {

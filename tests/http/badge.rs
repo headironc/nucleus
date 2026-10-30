@@ -145,18 +145,20 @@ fn fixed_badges_use_trusted_preview_and_private_resources_without_request_dedupl
             assert_eq!(get(&format!("/api/v1/workforce/current/applications/{}",ids[0]),&institution).send().await.expect("concealed").status(),404);
             assert_eq!(get(&format!("/api/v1/workforce/current/applications/{}",ids[0]),&other).send().await.expect("active other participant is concealed").status(),404);
             let resource_path=format!("/api/v1/workforce/application-resources/{}",photo["resourceId"].as_str().expect("resource id"));
+            let mut resource_size=0;
             for operation in [None,Some("invalid-correlation")] {
                 let mut resource=request(reqwest::Method::GET,&resource_path,&manager,false);
                 if let Some(value)=operation {resource=resource.header("operation-id",value);}
                 let resource=resource.send().await.expect("resource correlation exemption");
                 assert_eq!(resource.status(),200);assert_eq!(resource.headers()["content-type"],"image/webp");
+                resource_size=resource.content_length().expect("declared resource length");
                 let decoded=image::load_from_memory(&resource.bytes().await.expect("private bytes")).expect("whole prepared image").to_rgba8();
                 assert_eq!(decoded.dimensions(),(131,127));assert_eq!(decoded.get_pixel(0,0).0,[0,0,0,0]);
             }
             assert_eq!(request(reqwest::Method::GET,&resource_path,&institution,false).send().await.expect("resource denied").status(),404);
             assert_eq!(request(reqwest::Method::GET,&resource_path,&other,false).send().await.expect("active other participant cannot read the resource").status(),404);
             assert_eq!(get("/api/v1/workforce/current/applications/not-a-uuid",&manager).send().await.expect("path").status(),400);
-            let head=request(reqwest::Method::HEAD,&resource_path,&manager,false).send().await.expect("HEAD");assert_eq!(head.status(),200);assert!(head.bytes().await.expect("no HEAD body").is_empty());
+            let head=request(reqwest::Method::HEAD,&resource_path,&manager,false).send().await.expect("HEAD");assert_eq!(head.status(),200);assert_eq!(head.headers()["content-type"],"image/webp");assert_eq!(head.headers()["content-length"],resource_size.to_string());assert!(head.bytes().await.expect("no HEAD body").is_empty());
             for (index,path) in ["/api/v1/workforce/current/applications".to_owned(),format!("/api/v1/workforce/current/applications/{}",ids[0]),resource_path.clone()].into_iter().enumerate() {
                 let denied=client.get(format!("{base}{path}")).header("operation-id",Uuid::new_v4().to_string()).header("session-id",&manager.0).header("cookie",&manager.1).header("origin","https://other.example").header("x-real-ip",format!("203.0.175.{}",index+1)).send().await.expect("conditional origin refusal");
                 assert_eq!(denied.status(),403);
