@@ -2085,3 +2085,53 @@
     }
   }
 }
+/* Keep the native subtype chooser readable at the narrowest supported width. */
+.number-subtype-select {
+  display: block;
+  width: 100%;
+  min-height: 3rem;
+  margin-block: 0.75rem;
+  padding: 0.75rem;
+  border: 1px solid currentColor;
+  border-radius: 0.5rem;
+  background: var(--color-paper, Canvas);
+  color: inherit;
+  font: inherit;
+}
+.number-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: var(--backdrop);
+}
+.number-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 51;
+  transform: translate(-50%, -50%);
+  width: min(460px, calc(100% - 32px));
+  max-height: calc(100dvh - 40px);
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-m);
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 18px 70px var(--shadow);
+  overflow: auto;
+}
+.number-dialog h2 {
+  font-size: 24px;
+}
+.number-dialog > p {
+  margin-top: 16px;
+  color: var(--sub);
+  line-height: 1.8;
+}
+.number-dialog .dialog-actions {
+  margin-top: 24px;
+}
+.number-dialog button {
+  min-height: 44px;
+  padding: 10px 16px;
+}
