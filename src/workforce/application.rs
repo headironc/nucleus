@@ -216,6 +216,7 @@ async fn photo(
     responses((status = 200, body = Preview, description = "Trusted actual content to confirm"),
         (status = 400, description = "invalid_input", body = Failure), (status = 413, description = "invalid_input", body = Failure), (status = 415, description = "invalid_input", body = Failure), (status = 429, description = "rate_limited", body = Failure, headers(("Retry-After" = u64, description = "Wait seconds before another attempt"))), (status = 500, description = "internal_error", body = Failure),
         (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"),
+        (status = 404, body = Failure, description = "target_unavailable"),
         (status = 409, body = Failure, description = "number_required"), (status = 422, body = Failure, description = "selection_unavailable, missing_glyph or text_overflow"),
         (status = 503, body = Failure, description = "dependency_unavailable")))]
 async fn preview(
@@ -238,6 +239,7 @@ async fn preview(
     responses((status = 201, body = Created, description = "Fixed application and audit committed together; the request is not deduplicated"),
         (status = 400, description = "invalid_input", body = Failure), (status = 413, description = "invalid_input", body = Failure), (status = 415, description = "invalid_input", body = Failure), (status = 429, description = "rate_limited", body = Failure, headers(("Retry-After" = u64, description = "Wait seconds before another attempt"))), (status = 500, description = "internal_error", body = Failure),
         (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"),
+        (status = 404, body = Failure, description = "target_unavailable"),
         (status = 409, body = Failure, description = "data_changed or number_required"), (status = 422, body = Failure, description = "selection_unavailable, missing_glyph or text_overflow"),
         (status = 503, body = Failure, description = "dependency_unavailable or outcome_unknown; refresh own applications, do not automatically resubmit")))]
 async fn submit(
