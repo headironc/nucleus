@@ -222,6 +222,7 @@ Halo 仅豁免上文的根文档、`docs/**/*.md`、两份文档格式配置，�
 | 原生 package 编排                 | `bun test tools/native-packages-workflow.test.ts`                                                                                                                      |
 | Halo 指定验收入口                 | `bun test tools/check-halo-test.test.ts tools/check-inputs.test.ts tools/cache.test.ts`                                                                                |
 | Halo 本地运行时准备               | `bun test tools/halo-local.test.ts tools/halo-browser-smoke.test.ts tools/halo-ci-image.test.ts`                                                                       |
+| Halo 原生宿主入口                 | `bun test tools/halo-host.test.ts tools/check-halo-test.test.ts tools/halo-browser-smoke.test.ts`                                                                      |
 | OCI 产物与独立下载                | `bun test tools/halo-image-artifact.test.ts tools/halo-local.test.ts tools/halo-browser-smoke.test.ts tools/halo-ci-image.test.ts`                                     |
 
 本地按受影响能力选择回归组；共享输入变化时运行所有消费者。输入未变的有效结果按[证据要求](#证据与自动化)复用。设计预览另按[文档维护](../README.md#文档维护)验证。
