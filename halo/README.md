@@ -276,7 +276,7 @@ bun tools/halo-image-artifact.ts build /absolute/path/to/new-artifact
 
 只有运行验收、层扫描和清理成功后才上传 `nucleus-ci-<run_id>-<run_attempt>`，保留 7 天。独立下载作业按上传的 artifact ID 下载，摘要不符直接失败，再交叉核源码、repository、run/attempt、内部 tar SHA 与 manifest/config/layers，并核扫描处置列表属于当前候选。artifact ID 和 ZIP digest 在上传后记入输出与 summary，内部来源不虚构未来 ID。本地执行的 CI 身份明确为 null。
 
-工作流只有 `contents: read`，不登录 registry、不传包凭据、不把 Docker socket 挂入候选容器。它不发布 GHCR，也不切换消费者。私有包关联、Actions 访问、发布与冷拉取，以及 Runner 的 VM 接入分别验收；本片产物不能证明这些后续条件。旧发布、Halo 和缓存流程仅保留为[历史夹具](../tools/fixtures/retired-workflows/README.md)。
+工作流只有 `contents: read`，不登录 registry、不传包凭据、不把 Docker socket 挂入候选容器。它不发布 GHCR，也不切换消费者。私有包关联、Actions 访问、发布与冷拉取分别验收；本片产物不能证明这些后续条件。旧发布、Halo 和缓存流程仅保留为[历史夹具](../tools/fixtures/retired-workflows/README.md)。
 
 本地容器验证以可写工作副本挂载仓库，使用镜像的非 root 用户及 `--init --ipc=host`。init 回收测试退出后留下的孤儿进程，使进程组终态可观察。本地完整验收可运行 `bun tools/halo-local.ts`；该入口按本节镜像、输入摘要和非 root 约束准备环境，并在类型与业务执行前核对两种浏览器运行时。底层操作仍先运行 `bun tools/halo-ci-image.ts verify`，再执行本页的协议快照核对、类型与单元测试、正式构建和浏览器验收。将大型 Cargo 产物挂载到磁盘目录，避免占满临时文件系统。容器的源码挂载、缓存及临时数据库均不进入发布镜像。
 
@@ -304,7 +304,7 @@ job token 的包元数据可能不显示关联。工作流记录 repository 视�
 
 空缓存成立后，再用仅 `packages: read` 的 Nucleus 短期 job token 按准确 digest 拉取，记录白名单层进度、摘要及原进程结果；发现缓存层复用或摘要冲突则拒绝。权限失败不改用匿名或 PAT。认证文件删除后，核 registry 与本地平台、config、RootFS 及实际运行引用，复用现有隔离运行入口验证非 root、私有 PG、双 Chromium 和薄消费者。源码和依赖只读、容器禁外网且不挂 Docker socket，finally 核容器、PG、目录及本次拉取引用的清理。Docker 运行引用与 config 摘要分别记录。
 
-publisher 的类型、拒绝/恢复及权限回归由[专用检查](../.github/workflows/halo-publish-checks.yml)执行：`./node_modules/.bin/tsc -p .github/halo-publish/tsconfig.json --noEmit` 和 `bun test ./.github/halo-publish/publication.test.ts`。固定 SHA 的 actionlint 1.7.12 另核两份发布工作流的语法与表达式上下文。新增工具独立于 producer 的验收输入集合。单元检查和源码合并不证明包设置、真实发布或冷拉取已完成；这些结果由交付负责人结合实际运行、摘要、权限和清理原件接纳。此入口不自动持续发布、不迁移生产消费者，也不提供 VM 接入证明。
+publisher 的类型、拒绝/恢复及权限回归由[专用检查](../.github/workflows/halo-publish-checks.yml)执行：`./node_modules/.bin/tsc -p .github/halo-publish/tsconfig.json --noEmit` 和 `bun test ./.github/halo-publish/publication.test.ts`。固定 SHA 的 actionlint 1.7.12 另核两份发布工作流的语法与表达式上下文。新增工具独立于 producer 的验收输入集合。单元检查和源码合并不证明包设置、真实发布或冷拉取已完成；这些结果由交付负责人结合实际运行、摘要、权限和清理原件接纳。此入口不自动持续发布，也不迁移生产消费者。
 
 ## 启动与发布配置
 
