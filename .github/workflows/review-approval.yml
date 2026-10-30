@@ -1,0 +1,114 @@
+name: Cladiron review approval
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: Ordinary same-repository dev PR number
+        required: true
+        type: string
+      mode:
+        description: Prepare request text or verify and approve
+        required: true
+        type: choice
+        options: [prepare, approve]
+        default: prepare
+      cubic_quota_check:
+        description: Existing trusted same-repository Cubic quota check ID; prepare only
+        required: false
+        type: string
+      code_start_artifact:
+        description: Trusted prepare artifact ID for a persistent code review summary; approve only
+        required: false
+        type: string
+      security_start_artifact:
+        description: Trusted prepare artifact ID for a persistent security review summary; approve only
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  checks: read
+  pull-requests: read
+
+concurrency:
+  group: cladiron-review-approval
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  approval:
+    if: ${{ github.ref == 'refs/heads/dev' && github.repository == 'headironc/nucleus' && github.actor_id == '19648989' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: dev-admission
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .tool-versions
+      - name: Check fixed Bun
+        run: bun tools/check-bun.ts
+      - name: Prepare review request text
+        id: prepare
+        if: ${{ inputs.mode == 'prepare' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CLADIRON_TRIGGERING_ACTOR_ID: ${{ github.triggering_actor == github.repository_owner && github.repository_owner_id || '0' }}
+          REVIEW_START_PATH: ${{ runner.temp }}/review-start.json
+        run: bun .github/review-approval/main.ts
+      - name: Upload review start evidence
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: ${{ inputs.mode == 'prepare' && steps.prepare.outputs.review_start_captured == 'true' }}
+        with:
+          name: cladiron-review-start-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/review-start.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Record approval operation intent
+        id: intent
+        if: ${{ inputs.mode == 'approve' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CLADIRON_TRIGGERING_ACTOR_ID: ${{ github.triggering_actor == github.repository_owner && github.repository_owner_id || '0' }}
+          APPROVAL_INTENT_PATH: ${{ runner.temp }}/operation.json
+        run: bun .github/review-approval/main.ts intent
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: ${{ inputs.mode == 'approve' }}
+        with:
+          name: cladiron-approval-intent-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/operation.json
+          if-no-files-found: error
+          retention-days: 30
+      - name: Verify evidence and perform selected operation
+        id: writer
+        if: ${{ inputs.mode == 'approve' }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CLADIRON_TRIGGERING_ACTOR_ID: ${{ github.triggering_actor == github.repository_owner && github.repository_owner_id || '0' }}
+          CLADIRON_CLIENT_ID: ${{ vars.CLADIRON_CLIENT_ID }}
+          CLADIRON_PRIVATE_KEY: ${{ inputs.mode == 'approve' && secrets.NUCLEUS_DEV_PRIVATE_KEY || '' }}
+          APPROVAL_INTENT_PATH: ${{ runner.temp }}/operation.json
+        run: bun .github/review-approval/main.ts
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
+        if: ${{ always() && inputs.mode == 'approve' }}
+        with:
+          name: cladiron-approval-result-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/operation.json
+          if-no-files-found: ignore
+          retention-days: 30
+      - name: Withdraw this App's prior approvals after failed evidence
+        if: ${{ failure() && inputs.mode == 'approve' && (steps.intent.outputs.invalidate == 'true' || steps.writer.outputs.invalidate == 'true') }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          CLADIRON_TRIGGERING_ACTOR_ID: ${{ github.triggering_actor == github.repository_owner && github.repository_owner_id || '0' }}
+          CLADIRON_CLIENT_ID: ${{ vars.CLADIRON_CLIENT_ID }}
+          CLADIRON_PRIVATE_KEY: ${{ secrets.NUCLEUS_DEV_PRIVATE_KEY }}
+        run: bun .github/review-approval/main.ts invalidate
