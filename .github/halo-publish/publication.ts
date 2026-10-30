@@ -103,12 +103,26 @@ export function assertPlatform(
     artifact.workflow_run?.head_sha !== selected.source
   )
     throw new Error("Artifact ownership, bytes or expiration mismatch");
+  const association = pkg.repository;
+  const repositoryView =
+    association === undefined
+      ? "missing"
+      : association === null
+        ? "null"
+        : Array.isArray(association)
+          ? "array"
+          : typeof association;
+  // This fixed publication requires independent operator association readbacks.
+  // An unavailable job-token view is not an association verdict.
   if (
     pkg.id !== selected.packageId ||
     pkg.name !== "nucleus-ci" ||
     pkg.visibility !== "private" ||
-    pkg.repository?.id !== selected.repositoryId ||
-    pkg.repository?.full_name !== selected.repository
+    (repositoryView !== "missing" &&
+      repositoryView !== "null" &&
+      (repositoryView !== "object" ||
+        association.id !== selected.repositoryId ||
+        association.full_name !== selected.repository))
   )
     throw new Error(
       "Existing private package association is not ready: " +
@@ -116,6 +130,7 @@ export function assertPlatform(
           id: pkg.id ?? null,
           name: pkg.name ?? null,
           visibility: pkg.visibility ?? null,
+          repositoryView,
           repositoryId: pkg.repository?.id ?? null,
           repositoryName: pkg.repository?.full_name ?? null,
         }),
@@ -127,6 +142,7 @@ export function assertPlatform(
     comparison.merge_base_commit?.sha !== selected.source
   )
     throw new Error("Producer source no longer belongs to dev history");
+  return repositoryView;
 }
 
 export function api(path: string, pages = false): any {
@@ -160,7 +176,7 @@ export function platform() {
   const artifact = api(`${base}/actions/artifacts/${selected.artifact}`);
   const pkg = api("users/headironc/packages/container/nucleus-ci");
   const comparison = api(`${base}/compare/${selected.source}...dev`);
-  assertPlatform(
+  const packageRepositoryView = assertPlatform(
     repository,
     run,
     jobPages.flatMap((page) => page.jobs),
@@ -168,12 +184,14 @@ export function platform() {
     pkg,
     comparison,
   );
+  console.log(`Package repository metadata view: ${packageRepositoryView}`);
   return {
     repository,
     run,
     jobs: jobPages.flatMap((page) => page.jobs),
     artifact,
     package: pkg,
+    packageRepositoryView,
     comparison,
   };
 }
