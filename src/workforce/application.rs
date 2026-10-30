@@ -78,7 +78,9 @@ pub(crate) fn router(
 }
 
 async fn wait(request: Request, next: Next) -> Response {
-    let writing = request.method() == axum::http::Method::POST;
+    // Preview uses POST for structured selections but has no write outcome to reconcile.
+    let writing = request.method() == axum::http::Method::POST
+        && !request.uri().path().ends_with("/applications/preview");
     match tokio::time::timeout(std::time::Duration::from_secs(30), next.run(request)).await {
         Ok(response) => response,
         Err(_) => {
@@ -152,7 +154,7 @@ struct Template {
 #[utoipa::path(get, path = "/workforce/application-template", operation_id = "workforceApplicationTemplate",
     params(("Operation-Id" = uuid::Uuid, Header, description = "Required diagnostic correlation only; no deduplication or recovery"), ("Session-Id" = uuid::Uuid, Header)),
     responses((status = 200, body = Template, description = "Fixed layout and pickup choices before confirmed cropping"),
-        (status = 400, body = Failure), (status = 413, body = Failure), (status = 429, body = Failure), (status = 500, body = Failure),
+        (status = 400, description = "invalid_input", body = Failure), (status = 413, description = "invalid_input", body = Failure), (status = 429, description = "rate_limited", body = Failure, headers(("Retry-After" = u64, description = "Wait seconds before another attempt"))), (status = 500, description = "internal_error", body = Failure),
         (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"),
         (status = 503, body = Failure, description = "dependency_unavailable")))]
 async fn template(
@@ -177,7 +179,7 @@ async fn template(
     params(("Operation-Id" = uuid::Uuid, Header, description = "Required diagnostic correlation only"), ("Session-Id" = uuid::Uuid, Header), ("Origin" = String, Header)),
     request_body(content((Binary = "image/png"), (Binary = "image/jpeg"), (Binary = "image/webp")), description = "Confirmed static bytes; at most 8 MiB"),
     responses((status = 201, body = Photo, description = "Prepared immutable photograph"),
-        (status = 400, body = Failure), (status = 413, body = Failure), (status = 415, body = Failure), (status = 429, body = Failure), (status = 500, body = Failure),
+        (status = 400, description = "invalid_input", body = Failure), (status = 413, description = "invalid_input", body = Failure), (status = 415, description = "invalid_input", body = Failure), (status = 429, description = "rate_limited", body = Failure, headers(("Retry-After" = u64, description = "Wait seconds before another attempt"))), (status = 500, description = "internal_error", body = Failure),
         (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"),
         (status = 422, body = Failure, description = "invalid_input"), (status = 503, body = Failure, description = "dependency_unavailable or outcome_unknown")))]
 async fn photo(
@@ -212,7 +214,7 @@ async fn photo(
 #[utoipa::path(post, path = "/workforce/applications/preview", operation_id = "workforceApplicationPreview",
     params(("Operation-Id" = uuid::Uuid, Header, description = "Required diagnostic correlation only"), ("Session-Id" = uuid::Uuid, Header), ("Origin" = String, Header)), request_body(content = PreviewInput, description = "At most 8 KiB including every selected value"),
     responses((status = 200, body = Preview, description = "Trusted actual content to confirm"),
-        (status = 400, body = Failure), (status = 413, body = Failure), (status = 415, body = Failure), (status = 429, body = Failure), (status = 500, body = Failure),
+        (status = 400, description = "invalid_input", body = Failure), (status = 413, description = "invalid_input", body = Failure), (status = 415, description = "invalid_input", body = Failure), (status = 429, description = "rate_limited", body = Failure, headers(("Retry-After" = u64, description = "Wait seconds before another attempt"))), (status = 500, description = "internal_error", body = Failure),
         (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"),
         (status = 409, body = Failure, description = "number_required"), (status = 422, body = Failure, description = "selection_unavailable, missing_glyph or text_overflow"),
         (status = 503, body = Failure, description = "dependency_unavailable")))]
@@ -234,7 +236,7 @@ async fn preview(
 #[utoipa::path(post, path = "/workforce/applications", operation_id = "workforceApplicationSubmit",
     params(("Operation-Id" = uuid::Uuid, Header, description = "Required diagnostic correlation only; reusing this value does not deduplicate submissions"), ("Session-Id" = uuid::Uuid, Header), ("Origin" = String, Header)), request_body(content = Input, description = "At most 128 KiB; includes the complete trusted snapshot and all original text lines"),
     responses((status = 201, body = Created, description = "Fixed application and audit committed together; the request is not deduplicated"),
-        (status = 400, body = Failure), (status = 413, body = Failure), (status = 415, body = Failure), (status = 429, body = Failure), (status = 500, body = Failure),
+        (status = 400, description = "invalid_input", body = Failure), (status = 413, description = "invalid_input", body = Failure), (status = 415, description = "invalid_input", body = Failure), (status = 429, description = "rate_limited", body = Failure, headers(("Retry-After" = u64, description = "Wait seconds before another attempt"))), (status = 500, description = "internal_error", body = Failure),
         (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"),
         (status = 409, body = Failure, description = "data_changed or number_required"), (status = 422, body = Failure, description = "selection_unavailable, missing_glyph or text_overflow"),
         (status = 503, body = Failure, description = "dependency_unavailable or outcome_unknown; refresh own applications, do not automatically resubmit")))]
@@ -259,8 +261,8 @@ async fn submit(
 #[utoipa::path(get, path = "/workforce/current/applications", operation_id = "workforceCurrentApplications",
     params(("Operation-Id" = uuid::Uuid, Header, description = "Required diagnostic correlation only"), ("Session-Id" = uuid::Uuid, Header), ("page" = Option<i64>, Query, minimum = 1), ("size" = Option<i64>, Query, minimum = 1, maximum = 100)),
     responses((status = 200, body = Listed, description = "Full history for active participation; otherwise only cancellable summaries"),
-        (status = 400, body = Failure), (status = 413, body = Failure), (status = 429, body = Failure), (status = 500, body = Failure),
-        (status = 401, body = Failure, description = "authentication_invalid"), (status = 503, body = Failure, description = "dependency_unavailable")))]
+        (status = 400, description = "invalid_input", body = Failure), (status = 413, description = "invalid_input", body = Failure), (status = 429, description = "rate_limited", body = Failure, headers(("Retry-After" = u64, description = "Wait seconds before another attempt"))), (status = 500, description = "internal_error", body = Failure),
+        (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"), (status = 503, body = Failure, description = "dependency_unavailable")))]
 async fn list(
     State(service): State<application::Service>,
     Extension(actor): Extension<Actor>,
@@ -278,8 +280,8 @@ async fn list(
 #[utoipa::path(get, path = "/workforce/current/applications/{id}", operation_id = "workforceCurrentApplication",
     params(("Operation-Id" = uuid::Uuid, Header, description = "Required diagnostic correlation only"), ("Session-Id" = uuid::Uuid, Header), ("id" = Id, Path)),
     responses((status = 200, body = Detailed, description = "The immutable own application or its restricted summary"),
-        (status = 400, body = Failure), (status = 413, body = Failure), (status = 429, body = Failure), (status = 500, body = Failure),
-        (status = 401, body = Failure, description = "authentication_invalid"), (status = 404, body = Failure, description = "target_unavailable"),
+        (status = 400, description = "invalid_input", body = Failure), (status = 413, description = "invalid_input", body = Failure), (status = 429, description = "rate_limited", body = Failure, headers(("Retry-After" = u64, description = "Wait seconds before another attempt"))), (status = 500, description = "internal_error", body = Failure),
+        (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"), (status = 404, body = Failure, description = "target_unavailable"),
         (status = 503, body = Failure, description = "dependency_unavailable")))]
 async fn detail(
     State(service): State<application::Service>,
@@ -299,8 +301,8 @@ async fn detail(
 #[utoipa::path(get, path = "/workforce/application-resources/{id}", operation_id = "workforceApplicationResource",
     params(("Session-Id" = uuid::Uuid, Header), ("id" = ResourceId, Path)),
     responses((status = 200, content((Binary = "image/webp"), (Binary = "font/ttf"), (Binary = "font/otf")), description = "Private immutable bytes; Operation-Id is ignored"),
-        (status = 400, body = Failure), (status = 413, body = Failure), (status = 429, body = Failure), (status = 500, body = Failure),
-        (status = 401, body = Failure, description = "authentication_invalid"), (status = 404, body = Failure, description = "target_unavailable"),
+        (status = 400, description = "invalid_input", body = Failure), (status = 413, description = "invalid_input", body = Failure), (status = 429, description = "rate_limited", body = Failure, headers(("Retry-After" = u64, description = "Wait seconds before another attempt"))), (status = 500, description = "internal_error", body = Failure),
+        (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"), (status = 404, body = Failure, description = "target_unavailable"),
         (status = 503, body = Failure, description = "dependency_unavailable")))]
 async fn resource(
     State(service): State<application::Service>,
