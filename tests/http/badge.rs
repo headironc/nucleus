@@ -9,6 +9,31 @@ use uuid::Uuid;
 
 use crate::{application::*, authentication::*, database::*, supplier::*};
 
+async fn slow_resource(
+    base: &str,
+    path: &str,
+    actor: &(String, String),
+    source: u8,
+) -> tokio::net::TcpStream {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    timeout(Duration::from_secs(5), async {
+        let address = base.strip_prefix("http://").expect("loopback HTTP").parse().expect("socket address");
+        let socket = tokio::net::TcpSocket::new_v4().expect("slow client");
+        socket.set_recv_buffer_size(1024).expect("bounded receive window");
+        let mut socket = socket.connect(address).await.expect("resource connection");
+        socket.write_all(format!("GET {path} HTTP/1.1\r\nHost: {address}\r\nSession-Id: {}\r\nCookie: {}\r\nOrigin: https://example.com\r\nX-Real-IP: 203.0.179.{source}\r\n\r\n", actor.0, actor.1).as_bytes()).await.expect("authorized GET");
+        let mut headers = Vec::new();
+        while !headers.ends_with(b"\r\n\r\n") {
+            assert!(headers.len() < 16384, "bounded response headers");
+            headers.push(socket.read_u8().await.expect("response header byte"));
+        }
+        let headers = String::from_utf8(headers).expect("HTTP headers");
+        assert!(headers.starts_with("HTTP/1.1 200 "));
+        assert!(headers.to_ascii_lowercase().contains("connection: close\r\n"));
+        socket
+    }).await.expect("bounded resource preparation")
+}
+
 #[test]
 fn fixed_badges_use_trusted_preview_and_private_resources_without_request_deduplication() {
     let server = server();
@@ -153,7 +178,44 @@ fn fixed_badges_use_trusted_preview_and_private_resources_without_request_dedupl
             }
             assert!(schema["paths"]["/api/v1/workforce/applications"]["post"]["parameters"].as_array().expect("headers").iter().any(|parameter|parameter["name"]=="Operation-Id"));
             assert!(!schema["paths"]["/api/v1/workforce/application-resources/{id}"]["get"]["parameters"].as_array().expect("resource headers").iter().any(|parameter|parameter["name"]=="Operation-Id"));
-            stop.send(()).expect("stop HTTP");let (mut application,result)=task.await.expect("HTTP exited");result.expect("HTTP completed");application.stop().await.expect("drain");supplier.task.abort();assert!((&mut supplier.task).await.expect_err("fixture task aborted").is_cancelled());sms.stop().await;
+            let font_path=format!("/api/v1/workforce/application-resources/{}",preview["snapshot"]["template"]["fontId"].as_str().expect("retained multi-megabyte font"));
+            let mut slow=Vec::new();
+            for index in 1..=8 {slow.push(slow_resource(&base,&font_path,&manager,index).await);}
+            let exhausted=get(&font_path,&manager).send().await.expect("ninth transfer");
+            assert_eq!(exhausted.status(),503);
+            assert_eq!(exhausted.json::<Value>().await.expect("capacity response"),json!({"code":"dependency_unavailable"}));
+            drop(slow.pop());
+            timeout(Duration::from_secs(5),async {
+                let mut cadence=tokio::time::interval(Duration::from_millis(50));
+                loop {
+                    cadence.tick().await;
+                    let response=request(reqwest::Method::HEAD,&font_path,&manager,false).send().await.expect("HEAD after disconnect");
+                    if response.status()==200 {assert_eq!(response.headers()["connection"],"close");assert!(response.bytes().await.expect("HEAD body").is_empty());break;}
+                    assert_eq!(response.status(),503);
+                }
+            }).await.expect("disconnect releases transfer capacity");
+            let missing=get(&format!("/api/v1/workforce/application-resources/{}",Uuid::new_v4()),&manager).send().await.expect("registered concealed error");
+            assert_eq!(missing.status(),404);assert_eq!(missing.headers()["connection"],"close");
+            assert_eq!(missing.json::<Value>().await.expect("concealed error"),json!({"code":"target_unavailable"}));
+            slow.push(slow_resource(&base,&font_path,&manager,9).await);
+            let started=tokio::time::Instant::now();
+            timeout(Duration::from_secs(35),async {
+                let mut cadence=tokio::time::interval(Duration::from_millis(250));
+                loop {
+                    cadence.tick().await;
+                    let response=request(reqwest::Method::HEAD,&font_path,&manager,false).send().await.expect("transfer deadline probe");
+                    if response.status()==200 {break;}
+                    assert_eq!(response.status(),503);
+                }
+            }).await.expect("bounded transmission deadline releases capacity");
+            assert!(started.elapsed()>=Duration::from_secs(20),"unread bodies must retain capacity until their connection deadline");
+            drop(slow);
+            let mut stopping=Vec::new();
+            for index in 10..=11 {stopping.push(slow_resource(&base,&font_path,&manager,index).await);}
+            stop.send(()).expect("stop HTTP");let (mut application,result)=task.await.expect("HTTP exited");result.expect("HTTP completed");
+            timeout(Duration::from_secs(10),application.stop()).await.expect("stop interrupts prepared slow transfers").expect("drain");
+            drop(stopping);
+            supplier.task.abort();assert!((&mut supplier.task).await.expect_err("fixture task aborted").is_cancelled());sms.stop().await;
         })).await.expect("bounded HTTP badge acceptance");
     }));
 }

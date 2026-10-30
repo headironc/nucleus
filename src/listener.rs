@@ -83,7 +83,7 @@ pub(crate) struct Connection {
     stopped: Pin<Box<dyn Future<Output = ()> + Send>>,
 }
 
-/// An image closes its HTTP/1 connection; the permit outlives Hyper's copied body buffers.
+/// A media response closes its HTTP/1 connection; capacity outlives Hyper's copied body buffers.
 #[derive(Clone)]
 pub(crate) struct Transmission {
     state: Arc<Mutex<State>>,

@@ -1,9 +1,11 @@
 //! Ordinary badge requests use the website session and current-state refresh after uncertainty.
 
+use std::sync::Arc;
+
 use axum::{
     body::Bytes,
-    extract::{DefaultBodyLimit, Request, State, rejection::BytesRejection},
-    http::{HeaderMap, StatusCode, header},
+    extract::{ConnectInfo, DefaultBodyLimit, Request, State, rejection::BytesRejection},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
 };
@@ -13,6 +15,7 @@ use domain::{
     workforce::application::{self, Detail, Id, Input, List, PreviewInput, ResourceId},
 };
 use serde::{Deserialize, Serialize};
+use tokio::{sync::OwnedSemaphorePermit, time::timeout_at};
 use utoipa::ToSchema;
 use utoipa_axum::{
     router::{OpenApiRouter, UtoipaMethodRouterExt},
@@ -50,6 +53,7 @@ impl ToSchema for Binary {
 pub(crate) fn router(
     service: application::Service,
     authentication: identity::Context,
+    admission: identity::admission::Admission,
 ) -> OpenApiRouter {
     OpenApiRouter::new()
         .routes(routes!(photo))
@@ -65,7 +69,6 @@ pub(crate) fn router(
         .merge(
             OpenApiRouter::new()
                 .routes(routes!(detail))
-                .routes(routes!(resource))
                 .route_layer(middleware::from_fn_with_state(
                     authentication.clone(),
                     identity::current::authenticate,
@@ -73,8 +76,75 @@ pub(crate) fn router(
                 .route_layer(middleware::from_fn(wait))
                 .route_layer(middleware::from_fn(target)),
         )
+        .merge(
+            OpenApiRouter::new()
+                .routes(routes!(resource))
+                .route_layer(middleware::from_fn_with_state(admission, transfer))
+                .route_layer(middleware::from_fn_with_state(
+                    authentication,
+                    identity::current::authenticate,
+                ))
+                .route_layer(middleware::from_fn(target)),
+        )
         .layer(DefaultBodyLimit::max(application::photo::INPUT_LIMIT))
         .with_state(service)
+}
+
+async fn transfer(
+    State(admission): State<identity::admission::Admission>,
+    Extension(ConnectInfo(peer)): Extension<ConnectInfo<crate::source::Peer>>,
+    mut request: Request,
+    next: Next,
+) -> Response {
+    let permit = match admission.transfer() {
+        Ok(permit) => permit,
+        Err(error) => {
+            tracing::error!(stage="workforce_resource_capacity", error=?error);
+            return unavailable();
+        }
+    };
+    let transmission = peer.transmission();
+    let deadline = match transmission.begin(permit) {
+        Ok(deadline) => deadline,
+        Err(error) => {
+            tracing::error!(stage="workforce_resource_transfer", kind="unavailable", error=?error);
+            return unavailable();
+        }
+    };
+    let capacity = match transmission.hold_read() {
+        Ok(capacity) => capacity,
+        Err(error) => {
+            tracing::error!(stage="workforce_resource_read_capacity", error=?error);
+            return unavailable();
+        }
+    };
+    request.extensions_mut().insert(capacity);
+    let mut response = match timeout_at(deadline, next.run(request)).await {
+        Ok(response) => response,
+        Err(error) => {
+            tracing::error!(stage="workforce_resource_transfer", kind="timeout", error=?error);
+            unavailable()
+        }
+    };
+    if let Err(error) = transmission.respond() {
+        tracing::error!(stage="workforce_resource_transfer", kind="unavailable", error=?error);
+        response = unavailable();
+    }
+    // The connection retains transfer capacity after Hyper copies the response body.
+    response
+        .headers_mut()
+        .insert(header::CONNECTION, HeaderValue::from_static("close"));
+    response
+}
+
+fn unavailable() -> Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(Failure {
+            code: Common::DependencyUnavailable,
+        }),
+    )
+        .into_response()
 }
 
 async fn wait(request: Request, next: Next) -> Response {
@@ -310,13 +380,14 @@ async fn resource(
     State(service): State<application::Service>,
     Extension(actor): Extension<Actor>,
     Extension(id): Extension<ResourceId>,
+    Extension(capacity): Extension<Arc<OwnedSemaphorePermit>>,
     Query(_): Query<Empty>,
     bytes: Result<Bytes, BytesRejection>,
 ) -> Response {
     if let Err(status) = super::validate_empty(bytes) {
         return invalid(status);
     }
-    respond(service.resource(&actor, id).await, |resource| {
+    respond(service.resource(&actor, id, capacity).await, |resource| {
         (
             [(header::CONTENT_TYPE, resource.media_type)],
             resource.bytes,
