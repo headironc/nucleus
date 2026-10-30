@@ -94,6 +94,13 @@ test("only manual dev work can enter the dedicated runner job", () => {
           type: "boolean",
           default: false,
         },
+        cancel_after_checks: {
+          description:
+            "Wait with active PostgreSQL after checks for ordinary cancellation",
+          required: false,
+          type: "boolean",
+          default: false,
+        },
       },
     },
   });
@@ -202,6 +209,8 @@ test("native initialization alone receives the read-only package credential", ()
   expect(job.env).toEqual({
     CARGO_BUILD_JOBS: "2",
     EXPECTED_REVISION: "${{ inputs.expected_revision }}",
+    FAIL_AFTER_CHECKS: "${{ inputs.fail_after_checks }}",
+    CANCEL_AFTER_CHECKS: "${{ inputs.cancel_after_checks }}",
   });
   expect(source).not.toMatch(
     /secrets\.|docker login|sudo|chmod|actions\/cache|rust-cache|CARGO_HOME|RUSTUP_HOME/,
@@ -293,7 +302,9 @@ test("only an explicit failure request after successful checks emits the bound m
   const platform = step("Check complete platform package");
   const cleanup = step("Check and clean private PostgreSQL scope");
   expect(job.steps.indexOf(failure)).toBe(job.steps.indexOf(platform) + 1);
-  expect(job.steps.indexOf(cleanup)).toBe(job.steps.indexOf(failure) + 1);
+  expect(job.steps.indexOf(cleanup)).toBeGreaterThan(
+    job.steps.indexOf(failure),
+  );
   expect(failure.run).not.toContain("${{");
   for (const successful of [false, true]) {
     for (const requested of [undefined, false, true]) {
@@ -360,7 +371,7 @@ test("failure marker write errors remain failures instead of claiming exit 42", 
 
 test("cleanup and diagnostics remain eligible after failure or cancellation, which cannot pass", () => {
   const cleanup = step("Check and clean private PostgreSQL scope");
-  const upload = job.steps.find((value) =>
+  const upload = job.steps.findLast((value) =>
     value.uses?.startsWith("actions/upload-artifact@"),
   )!;
   const reject = step("Reject cancelled probe");
@@ -399,4 +410,96 @@ test("cleanup and diagnostics remain eligible after failure or cancellation, whi
     "if-no-files-found": "warn",
   });
   expect(execute(reject, {}).status).toBe(1);
+});
+
+test("conflicting modes are rejected before checkout or private resource preparation", () => {
+  const guard = step("Bind reviewed dev revision");
+  for (const failure of ["", "false", "true"])
+    for (const cancel of ["", "false", "true"])
+      expect(
+        execute(guard, {
+          ...context,
+          FAIL_AFTER_CHECKS: failure,
+          CANCEL_AFTER_CHECKS: cancel,
+        }).status,
+      ).toBe(failure === "true" && cancel === "true" ? 1 : 0);
+  expect(job.steps[0]).toBe(guard);
+});
+
+test("active PG is uploaded before interruptible waiting and cleaned before the independent scan", () => {
+  const selected = [
+    "Check complete platform package",
+    "Start private cancellation workload",
+    "Preserve pre-interrupt diagnostics",
+    "Wait for ordinary cancellation",
+    "Stop private cancellation workload",
+    "Check and clean private PostgreSQL scope",
+  ].map(step);
+  const indices = selected.map((entry) => job.steps.indexOf(entry));
+  expect(indices).toEqual([...indices].sort((a, b) => a - b));
+  const upload = step("Preserve pre-interrupt diagnostics");
+  expect(upload.with?.name).toBe(
+    "runner-probe-pre-interrupt-${{ github.run_id }}-${{ github.run_attempt }}",
+  );
+  expect(upload.with?.["if-no-files-found"]).toBe("error");
+  const path = temporary();
+  writeFileSync(
+    join(path, "bun"),
+    '#!/bin/bash\nprintf "%s\\n" "$*"\nexit "$STATUS"\n',
+    { mode: 0o700 },
+  );
+  for (const [name, command] of [
+    ["Start private cancellation workload", "start"],
+    ["Wait for ordinary cancellation", "wait"],
+    ["Stop private cancellation workload", "cleanup"],
+  ]) {
+    const entry = step(name!);
+    expect(entry.run).not.toContain("${{");
+    const result = execute(entry, {
+      PATH: `${path}:${process.env.PATH}`,
+      RUNNER_TEMP: path,
+      STATUS: "27",
+    });
+    expect(result.status).toBe(27);
+    expect(result.stdout.trim()).toBe(
+      `.github/runner-probe/cancel.ts ${command}`,
+    );
+  }
+  for (const successful of [false, true])
+    for (const requested of [undefined, false, true]) {
+      const functions = [
+        {
+          name: "success",
+          minArgs: 0,
+          maxArgs: 0,
+          call: () => new data.BooleanData(successful),
+        },
+        {
+          name: "always",
+          minArgs: 0,
+          maxArgs: 0,
+          call: () => new data.BooleanData(true),
+        },
+      ];
+      const inputs = new data.Dictionary();
+      if (requested !== undefined)
+        inputs.add("cancel_after_checks", new data.BooleanData(requested));
+      for (const entry of selected.slice(1, 5)) {
+        const enabled = truthy(
+          new Evaluator(
+            new Parser(
+              new Lexer(entry.if!).lex().tokens,
+              ["inputs"],
+              functions,
+            ).parse(),
+            new data.Dictionary({ key: "inputs", value: inputs }),
+            new Map(functions.map((fn) => [fn.name, fn])),
+          ).evaluate(),
+        );
+        expect(enabled).toBe(
+          requested === true &&
+            (entry.name === "Stop private cancellation workload" || successful),
+        );
+      }
+    }
 });
