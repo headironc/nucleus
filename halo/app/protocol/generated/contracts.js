@@ -963,6 +963,77 @@ export default {
       ]
     }
   },
+  "POST /api/v1/workforce/numbers": {
+    "201": {
+      "validator": "allocateWorkforceNumber_201",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "allocateWorkforceNumber_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "allocateWorkforceNumber_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "allocateWorkforceNumber_403",
+      "codes": [
+        "permission_denied"
+      ]
+    },
+    "409": {
+      "validator": "allocateWorkforceNumber_409",
+      "codes": [
+        "number_present",
+        "number_pool_exhausted",
+        "request_mismatch"
+      ]
+    },
+    "413": {
+      "validator": "allocateWorkforceNumber_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "415": {
+      "validator": "allocateWorkforceNumber_415",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "422": {
+      "validator": "allocateWorkforceNumber_422",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "429": {
+      "validator": "allocateWorkforceNumber_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "allocateWorkforceNumber_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "allocateWorkforceNumber_503",
+      "codes": [
+        "dependency_unavailable",
+        "outcome_unknown"
+      ]
+    }
+  },
   "POST /api/v1/workforce/grants/{id}/terminations": {
     "201": {
       "validator": "terminateWorkforceGrant_201",

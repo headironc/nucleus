@@ -61,6 +61,22 @@ Session 协议适配器供短信登录与本人检查使用。注册适配器核
 
 将 `NUCLEUS_OPENAPI_REFERENCE` 指向已保存快照，可检查当前后端的实际导出是否逐字节一致。
 
+## 本人首次领取工号
+
+`/workforce/number` 从员工服务进入，消费现有首次分配 API。类别、资格和原结果规则分别由[工号](../docs/workforce/numbers.md)、[页面](../docs/client/pages.md#网站本人首次领取工号)和[恢复合同](../docs/client/recovery.md#本人首次工号恢复)拥有。协议生成器从现有真实快照选择 `POST /api/v1/workforce/numbers`；生成文件不手改。
+
+```bash
+cd halo
+bun run check:generated
+bun run typecheck
+bun run test -- app/workforce/allocation.test.ts app/protocol/number.test.ts tools/protocol.test.ts
+bun run test:browser -- tests/number.spec.ts
+```
+
+受控浏览器使用真实页面、会话存储、确认弹窗与协议校验，覆盖类别无预选、固定结果、失联后同原输入恢复、输入不一致关闭、账户遮蔽及暂停资格，并保留四种宽度的明暗主题截图。该检查使用受控 HTTP，不证明真实 Cookie、数据库分配、最小空号或并发唯一性。
+
+独立客户端候选按上述组件检查交付。后续集成候选负责真实准入、本人领号及原成功响应丢失恢复。该阶段由后端独立核对固定事实和号码池；组件检查不替代最终端到端证据。
+
 ## 本人换号页面
 
 本人换号从个人账户的“更换手机号”进入 `/account/mobile`。原号发码、建立、新号发码与最终确认分别使用独立 Operation-Id。两次发码的 Turnstile action 分别为 `send_mobile_change_code` 和 `send_mobile_binding_code`，验证码复用六位受控 CodeInput。协议适配器在 `app/protocol/mobile.ts`，恢复控制器与材料在 `app/mobile-change/`。
@@ -141,7 +157,20 @@ bun run test:browser -- tests/code.spec.ts
 
 全部退出从账户的独立入口进入 `/sessions/logout-all`，确认弹窗后才发送 DELETE。两种退出分别保存恢复材料与历史标记。全部退出将待取得证明、已匹配及已知不匹配分开保存。分类前中断或结果保存失败后，仍能以原操作查询服务端原范围与发起者；匹配首发材料才确认完成。已知 `request_mismatch` 不升级为本次成功，证明不匹配只展示此前记录。空结果、读取失败、刷新或登录返回本身都不证明完成。固定登录意图为 `all-logout-result`，本次退出仍使用 `logout-result`。已有账户登录后先核对本人，再恢复同账户的查询入口；注册仍进入账户页。原结果查询不重新退出，也不清理后来登录。
 
-仓库现有的本地容器入口在根目录运行。它要求已安装并可用的 Docker、Linux x86_64，以及非 root 的当前用户；不在宿主安装浏览器、Nginx、Rust 或系统包。采用该路线前核对任务授权；Docker 已被明确停止时，不调用入口或自动重试。本机 macOS 的完整宿主兼容性不由该入口证明。入口以当前镜像输入摘要命名本地镜像，缺失时调用现有 `tools/halo-ci-image.ts` 构建，之后复用同一摘要的缓存镜像；首次构建需要下载并安装镜像输入，耗时较长。也可用 `--image IMAGE` 复用已安装镜像；入口先解析其不可变镜像 ID，并在安装依赖或执行任何业务命令前要求镜像记录的输入摘要与当前仓库一致，不匹配即失败。入口不拉取私有 CI 镜像，也不登录镜像仓库。
+Linux 宿主可在仓库根目录运行 `bun tools/halo-host.ts`，要求非 root 用户。在 PATH 中准备 `.tool-versions` 固定的 Node 和 Bun，以及 `rust-toolchain.toml` 固定的 Rust。另准备 Nginx、OpenSSL 和锁定的 Halo 依赖。PostgreSQL 使用 `fixture/postgresql.version` 固定的版本，安装位置为 `target/postgresql/<version>`。显式运行 `bun fixture/postgresql.ts` 可准备这份安装；缺失时会下载并编译。
+
+宿主入口核对已安装的工具版本和实际可执行程序。缺失或不匹配即停止，不安装依赖或回退到 Docker。`--prepare` 只做依赖预检。默认依次运行类型检查、正式构建和 HTTP 协议快照，不启动浏览器。快照使用真实后端和隔离数据库，核对实际路由及协议；它不验证完整页面业务链。
+
+组件阶段按受影响范围验证。形成明确的 Git 集成候选后，再显式使用 `--browser`。该模式在默认检查后运行双 Chromium 冒烟和原有浏览器验收，需提前安装匹配的 Playwright 浏览器。入口命令存在不表示完整端到端已经验收，也不证明 macOS 宿主兼容性。
+
+`HALO_NGINX` 可指定 Nginx 路径，默认为 `/usr/sbin/nginx`。浏览器安装和运行使用同一个 `PLAYWRIGHT_BROWSERS_PATH`。入口继承 Cargo 缓存设置，把 XDG 配置与缓存放在 `target/halo-host/`。中断时向当前步骤转发一次信号，等待收尾并停止后续步骤。Bun 与 HTTP 夹具继续拥有其子进程的停止流程。步骤退出后，进程组在 60 秒内仍未结束时，入口报告组号并失败，保留未知清理状态。
+
+```bash
+bun tools/halo-host.ts --prepare
+bun tools/halo-host.ts
+```
+
+仓库现有的本地容器入口也在根目录运行。它要求已安装并可用的 Docker、Linux x86_64，以及非 root 的当前用户；不在宿主安装浏览器、Nginx、Rust 或系统包。采用该路线前核对任务授权；Docker 已被明确停止时，不调用入口或自动重试。本机 macOS 的完整宿主兼容性不由该入口证明。入口以当前镜像输入摘要命名本地镜像，缺失时调用现有 `tools/halo-ci-image.ts` 构建，之后复用同一摘要的缓存镜像；首次构建需要下载并安装镜像输入，耗时较长。也可用 `--image IMAGE` 复用已安装镜像；入口先解析其不可变镜像 ID，并在安装依赖或执行任何业务命令前要求镜像记录的输入摘要与当前仓库一致，不匹配即失败。入口不拉取私有 CI 镜像，也不登录镜像仓库。
 
 ```bash
 bun tools/halo-local.ts
@@ -153,7 +182,7 @@ bun tools/halo-local.ts
 
 底层验收入口 `tools/check-halo-test.ts` 直接调用 Cargo，不通过 Docker。具备准确工具链、固定浏览器、Nginx、PostgreSQL 夹具、Halo 依赖和构建产物后，可在仓库根目录运行 `HALO_NGINX=/usr/sbin/nginx bun tools/check-halo-test.ts browser`。实际 Nginx 路径按环境指定。现有 `halo/tools/browser-smoke.ts` 依赖 Linux `/proc` 取证；命令存在不证明 macOS 已支持同等完整验收。
 
-宿主依赖准备与入口适配由[项目验证责任](../docs/engineering/verification.md#双机验证与能力缺口)落实，复用有效授权，不因换执行位置重复请求。本文不提供已验收的宿主自动准备器，也不证明依赖安装或适配已经完成。实际运行保留原业务断言、失败证据和清理要求；宿主运行不替代镜像专属验收。
+宿主依赖准备与入口适配由[项目验证责任](../docs/engineering/verification.md#双机验证与能力缺口)落实，复用有效授权，不因换执行位置重复请求。宿主入口只核对依赖，不提供自动安装器；验收失败也不隐式安装或重试。实际运行保留原业务断言、失败证据和清理要求。宿主结果只覆盖实际运行的检查，不证明 OCI 镜像指纹、可复现性或容器隔离。
 
 直接使用底层命令并需要独立保存浏览器二进制时，安装和测试均设置同一个 `PLAYWRIGHT_BROWSERS_PATH`。测试创建临时数据库、证书、Node 监听、独立 HTTPS 头像入口和 Nginx 配置，结束时清理进程及临时目录。头像入口把浏览器的原生图片 GET 原样转发给真实后端的签名图片路由，只记录路径摘要、请求头存在布尔值、状态、响应头和字节摘要，不记录完整签名链接、Cookie 值或图片内容。截图位于 `halo/test-results/`。
 

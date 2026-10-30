@@ -139,7 +139,9 @@ function NumberCard({ controller, now }: { controller: Numbers; now: number }) {
       )}
       {copy && <p role="status">{copy}</p>}
       {state.kind === "ready" && state.number === null && (
-        <p className="field-hint">如需核实工号，请联系医院管理员。</p>
+        <a className="primary" href="/workforce/number">
+          首次领取工号
+        </a>
       )}
       {state.kind !== "loading" && (
         <Button
