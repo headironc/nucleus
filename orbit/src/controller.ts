@@ -242,6 +242,8 @@ export class Controller {
       this.retain({ ...this.records, session: undefined });
       this.presentAnonymous();
       this.publish({ message: "请重新登录后继续。此前退出结果仍可在同一账户重新登录后查看。" });
+    } else if (this.selectedLogout()) {
+      this.pending("此前退出结果仍待确认。请查看退出结果。");
     } else {
       this.publish({ ...blank(), phase: "unavailable", canLogin: false, canCheck: true,
         message: result?.status === 403 ? "你无权查看这项内容。" : "暂时无法加载，请刷新后重试。" });
@@ -267,6 +269,8 @@ export class Controller {
     if (result?.status === 401 && result.value.code === "authentication_invalid") {
       this.retain({ ...this.records, session: undefined });
       this.publish({ ...blank(), message: "请重新登录。登录后可查看登录情况。" });
+    } else if (this.selectedLogout()) {
+      this.pending("登录列表暂时无法加载。此前退出结果仍待确认，请查看退出结果。");
     } else {
       this.publish({ ...blank(), phase: "sessions", canLogin: false, canCheck: true,
         message: result?.status === 403 ? "目前无法查看登录情况。" :

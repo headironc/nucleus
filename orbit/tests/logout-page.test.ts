@@ -10,7 +10,7 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 type NativePage = { data: Record<string, any>; onShow(): void; onHide(): void; recover(): void;
   authorize(event: { detail: { code: string } }): void; logoutCurrent(): void; logoutAll(): void };
 
-async function native(scope: "current" | "all", later = false) {
+async function native(scope: "current" | "all", later = false, readFailure?: { path: "current" | "list"; status: 401 | 403 | 503 }) {
   const platform = new FakePlatform();
   platform.setStorageSync(storageKey, { version: 1, session: { ...session(later ? ids.later : ids.session), accountId: ids.account },
     ...(later ? { logouts: [{ operation: ids.registration, accountId: ids.account, sessionId: ids.session, scope, createdAt: epoch, deadline: epoch + 600000 }] } : {}) });
@@ -27,11 +27,13 @@ async function native(scope: "current" | "all", later = false) {
     return { page, source };
   }
   const showing = await load(scope === "current" ? "account" : "sessions");
-  showing.page.onShow(); await platform.next(0); platform.reply(0, { code: "ok", account: account() });
-  if (scope === "all") {
-    await platform.next(1); platform.reply(1, { code: "ok", sessions: [
+  const failure = { code: readFailure?.status === 401 ? "authentication_invalid" : readFailure?.status === 403 ? "permission_denied" : "dependency_unavailable" };
+  showing.page.onShow(); await platform.next(0);
+  platform.reply(0, readFailure?.path === "current" ? failure : { code: "ok", account: account() }, readFailure?.path === "current" ? readFailure.status : 200);
+  if (scope === "all" && readFailure?.path !== "current") {
+    await platform.next(1); platform.reply(1, readFailure?.path === "list" ? failure : { code: "ok", sessions: [
       { id: later ? ids.later : ids.session, source: "mini", createdAt: "2026-10-30T08:00:00Z", current: true },
-    ] });
+    ] }, readFailure?.path === "list" ? readFailure.status : 200);
   }
   await tick();
   const index = platform.requests.length;
@@ -95,6 +97,32 @@ test.each(["current", "all"] as const)("native %s restores the current-state act
   expect(actions(h.source, h.page)).toEqual([{ binding: scope === "current" ? "check" : "refresh", text: scope === "current" ? "刷新个人资料" : "刷新列表" }]);
   expect(h.platform.records().session?.id).toBe(ids.later);
   expect(h.platform.requests).toHaveLength(count);
+});
+
+test.each([
+  ["current", "current", 403], ["current", "current", 503],
+  ["all", "current", 403], ["all", "current", 503],
+  ["all", "list", 403], ["all", "list", 503],
+] as const)("native %s retains original recovery after later-session %s read fails with %s", async (scope, path, status) => {
+  const h = await native(scope, true, { path, status });
+  expect(actions(h.source, h.page)).toEqual([{ binding: "recover", text: "查看退出结果" }]);
+  expect(h.page.data.sessionsReady ?? false).toBe(false);
+  const index = h.platform.requests.length;
+  h.page.recover(); const request = await h.platform.next(index);
+  expect(request.url).toEndWith(`/revocations?operation_id=${h.original.operation}`);
+  h.platform.reply(index, { code: "ok", original: { scope, initiatorId: ids.session }, count: 1,
+    revocations: [{ id: ids.session, revokedAt: "2026-10-30T08:01:00Z" }] }); await tick();
+  expect(h.platform.records().session?.id).toBe(ids.later);
+  expect(h.page.data.canRecover).toBe(false);
+  expect(h.platform.requests.every(item => item.method === "GET")).toBe(true);
+});
+
+test.each([["current", "current"], ["all", "current"], ["all", "list"]] as const)("native %s still requires login after a later-session %s read returns 401", async (scope, path) => {
+  const h = await native(scope, true, { path, status: 401 });
+  expect(actions(h.source, h.page)).toEqual([]);
+  expect(h.page.data.canLogin).toBe(true);
+  expect(h.platform.records().session).toBeUndefined();
+  expect(h.platform.records().logouts?.[0].operation).toBe(h.original.operation);
 });
 
 test.each(["current", "all"] as const)("native %s requires login only after 401 and preserves the later login after previous success", async scope => {
