@@ -1722,6 +1722,26 @@ for (const cacheControl of ["no-store", "max-age=0"]) {
         response.end(JSON.stringify({ code: "ok", count: 0, corrections: [] }));
         return;
       }
+      if (path === "/api/v1/accounts/current/role") {
+        response.writeHead(200, {
+          "Content-Type": "application/json",
+          "Cache-Control": "no-store",
+        });
+        response.end(
+          JSON.stringify({
+            code: "ok",
+            role: {
+              id: accountId,
+              changeId: accountId,
+              kind: "default",
+              name: "普通成员",
+              level: 1,
+              permissions: [],
+            },
+          }),
+        );
+        return;
+      }
       const resource = resources.get(path);
       if (resource) {
         response.writeHead(200, { "Content-Type": resource.contentType });

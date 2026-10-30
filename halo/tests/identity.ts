@@ -182,6 +182,7 @@ export async function identityReads(
       [
         "/api/v1/accounts/current",
         "/api/v1/accounts/current/corrections",
+        "/api/v1/accounts/current/role",
       ].includes(new URL(request.url()).pathname),
     ),
   ).toBe(true);
