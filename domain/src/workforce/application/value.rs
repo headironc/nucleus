@@ -141,15 +141,25 @@ impl TryFrom<ManagementInput> for ManagementQuery {
     type Error = &'static str;
     fn try_from(input: ManagementInput) -> Result<Self, Self::Error> {
         let page = match input.page {
-            Some(value) => value.parse().map_err(|_| "invalid page")?,
+            Some(value) => match value.parse() {
+                Ok(page) => page,
+                Err(_) => return Err("invalid page"),
+            },
             None => 1,
         };
         let size = match input.size {
-            Some(value) => value.parse().map_err(|_| "invalid size")?,
+            Some(value) => match value.parse() {
+                Ok(size) => size,
+                Err(_) => return Err("invalid size"),
+            },
             None => 20,
         };
+        let pagination = match Pagination::new(page, size) {
+            Ok(pagination) => pagination,
+            Err(_) => return Err("invalid pagination"),
+        };
         Ok(Self {
-            pagination: Pagination::new(page, size).map_err(|_| "invalid pagination")?,
+            pagination,
             status: input.status.unwrap_or(Status::Submitted),
         })
     }

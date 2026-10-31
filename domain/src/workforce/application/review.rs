@@ -33,7 +33,7 @@ impl Service {
         let lease = self.app.context().connections().lease().await?;
         let client = lease.client();
         let budget = self.app.context().read_budget();
-        let result = timeout(
+        let result = match timeout(
             Duration::from_secs(3),
             budget.run(client, self.app.anchors(), |view| async move {
                 Box::pin(self.manager(client, actor, Read::Snapshot(view))).await?;
@@ -41,7 +41,10 @@ impl Service {
             }),
         )
         .await
-        .map_err(|_| Error::Timeout)?;
+        {
+            Ok(result) => result,
+            Err(_) => return Err(Error::Timeout),
+        };
         finish(self, lease, result, false).await
     }
 
@@ -81,7 +84,7 @@ impl Service {
         let lease = self.app.context().connections().lease().await?;
         let client = lease.client();
         let budget = self.app.context().read_budget();
-        let result = timeout(
+        let result = match timeout(
             Duration::from_secs(3),
             budget.run(client, self.app.anchors(), |view| async move {
                 let read = Read::Snapshot(view);
@@ -113,7 +116,10 @@ impl Service {
             }),
         )
         .await
-        .map_err(|_| Error::Timeout)?;
+        {
+            Ok(result) => result,
+            Err(_) => return Err(Error::Timeout),
+        };
         finish(self, lease, result, false).await
     }
 

@@ -137,7 +137,10 @@ impl TryFrom<(Row, Option<person::revision::Identity>)> for Application {
                     reviewer_id,
                     reviewer_name: identity.name().to_owned(),
                     reviewed_at,
-                    rejection_reason: reason.try_into().map_err(|_| Error::Configuration)?,
+                    rejection_reason: match reason.try_into() {
+                        Ok(reason) => reason,
+                        Err(_) => return Err(Error::Configuration),
+                    },
                 }
             }
             _ => return Err(Error::Configuration),
