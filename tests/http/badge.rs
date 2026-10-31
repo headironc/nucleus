@@ -218,22 +218,16 @@ fn fixed_badges_use_trusted_preview_and_private_resources_without_request_dedupl
                 assert_eq!(denied.json::<Value>().await.expect("safe origin refusal"),json!({"code":"permission_denied"}));
             }
             let schema=client.get(format!("{base}/openapi/v1.json")).send().await.expect("schema").json::<Value>().await.expect("OpenAPI");
-            let variants=schema["components"]["schemas"]["application.Decision"]["oneOf"].as_array().expect("decision schemas");
-            for (response, mut fields) in [(&approved,vec!["status","reviewerId","reviewerName","reviewedAt"]),(&rejected,vec!["status","reviewerId","reviewerName","reviewedAt","rejectionReason"])] {
+            // The Ajv contract tests validate required fields inherited through schema references.
+            for (response, fields) in [(&approved,vec!["status","reviewerId","reviewerName","reviewedAt"]),(&rejected,vec!["status","reviewerId","reviewerName","reviewedAt","rejectionReason"])] {
                 let actual=&response["application"];
-                let variant=variants.iter().find(|variant|variant["properties"]["status"]["const"]==actual["status"] || variant["properties"]["status"]["enum"].as_array().is_some_and(|values|values.contains(&actual["status"]))).expect("schema for actual decision");
-                let mut required=variant["required"].as_array().expect("required decision fields").iter().map(|value|value.as_str().expect("field")).collect::<Vec<_>>();
-                required.sort_unstable();fields.sort_unstable();assert_eq!(required,fields);
-                for field in fields {assert!(actual.get(field).is_some(),"actual response must satisfy declared field {field}");assert!(variant["properties"].get(field).is_some());}
-                for field in ["reviewer_id","reviewed_at","rejection_reason"] {assert!(variant["properties"].get(field).is_none());assert!(actual.get(field).is_none());}
-            }
-            if let Some(path)=std::env::var_os("NUCLEUS_BADGE_SCHEMA_EXPORT") {
-                std::fs::write(path,serde_json::to_vec(&json!({"schema":schema,"submitted":detail["application"],"approved":approved["application"],"rejected":rejected["application"]})).expect("real schema and response JSON")).expect("export actual HTTP schema evidence");
+                for field in fields {assert!(actual.get(field).is_some(),"actual response must satisfy declared field {field}");}
+                for field in ["reviewer_id","reviewed_at","rejection_reason"] {assert!(actual.get(field).is_none());}
             }
             for path in ["/api/v1/workforce/applications/preview","/api/v1/workforce/applications"] {
                 assert_eq!(schema["paths"][path]["post"]["responses"]["404"]["description"],"target_unavailable");
             }
-            for path in ["/api/v1/workforce/application-template","/api/v1/workforce/application-photos","/api/v1/workforce/applications/preview","/api/v1/workforce/applications","/api/v1/workforce/current/applications","/api/v1/workforce/current/applications/{id}","/api/v1/workforce/application-resources/{id}","/api/v1/workforce/applications/{id}","/api/v1/workforce/applications/{id}/reviews"] {
+            for path in ["/api/v1/workforce/application-template","/api/v1/workforce/application-photos","/api/v1/workforce/applications/preview","/api/v1/workforce/applications","/api/v1/workforce/current/applications","/api/v1/workforce/current/applications/{id}","/api/v1/workforce/application-resources/{id}","/api/v1/workforce/applications/{id}","/api/v1/workforce/applications/{id}/reviews","/api/v1/workforce/applications/{id}/cancellations"] {
                 let route=&schema["paths"][path];
                 let operation=if route.get("post").is_some() {&route["post"]} else {&route["get"]};
                 for (status,code) in [("400","invalid_input"),("403","permission_denied"),("413","invalid_input"),("415","invalid_input"),("429","rate_limited"),("500","internal_error")] {
@@ -245,6 +239,47 @@ fn fixed_badges_use_trusted_preview_and_private_resources_without_request_dedupl
             }
             assert!(schema["paths"]["/api/v1/workforce/applications"]["post"]["parameters"].as_array().expect("headers").iter().any(|parameter|parameter["name"]=="Operation-Id"));
             assert!(!schema["paths"]["/api/v1/workforce/application-resources/{id}"]["get"]["parameters"].as_array().expect("resource headers").iter().any(|parameter|parameter["name"]=="Operation-Id"));
+            let cancellation_path = |id: &str| format!("/api/v1/workforce/applications/{id}/cancellations");
+            for input in [json!({"mode":"self"}),json!({"mode":"self","expectedStatus":"submitted","reason":"unexpected"}),json!({"mode":"manager","expectedStatus":"approved","reason":"  "}),json!({"mode":"self","expectedStatus":"ready"})] {
+                cadence.tick().await;
+                let response=post(&cancellation_path(&ids[2]),&manager).json(&input).send().await.expect("invalid cancellation");
+                assert_eq!(response.status(),422);
+                assert_eq!(response.json::<serde_json::Value>().await.expect("invalid input response"),json!({"code":"invalid_input"}));
+            }
+            assert_eq!(post(&cancellation_path(&ids[2]),&manager).header("content-type","application/json").body(" ".repeat(8193)).send().await.expect("cancellation body budget").status(),413);
+            for (actor,input,status) in [
+                (&other,json!({"mode":"manager","expectedStatus":"submitted","reason":"Not authorized"}),403),
+                (&other,json!({"mode":"self","expectedStatus":"submitted"}),404),
+            ] {
+                cadence.tick().await;
+                assert_eq!(post(&cancellation_path(&ids[2]),actor).json(&input).send().await.expect("cancellation authority").status(),status);
+            }
+            cadence.tick().await;
+            let changed=post(&cancellation_path(&ids[0]),&manager).json(&json!({"mode":"self","expectedStatus":"submitted"})).send().await.expect("approval changed the confirmed state");
+            assert_eq!(changed.status(),409);
+            assert_eq!(changed.json::<Value>().await.expect("state changed"),json!({"code":"state_changed"}));
+            cadence.tick().await;
+            let cancelled=post(&cancellation_path(&ids[2]),&manager).json(&json!({"mode":"self","expectedStatus":"submitted"})).send().await.expect("cancel before approval");
+            assert_eq!(cancelled.status(),200);assert_eq!(cancelled.headers()["cache-control"],"no-store");assert!(!cancelled.headers().contains_key("set-cookie"));
+            assert_eq!(cancelled.json::<Value>().await.expect("narrow self cancellation"),json!({"code":"ok","application":{"id":ids[2],"status":"cancelled"}}));
+            let cancelled_before=get(&format!("/api/v1/workforce/current/applications/{}",ids[2]),&manager).send().await.expect("cancelled self history").json::<Value>().await.expect("cancelled self JSON");
+            assert_eq!(cancelled_before["application"]["snapshot"],preview["snapshot"]);
+            assert_eq!(cancelled_before["application"].as_object().expect("unreviewed cancellation fields").len(),6);
+            cadence.tick().await;
+            let cancelled=post(&cancellation_path(&ids[0]),&manager).json(&json!({"mode":"manager","expectedStatus":"approved","reason":"  Private manager note  "})).send().await.expect("cancel after approval");
+            assert_eq!(cancelled.status(),200);
+            assert_eq!(cancelled.json::<Value>().await.expect("narrow manager cancellation"),json!({"code":"ok","application":{"id":ids[0],"status":"cancelled"}}));
+            let cancelled_after=get(&format!("/api/v1/workforce/applications/{}",ids[0]),&manager).send().await.expect("cancelled manager history").json::<Value>().await.expect("cancelled manager JSON");
+            let mut retained=approved["application"].clone();retained["status"]=json!("cancelled");
+            assert_eq!(cancelled_after["application"],retained);
+            let cancelled_list=get("/api/v1/workforce/applications?status=cancelled",&manager).send().await.expect("cancelled filter").json::<Value>().await.expect("cancelled list JSON");
+            assert_eq!(cancelled_list["count"],2);
+            assert!(cancelled_list["applications"].as_array().expect("cancelled summaries").iter().all(|row|row["status"]=="cancelled"));
+            cadence.tick().await;
+            assert_eq!(post(&cancellation_path(&ids[2]),&manager).json(&json!({"mode":"self","expectedStatus":"submitted"})).send().await.expect("terminal cancellation").status(),409);
+            if let Some(path)=std::env::var_os("NUCLEUS_BADGE_SCHEMA_EXPORT") {
+                std::fs::write(path,serde_json::to_vec(&json!({"schema":schema,"submitted":detail["application"],"approved":approved["application"],"rejected":rejected["application"],"cancelledBefore":cancelled_before["application"],"cancelledAfter":cancelled_after["application"]})).expect("real schema and response JSON")).expect("export actual HTTP schema evidence");
+            }
             let font_path=format!("/api/v1/workforce/application-resources/{}",preview["snapshot"]["template"]["fontId"].as_str().expect("retained multi-megabyte font"));
             let mut slow=Vec::new();
             for index in 1..=8 {slow.push(slow_resource(&base,&font_path,&manager,index).await);}
