@@ -114,7 +114,7 @@ export async function ownTermination(
   await page.getByRole("button", { name: "结束员工服务", exact: true }).click();
   await page.getByRole("button", { name: "确认结束", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认是否已结束", exact: true }),
+    page.getByRole("heading", { name: "结束结果尚不确定", exact: true }),
   ).toBeFocused();
   expect(calls).toHaveLength(1);
   expect(calls[0]).toMatchObject({
@@ -128,7 +128,7 @@ export async function ownTermination(
   expect(await cookieDigests(page)).toEqual(cookies);
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认是否已结束", exact: true }),
+    page.getByRole("heading", { name: "结束结果尚不确定", exact: true }),
   ).toBeVisible();
   expect(calls).toHaveLength(1);
 
@@ -181,7 +181,7 @@ export async function ownTermination(
   expect(replacement).not.toBe(grant);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认是否已结束", exact: true }),
+    page.getByRole("heading", { name: "结束结果尚不确定", exact: true }),
   ).toBeVisible();
   expect(calls).toHaveLength(1);
   await page.screenshot({
@@ -194,7 +194,7 @@ export async function ownTermination(
   await selectOther();
   await page.goto("/workforce/termination");
   await expect(
-    page.getByRole("heading", { name: "当前账户已更新", exact: true }),
+    page.getByRole("heading", { name: "当前账户已变化", exact: true }),
   ).toBeVisible();
   await expect(page.locator("main")).not.toContainText(account.name);
   expect(calls).toHaveLength(1);
@@ -209,16 +209,16 @@ export async function ownTermination(
     );
     await expect(
       page.getByRole("heading", {
-        name: "暂时无法确认是否已结束",
+        name: "结束结果尚不确定",
         exact: true,
       }),
     ).toBeVisible();
     expect(calls).toHaveLength(1);
     const before = await cookieDigests(page);
     await expect(
-      page.getByRole("button", { name: "继续核对", exact: true }),
+      page.getByRole("button", { name: "查看结束结果", exact: true }),
     ).toBeEnabled();
-    await page.getByRole("button", { name: "继续核对", exact: true }).click();
+    await page.getByRole("button", { name: "查看结束结果", exact: true }).click();
     await expect(
       page.getByRole("heading", { name: "此前的员工服务已结束", exact: true }),
     ).toBeVisible();
