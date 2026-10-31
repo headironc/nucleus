@@ -4,6 +4,7 @@ import { readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { cookieDigests } from "./identity";
 import { assertDocumentPolicy } from "./policy";
+import type { Session } from "../app/protocol/session";
 
 type Authentication = (
   page: Page,
@@ -40,6 +41,33 @@ export async function ownMobileChange(
 ) {
   const context = page.context();
   const material = process.env.HALO_TEST_MATERIAL!;
+  async function sessionAfter(
+    path: "/api/v1/registrations" | "/api/v1/sessions",
+    submit: () => Promise<void>,
+  ): Promise<Session> {
+    let session: Session | undefined;
+    await page.route(
+      `**${path}`,
+      async (route) => {
+        expect(route.request().method()).toBe("POST");
+        const response = await route.fetch({ maxRedirects: 0, maxRetries: 0 });
+        expect(response.status()).toBe(path === "/api/v1/registrations" ? 201 : 200);
+        // Capture the real response before its delivery allows document navigation.
+        session = (await response.json()).session;
+        await route.fulfill({ response });
+      },
+      { times: 1 },
+    );
+    const delivered = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === path &&
+        response.request().method() === "POST",
+    );
+    await submit();
+    await delivered;
+    expect(session).toBeDefined();
+    return session!;
+  }
   const firstCode = await authenticate(page, previousMobile);
   let sentAt = Date.now();
   await code(page, firstCode);
@@ -49,27 +77,21 @@ export async function ownMobileChange(
   ).toBeVisible();
   await page.getByLabel("姓名", { exact: true }).fill("Mobile Fixture");
   await page.getByLabel("居民身份证号", { exact: true }).fill("000000200002294003");
-  const registration = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname === "/api/v1/registrations" &&
-      response.status() === 201,
+  const first = await sessionAfter(
+    "/api/v1/registrations",
+    () => page.getByRole("button", { name: "创建账户" }).click(),
   );
-  await page.getByRole("button", { name: "创建账户" }).click();
-  const first = (await (await registration).json()).session;
   await expect(page).toHaveURL(/\/account$/);
   await expect(page.getByText("Mobile Fixture", { exact: true })).toBeVisible();
 
   await cooldown(page, sentAt);
   const secondCode = await authenticate(page, previousMobile);
   sentAt = Date.now();
-  const secondLogin = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname === "/api/v1/sessions" &&
-      response.status() === 200,
-  );
   await code(page, secondCode);
-  await page.getByRole("button", { name: "验证并继续" }).click();
-  const second = (await (await secondLogin).json()).session;
+  const second = await sessionAfter(
+    "/api/v1/sessions",
+    () => page.getByRole("button", { name: "验证并继续" }).click(),
+  );
   expect(second.id).not.toBe(first.id);
   await expect(page).toHaveURL(/\/account$/);
   await expect(page.getByText("Mobile Fixture", { exact: true })).toBeVisible();
@@ -255,19 +277,16 @@ export async function ownMobileChange(
     false,
     "mobile-change",
   );
-  const loginResponse = page.waitForResponse(
-    (response) =>
-      new URL(response.url()).pathname === "/api/v1/sessions" &&
-      response.status() === 200,
-  );
   const returnedDocument = page.waitForResponse(
     (response) =>
       response.request().isNavigationRequest() &&
       new URL(response.url()).pathname === "/account/mobile",
   );
   await code(page, loginCode);
-  await page.getByRole("button", { name: "验证并继续" }).click();
-  later = (await (await loginResponse).json()).session.id;
+  later = (await sessionAfter(
+    "/api/v1/sessions",
+    () => page.getByRole("button", { name: "验证并继续" }).click(),
+  )).id;
   expect(originals).not.toContain(later);
   assertDocumentPolicy((await returnedDocument).headers(), true);
   await expect(page).toHaveURL(/\/account\/mobile\?return=mobile-change$/);

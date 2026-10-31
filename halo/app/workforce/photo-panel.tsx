@@ -4,11 +4,11 @@ import { ApplicationPhoto, type PhotoError, type PhotoFrame } from "./photo";
 const COPY: Record<PhotoError, string> = {
   size: "照片超过 8 MiB，请选择较小的照片后重新裁剪。",
   format: "请选择静态 JPEG、PNG 或 WebP 照片。",
-  animation: "不支持动画图片，请选择静态照片。",
-  dimensions: "照片每边最多 4096 像素，总像素最多 1600 万。",
-  crop: "裁剪区域太小，无法保持照片比例。请选择更大的照片后重新裁剪。",
-  damaged: "无法完整读取这张照片，请检查文件或重新选择。",
-  unavailable: "暂时无法准备照片，请重新选择，或换用支持图片处理的浏览器。",
+  animation: "不支持动画图片，请选择静态 JPEG、PNG 或 WebP 照片。",
+  dimensions: "照片每边最多 4096 像素，总像素最多 1600 万，请重新选择。",
+  crop: "裁剪区域过小，请选择像素更高的照片后重新裁剪。",
+  damaged: "暂时无法读取这张照片，请重新选择。",
+  unavailable: "照片暂时无法处理，请重新选择，或换用支持图片处理的浏览器。",
 };
 
 export function ApplicationPhotoPanel({
@@ -85,28 +85,32 @@ export function ApplicationPhotoPanel({
     >
       <div>
         <h2 id={`${id}-title`}>工牌照片</h2>
-        <p>选择本人照片，调整画面后确认裁剪效果。</p>
+        <p>选择本人照片，调整后确认裁剪效果。</p>
       </div>
-      <label htmlFor={`${id}-file`}>
+      <label
+        htmlFor={`${id}-file`}
+        className="application-photo-picker"
+        aria-disabled={disabled || busy}
+      >
         {editing ? "重新选择照片" : "选择照片"}
+        <input
+          id={`${id}-file`}
+          ref={input}
+          className="visually-hidden"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          disabled={disabled || busy}
+          aria-describedby={`${id}-hint${state.kind === "error" ? ` ${id}-error` : ""}`}
+          aria-invalid={state.kind === "error" || undefined}
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (file) void photo.choose(file, frame);
+          }}
+        />
       </label>
-      <input
-        id={`${id}-file`}
-        ref={input}
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        disabled={disabled || busy}
-        aria-describedby={`${id}-hint${state.kind === "error" ? ` ${id}-error` : ""}`}
-        aria-invalid={state.kind === "error" || undefined}
-        onChange={(event) => {
-          const file = event.currentTarget.files?.[0];
-          event.currentTarget.value = "";
-          if (file) void photo.choose(file, frame);
-        }}
-      />
       <p className="field-hint" id={`${id}-hint`}>
-        静态 JPEG、PNG 或 WebP；最多 8 MiB，每边最多 4096 像素，总像素最多 1600
-        万。工牌照片与账户头像分别使用。
+        静态 JPEG、PNG 或 WebP，最多 8 MiB。
       </p>
       {state.kind === "reading" && <p role="status">正在读取照片，请稍候。</p>}
       {state.kind === "error" && (
@@ -157,7 +161,7 @@ export function ApplicationPhotoPanel({
                 disabled={!!editing.confirmed}
               >
                 {busy
-                  ? "正在准备照片"
+                  ? "正在准备照片…"
                   : editing.confirmed
                     ? "已确认裁剪效果"
                     : "确认裁剪效果"}
@@ -176,8 +180,8 @@ export function ApplicationPhotoPanel({
           </fieldset>
           <p role="status" className="application-photo-note">
             {editing.confirmed
-              ? "裁剪效果已确认。继续填写并预览完整工牌。"
-              : "调整照片不会提交申请，请确认当前裁剪效果。"}
+              ? "裁剪效果已确认，可预览工牌。"
+              : "请确认裁剪效果，再预览工牌。"}
           </p>
         </div>
       )}

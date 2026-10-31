@@ -55,7 +55,7 @@
     <view class="page-title">{{heading}}</view><view class="body-copy" wx:if="{{message && !busy}}" role="status">{{message}}</view>
   </view>
   <view class="self-actions" wx:if="{{(phase !== 'account' && canCheck) || canRecover || canReset}}">
-    <button class="{{phase === 'complete' && !homeAction ? 'primary' : 'secondary'}} self-button" wx:if="{{phase !== 'account' && canCheck}}" bindtap="check" disabled="{{busy}}">{{phase === 'complete' && !homeAction ? '返回个人账户' : phase === 'unavailable' ? '重新检查' : '检查登录状态'}}</button>
+    <button class="{{!canRecover && !homeAction ? 'primary' : 'secondary'}} self-button" wx:if="{{phase !== 'account' && canCheck}}" bindtap="check" disabled="{{busy}}">{{phase === 'complete' && !homeAction ? '返回个人账户' : phase === 'unavailable' ? '重新检查' : '检查登录状态'}}</button>
     <button class="primary self-button" wx:if="{{canRecover}}" bindtap="recover" disabled="{{busy}}">{{recoveryLabel}}</button>
     <button class="text-button self-text-action" wx:if="{{canReset}}" bindtap="restartLogin" disabled="{{busy}}">重新验证手机号</button>
   </view>
