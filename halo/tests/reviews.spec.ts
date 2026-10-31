@@ -104,6 +104,8 @@ function control() {
     cancellationInvalid: false,
     cancellationStatus: 0,
     cancellationWrongId: false,
+    cancellationReadStatus: 0,
+    cancellationReadLost: false,
     cancellationGate: undefined as Promise<void> | undefined,
     cancellations: [] as CancellationInput[],
     gate: undefined as Promise<void> | undefined,
@@ -122,6 +124,7 @@ function control() {
     renderCode: "dependency_unavailable",
     renderLost: false,
     renderReadFailure: false,
+    renderGate: undefined as Promise<void> | undefined,
     badgeFailure: 0,
     managementUnavailable: false,
     badgeGate: undefined as Promise<void> | undefined,
@@ -217,6 +220,7 @@ async function install(page: Page, state: Control) {
     if (path.endsWith("/renders") && request.method() === "POST") {
       state.renders++;
       expect(request.postDataJSON()).toEqual({});
+      if (state.renderGate) await state.renderGate;
       const index = state.records.findIndex((item) =>
         path.endsWith(`/${item.id}/renders`),
       );
@@ -444,6 +448,23 @@ async function install(page: Page, state: Control) {
         application: item,
         current: state.current,
       });
+      if (state.cancellations.length && item.status === "cancelled") {
+        if (state.cancellationReadLost) return route.abort("connectionfailed");
+        if (state.cancellationReadStatus)
+          return route.fulfill({
+            status: state.cancellationReadStatus,
+            json: {
+              code:
+                state.cancellationReadStatus === 404
+                  ? "target_unavailable"
+                  : state.cancellationReadStatus === 403
+                    ? "permission_denied"
+                    : state.cancellationReadStatus === 429
+                      ? "rate_limited"
+                      : "dependency_unavailable",
+            },
+          });
+      }
       if (state.gate) await state.gate;
       return route.fulfill({ json: value });
     }
@@ -461,6 +482,23 @@ async function install(page: Page, state: Control) {
       );
       // The adapter must strip accidental extra private fields even from a restricted response.
       const selected = matching.find((item) => path.endsWith(item.id));
+      if (state.cancellations.length && selected?.status === "cancelled") {
+        if (state.cancellationReadLost) return route.abort("connectionfailed");
+        if (state.cancellationReadStatus)
+          return route.fulfill({
+            status: state.cancellationReadStatus,
+            json: {
+              code:
+                state.cancellationReadStatus === 404
+                  ? "target_unavailable"
+                  : state.cancellationReadStatus === 403
+                    ? "permission_denied"
+                    : state.cancellationReadStatus === 429
+                      ? "rate_limited"
+                      : "dependency_unavailable",
+            },
+          });
+      }
       if (path !== "/api/v1/workforce/current/applications" && !selected)
         return route.fulfill({
           status: 404,
@@ -705,6 +743,22 @@ test("WebP confirmed missing glyph is read from refreshed detail and remains a m
   ).toBeEnabled();
   expect(state.detailReads).toBeGreaterThanOrEqual(2);
   expect(state.renders).toBe(1);
+  let release!: () => void;
+  state.renderGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  state.renderStatus = 0;
+  await page.getByRole("button", { name: "重试生成", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "正在生成工牌图片", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("部分文字无法显示，工牌图片未生成。", { exact: true }),
+  ).toHaveCount(0);
+  release();
+  await expect(
+    page.getByRole("img", { name: "已保存的工牌图片" }),
+  ).toBeVisible();
 });
 
 test("WebP download failure preserves the ready image and retries only a new file GET", async ({
@@ -867,6 +921,76 @@ test("WebP hide revokes the visible image and rejects a late file response", asy
   ).toBe(false);
   await expect(page.getByRole("img")).toHaveCount(0);
 });
+
+for (const [manager, status, disconnected] of [
+  [false, 503, false],
+  [true, 503, false],
+  [false, 0, true],
+  [true, 429, false],
+  [false, 404, false],
+  [true, 403, false],
+] as const) {
+  test(`WebP confirmed cancellation stays distinct from detail failure: manager=${manager}, status=${status}, disconnected=${disconnected}`, async ({
+    page,
+  }, info) => {
+    await page.clock.install();
+    const state = control();
+    state.records[0] = readyRecord(state.records[0]);
+    state.cancellationReadStatus = status;
+    state.cancellationReadLost = disconnected;
+    await install(page, state);
+    await page.goto(
+      origin +
+        (manager ? "/workforce/reviews/" : "/workforce/applications/") +
+        state.records[0].id,
+    );
+    await expect(
+      page.getByRole("img", { name: "已保存的工牌图片" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "取消申请", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    if (manager) await dialog.getByRole("textbox").fill("申请人确认停止办理。");
+    await dialog.getByRole("button", { name: "取消申请", exact: true }).click();
+    const notice = page.getByText("申请已取消，已生成的工牌图片仍保留。", {
+      exact: true,
+    });
+    if (status === 403 || status === 404) {
+      await expect(
+        page.getByText(
+          manager ? "目前无法查看工牌审核。" : "目前无法查看这份申请。",
+          { exact: true },
+        ),
+      ).toBeVisible();
+      await expect(notice).toHaveCount(0);
+    } else {
+      await expect(notice).toBeVisible();
+      await expect(
+        page.getByText("详情暂时无法加载，请刷新后重试。", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: /秒后可刷新/ }),
+      ).toBeDisabled();
+      await expect(page.getByRole("img")).toHaveCount(0);
+      await page.screenshot({
+        path: info.outputPath(
+          `known-cancel-read-failure-${manager}-${status}-${disconnected}.png`,
+        ),
+        fullPage: true,
+      });
+      state.cancellationReadStatus = 0;
+      state.cancellationReadLost = false;
+      await page.clock.fastForward(6000);
+      await page.getByRole("button", { name: "刷新详情", exact: true }).click();
+      await expect(
+        page.getByRole("heading", { name: "工牌图片已保留", exact: true }),
+      ).toBeVisible();
+    }
+    expect(state.cancellations).toHaveLength(1);
+    expect(
+      (await page.evaluate(() => window.reviewSessions.read()))?.session?.id,
+    ).toBe(accountId);
+  });
+}
 
 for (const restricted of [false, true]) {
   for (const status of ["submitted", "approved"] as const) {

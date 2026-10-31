@@ -82,7 +82,7 @@ export function BadgeProduction({
                 : "申请人的账户或员工服务资格已失效，当前无法生成。"
               : "申请已审核通过，等待管理人员生成工牌图片。"}
       </p>
-      {error && (
+      {error && !generating && (
         <div className="badge-render-error" role="status">
           <p>{error[0]}</p>
           <p>{manager ? error[1] : "请联系管理人员处理。"}</p>

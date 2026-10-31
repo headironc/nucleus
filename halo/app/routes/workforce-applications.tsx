@@ -219,10 +219,16 @@ export function ApplicationsPanel({
       ) : (
         <>
           {(state.kind === "hidden" || state.kind === "loading") && (
-            <p role="status">正在读取工牌申请，请稍候。</p>
+            <div role="status">
+              {state.kind === "loading" && state.notice && (
+                <p className="application-notice">{state.notice}</p>
+              )}
+              <p>正在读取工牌申请，请稍候。</p>
+            </div>
           )}
           {(state.kind === "error" || state.kind === "blocked") && (
             <div className="application-notice" role="status">
+              {state.notice && <p>{state.notice}</p>}
               <p>{state.message}</p>
               <div className="application-actions">
                 <Button

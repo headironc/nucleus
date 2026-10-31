@@ -39,8 +39,13 @@ export type ReviewDetail = {
   notice?: string;
 };
 export type ReviewsState =
-  | { kind: "hidden" | "loading" }
-  | { kind: "error" | "missing"; message: string; retryAt: number }
+  | { kind: "hidden" | "loading"; notice?: string }
+  | {
+      kind: "error" | "missing";
+      message: string;
+      retryAt: number;
+      notice?: string;
+    }
   | {
       kind: "unknown";
       operation: "review" | "cancellation" | "generation";
@@ -85,6 +90,7 @@ export class Reviews {
   private uncertainAccount?: string;
   private writingAccount?: string;
   private cancellationUnknown = false;
+  private confirmedCancellationAccount?: string;
   private renderingUnknown = false;
   private renderRetryAt = 0;
   private badgeImage?: BadgeImage;
@@ -169,6 +175,7 @@ export class Reviews {
     this.template = undefined;
   }
   private changed = () => {
+    this.confirmedCancellationAccount = undefined;
     this.cancel();
     this.clearMedia();
     this.show({ kind: "hidden" });
@@ -250,6 +257,7 @@ export class Reviews {
           kind: "error",
           message: READ_ERROR,
           retryAt: this.retryAt,
+          notice: this.cancellationNotice(),
         });
     }, 35000);
     return {
@@ -276,6 +284,8 @@ export class Reviews {
     binding: CurrentBinding,
   ) {
     this.clearMedia();
+    if (result.status === 401 || result.status === 403 || result.status === 404)
+      this.confirmedCancellationAccount = undefined;
     if (
       result.kind === "failure" &&
       (result.status === 401 || result.status === 403)
@@ -299,10 +309,13 @@ export class Reviews {
       );
       return;
     }
+    const notice = this.cancellationNotice();
     this.show({
       kind: result.status === 404 ? "missing" : "error",
-      message:
-        result.status === 404
+      notice,
+      message: notice
+        ? "详情暂时无法加载，请刷新后重试。"
+        : result.status === 404
           ? "目前无法查看这份申请。"
           : result.status === 429
             ? "暂时无法加载申请，请稍后再试。"
@@ -329,6 +342,7 @@ export class Reviews {
             kind: "error",
             message: READ_ERROR,
             retryAt: this.retryAt,
+            notice: this.cancellationNotice(),
           });
       }
       return;
@@ -336,7 +350,7 @@ export class Reviews {
     const scope = this.scope();
     if (!scope) return;
     this.clearMedia();
-    this.show({ kind: "loading" });
+    this.show({ kind: "loading", notice: this.cancellationNotice() });
     this.page = page;
     this.filter = status;
     try {
@@ -361,6 +375,7 @@ export class Reviews {
         if (!(await scope.guard())) return;
         if (result.kind !== "ok") return this.failure(result, scope.binding);
         const uncertain = this.uncertainAccount === this.account();
+        this.confirmedCancellationAccount = undefined;
         this.uncertainAccount = undefined;
         this.cancellationUnknown = false;
         this.renderingUnknown = false;
@@ -726,6 +741,12 @@ export class Reviews {
       scope.finish();
     }
   }
+  private cancellationNotice() {
+    return this.confirmedCancellationAccount &&
+      this.confirmedCancellationAccount === this.account()
+      ? "申请已取消，已生成的工牌图片仍保留。"
+      : undefined;
+  }
   private async submitCancellation(reason: string) {
     const state = this.state;
     if (
@@ -765,13 +786,14 @@ export class Reviews {
         this.uncertainAccount = undefined;
         this.cancellationUnknown = false;
         this.clearMedia();
-        if (expectedStatus === "ready")
+        if (expectedStatus === "ready") {
+          this.confirmedCancellationAccount = this.account();
           await this.load(
             this.page,
             this.filter,
             "申请已取消，已生成的工牌图片仍保留。",
           );
-        else this.show({ kind: "cancelled" });
+        } else this.show({ kind: "cancelled" });
       } else if (result.kind !== "failure" || result.status >= 500) {
         this.uncertainAccount = this.account();
         this.clearMedia();

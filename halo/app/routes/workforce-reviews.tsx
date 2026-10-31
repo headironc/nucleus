@@ -446,6 +446,11 @@ export function ReviewsPanel({ controllers }: { controllers: Controllers }) {
         <>
           {(state.kind === "hidden" || state.kind === "loading") && (
             <section className="review-panel review-message" aria-busy="true">
+              {state.kind === "loading" && state.notice && (
+                <p className="application-notice" role="status">
+                  {state.notice}
+                </p>
+              )}
               <p role="status">正在加载工牌申请…</p>
             </section>
           )}
@@ -464,6 +469,11 @@ export function ReviewsPanel({ controllers }: { controllers: Controllers }) {
                     ? "目前无法查看这份申请"
                     : "工牌申请暂时无法加载"}
               </h2>
+              {"notice" in state && state.notice && (
+                <p className="application-notice" role="status">
+                  {state.notice}
+                </p>
+              )}
               <p role="status">{state.message}</p>
               <div className="review-actions">
                 <Button
