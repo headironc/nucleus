@@ -463,6 +463,17 @@ test("an unknown early send with no transfer promises no login-to-query recovery
     page.getByRole("heading", { name: "验证码发送待确认", exact: true }),
   ).toBeVisible();
   const send = calls.at(-1)!;
+  await page.getByRole("link", { name: "打开个人账户", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "本次操作结果尚未确认", exact: true }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await page.screenshot({
+    path: test.info().outputPath("early-send-leave-320.png"),
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "留在此页", exact: true }).click();
+  expect(calls.filter((call) => call.method !== "GET")).toEqual([send]);
   expect((await material(page)).active.transfer).toBeUndefined();
   await page.route(origin + "/api/v1/accounts/current", (route) =>
     route.fulfill({ status: 401, json: { code: "authentication_invalid" } }),
@@ -657,6 +668,18 @@ test("four stages keep independent operations and a completed result", async ({
   await open(page);
   await enterCurrent(page);
   await capture("current-code");
+  await page.getByRole("button", { name: "验证并继续", exact: true }).click();
+  await expect(page.locator("#code-error")).toHaveText(
+    "请输入 6 位短信验证码。",
+  );
+  for (const input of await page.locator(".code-slots input").all()) {
+    await expect(input).toHaveAttribute("aria-invalid", "true");
+    await expect(input).toHaveAttribute(
+      "aria-describedby",
+      "code-hint code-error",
+    );
+  }
+  await capture("current-code-error");
   expect(calls[0].method).toBe("POST");
   expect(calls[0].path).toBe("/api/v1/accounts/current/codes");
   expect(calls[0].session).toBe(sessionA);
@@ -687,6 +710,11 @@ test("four stages keep independent operations and a completed result", async ({
 
   await enterNew(page);
   await capture("new-code");
+  await page.getByRole("button", { name: "继续", exact: true }).click();
+  await expect(page.locator("#code-error")).toHaveText(
+    "请输入 6 位短信验证码。",
+  );
+  await capture("new-code-error");
   expect(calls[2].path).toBe(`/api/v1/mobile-changes/${transferId}/codes`);
   expect(JSON.parse(calls[2].body!)).toEqual({
     mobile: newMobile,
@@ -825,7 +853,7 @@ test("save refusal, unknown send and unknown establish keep the original operati
   ).toBeVisible();
   await page.getByRole("link", { name: "打开个人账户" }).click();
   await expect(
-    page.getByRole("heading", { name: "更换结果尚未确认" }),
+    page.getByRole("heading", { name: "本次操作结果尚未确认" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "留在此页" }).click();
   const establishOperation = calls[2].operation;

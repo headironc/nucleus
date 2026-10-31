@@ -1189,14 +1189,16 @@
     margin-bottom: 28px;
   }
   .authentication-card label,
-  .mobile-change-panel form > label {
+  .mobile-change-panel form > label,
+  .mobile-change-panel .code-field label {
     display: block;
     font-size: 14px;
     font-weight: 600;
     margin-bottom: 8px;
   }
   .authentication-card input,
-  .mobile-change-panel input[type="tel"] {
+  .mobile-change-panel input[type="tel"],
+  .mobile-change-panel .code-slots input {
     width: 100%;
     min-height: 48px;
     border: 1px solid var(--control-line);
@@ -1212,7 +1214,8 @@
     font-size: 13px;
   }
   .authentication-card input[aria-invalid="true"],
-  .mobile-change-panel input[type="tel"][aria-invalid="true"] {
+  .mobile-change-panel input[type="tel"][aria-invalid="true"],
+  .mobile-change-panel .code-slots input[aria-invalid="true"] {
     border-color: var(--danger);
   }
   .field-hint,
@@ -1266,7 +1269,8 @@
     grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 7px;
   }
-  .authentication-card .code-slots input {
+  .authentication-card .code-slots input,
+  .mobile-change-panel .code-slots input {
     min-width: 0;
     padding: 10px 0;
     text-align: center;

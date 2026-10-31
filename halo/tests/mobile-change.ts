@@ -118,9 +118,7 @@ export async function ownMobileChange(
   );
   await page.getByRole("button", { name: "获取验证码" }).click();
   expect((await limitedResponse).status()).toBe(429);
-  await expect(
-    page.getByRole("heading", { name: "请稍后重试" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "请稍后重试" })).toBeVisible();
   await expect(
     page.getByRole("button", { name: "完成安全验证（测试替身）" }),
   ).toHaveCount(0);

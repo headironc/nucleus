@@ -504,7 +504,6 @@ function CodeForm({
           : "输入新手机号收到的验证码"}
       </h2>
       <p className="mobile-change-lead">{DELIVERY[state.delivery]}</p>
-      <p className="field-hint">请输入本次短信中的 6 位验证码。</p>
       {state.stage === "new" && (
         <p className="field-hint">
           请在当前手机号验证后的 10 分钟有效期内完成更换。
@@ -1134,7 +1133,7 @@ function Content({ controller }: { controller: MobileChange }) {
         >
           <h2 id="mobile-change-leave-title">
             {unknown
-              ? "更换结果尚未确认"
+              ? "本次操作结果尚未确认"
               : transfer
                 ? "暂时离开换号办理？"
                 : "放弃当前填写？"}
