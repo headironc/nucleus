@@ -1,0 +1,17 @@
+@layer components {
+  .cancellation-summary {
+    margin: 0;
+    font-size: 0.85rem;
+    line-height: 1.8;
+  }
+  .cancellation-summary > div + div {
+    margin-top: 0.6rem;
+  }
+  .cancellation-summary dt {
+    color: var(--sub);
+  }
+  .cancellation-summary dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+}

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { CancellationDialog } from "../workforce/cancellation-dialog";
 import { flushSync } from "react-dom";
 import { useParams } from "react-router";
 import { Button } from "@base-ui/react/button";
@@ -146,6 +147,7 @@ export function ApplicationsPanel({
   const heading = useRef<HTMLHeadingElement>(null),
     dialogHeading = useRef<HTMLHeadingElement>(null);
   const previewButton = useRef<HTMLButtonElement>(null);
+  const cancelTrigger = useRef<HTMLButtonElement>(null);
   const previous = useRef(state.kind);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -227,10 +229,17 @@ export function ApplicationsPanel({
                   className="primary"
                   disabled={wait > 0}
                   onClick={() => {
-                    void service.refresh();
+                    if (controller.mode.kind === "new") void service.refresh();
+                    else void controller.load();
                   }}
                 >
-                  {wait ? `${wait} 秒后可刷新` : "刷新办理内容"}
+                  {wait
+                    ? `${wait} 秒后可刷新`
+                    : controller.mode.kind === "new"
+                      ? "刷新办理内容"
+                      : controller.mode.kind === "list"
+                        ? "刷新列表"
+                        : "刷新详情"}
                 </Button>
                 {state.kind === "blocked" &&
                   serviceState.kind === "ready" &&
@@ -239,6 +248,29 @@ export function ApplicationsPanel({
                   )}
               </div>
             </div>
+          )}
+          {state.kind === "cancellation-unknown" && (
+            <section className="application-notice">
+              <h2>暂时无法确认取消结果</h2>
+              <p role="status">{state.message}</p>
+              <div className="application-actions">
+                <Button
+                  className="secondary"
+                  disabled={wait > 0}
+                  onClick={() => void controller.load()}
+                >
+                  {wait > 0 ? `${wait} 秒后可刷新详情` : "刷新详情"}
+                </Button>
+                <a href="/workforce/applications">返回申请列表</a>
+              </div>
+            </section>
+          )}
+          {state.kind === "cancelled" && (
+            <section className="application-notice">
+              <h2>申请已取消</h2>
+              <p role="status">需要办理时，请重新申请。</p>
+              <a href="/workforce/applications">返回申请列表</a>
+            </section>
           )}
           {editing && (
             <form
@@ -401,6 +433,11 @@ export function ApplicationsPanel({
           )}
           {state.kind === "detail" && (
             <section className="application-detail own-application-detail">
+              {state.notice && (
+                <p role="status" className="application-notice">
+                  {state.notice}
+                </p>
+              )}
               <p>
                 {KINDS[state.result.application.kind]} ·{" "}
                 {STATUSES[state.result.application.status]}
@@ -450,11 +487,32 @@ export function ApplicationsPanel({
               )}
               <Button
                 className="secondary"
-                disabled={wait > 0}
+                disabled={wait > 0 || state.pending}
                 onClick={() => void controller.load()}
               >
                 {wait > 0 ? `${wait} 秒后可刷新详情` : "刷新详情"}
               </Button>
+              {(state.result.application.status === "submitted" ||
+                state.result.application.status === "approved") && (
+                <Button
+                  ref={cancelTrigger}
+                  className="review-danger"
+                  disabled={state.pending}
+                  onClick={() => controller.confirmCancellation()}
+                >
+                  取消申请
+                </Button>
+              )}
+              {state.cancellation && (
+                <CancellationDialog
+                  application={state.result.application}
+                  mode="self"
+                  pending={!!state.pending}
+                  trigger={cancelTrigger}
+                  close={() => controller.dismissCancellation()}
+                  submit={() => void controller.cancelApplication()}
+                />
+              )}
             </section>
           )}
           <Dialog.Root

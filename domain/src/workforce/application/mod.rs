@@ -1,5 +1,6 @@
 //! Confirmed fixed badge applications: ordinary transactions and current self-state refresh.
 
+mod cancellation;
 mod database;
 pub mod photo;
 mod review;
@@ -574,7 +575,7 @@ pub enum Error {
     TargetUnavailable,
     #[error("the confirmed content changed")]
     Changed,
-    #[error("the application already has a decision")]
+    #[error("the application state changed")]
     StateChanged,
     #[error("the applicant's current account and participation are required")]
     ApplicantUnavailable,
@@ -691,6 +692,8 @@ pub fn fixture_template() -> Template {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
+    mod cancellation;
+
     use std::{io::Cursor, sync::Arc, time::Duration};
 
     use serde_json::json;
