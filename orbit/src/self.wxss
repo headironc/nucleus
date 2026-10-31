@@ -17,10 +17,6 @@
 .self-page .self-art { position: relative; height: 215px; overflow: hidden; margin: 20px 0 25px; border-radius: 23px 23px 45px 23px; box-shadow: 6px 7px 0 #dce1bc; }
 .self-page .self-garden { display: block; width: 100%; height: 100%; }
 .self-page .self-art-shade { position: absolute; inset: 0; background: linear-gradient(90deg, #f5e8bcf5, #f5e8bc99 42%, transparent 80%); }
-.self-page .self-art-copy { position: absolute; top: 22px; left: 22px; color: #263e31; }
-.self-page .self-art-eyebrow { font-size: 9px; letter-spacing: 1.6px; }
-.self-page .self-art-title { margin-top: 10px; font-family: "Songti SC", "STSong", "SimSun", serif; font-size: 30px; font-weight: 500; line-height: 1.45; letter-spacing: 1px; }
-.self-page .self-art-stamp { position: absolute; right: 19px; bottom: 16px; padding: 7px 10px; color: #fffaf0; background: #263e31c9; border-radius: 5px; font-size: 9px; letter-spacing: 1px; }
 .self-page .self-login-heading { font-size: 23px; font-weight: 600; }
 .self-page .self-login-button { margin-top: 24px; }
 .self-page .self-phone-icon { position: relative; width: 12px; height: 20px; border: 1.5px solid currentColor; border-radius: 3px; box-sizing: border-box; }
@@ -54,6 +50,7 @@
 .self-page .self-devices-icon::before { content: ""; position: absolute; left: 0; top: 0; width: 12px; height: 9px; border: 1.5px solid currentColor; border-radius: 2px; }
 .self-page .self-devices-icon::after { content: ""; position: absolute; right: 0; bottom: 0; width: 5px; height: 10px; border: 1.5px solid currentColor; border-radius: 1px; }
 .self-page .self-status { margin-top: 48px; text-align: center; }
+.self-page .self-status .page-title, .sessions-page.self-state .page-title { font-size: 26px; letter-spacing: .5px; }
 .page.self-state { padding-top: 70px; text-align: center; }
 .self-page .self-status-copy { margin-top: 10px; }
 .self-page .self-status-emblem { display: flex; align-items: center; justify-content: center; width: 62px; height: 62px; margin: 0 auto 20px; border: 1px solid #d4d8c8; border-radius: 24px; color: #617b40; background: #eceee2; font-size: 28px; }

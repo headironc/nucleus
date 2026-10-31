@@ -139,11 +139,11 @@ export class Controller {
         if (material) this.publish({ canRecover: !material.stopped && material.retryAt <= this.now() });
         else if (!this.selectedLogout() && this.records.session) {
           this.publish({ ...blank(), phase: "unavailable", canLogin: false, canCheck: true,
-            message: "此前退出结果已无法继续查看。请检查当前登录状态。" });
+            message: "暂时无法查看此前的退出结果，请检查登录状态。" });
         }
       } else if ((this.view.phase === "account" || this.view.phase === "sessions") && this.view.logoutPending && !this.selectedLogout()) {
         this.publish({ logoutPending: false, canRecover: false, canCheck: true,
-          message: "此前退出结果已无法继续查看，不表示此前退出失败。" });
+          message: "暂时无法查看此前的退出结果。" });
       }
     } catch {
       if (this.visible) this.failedStorage();
@@ -154,7 +154,7 @@ export class Controller {
   private failedStorage() {
     this.advance();
     this.publish({ ...blank(), phase: "unavailable", canLogin: false, canCheck: true, canReset: true,
-      message: "设备暂时无法读取或保存登录信息，请重新检查。" });
+      message: "登录信息暂时无法使用，请重新检查。" });
     this.retryLocalCleanup();
   }
   resetConfirmation(): number | undefined { return this.visible && this.view.canReset ? this.generation : undefined; }
@@ -174,29 +174,34 @@ export class Controller {
       this.read();
       if (this.records.session) {
         if (this.selectedLogout()?.sessionId === this.records.session.id) {
-          this.pending("退出结果待确认。请查看退出结果。");
+          this.pending("暂时无法确认是否已退出，请查看退出结果。");
         } else await this.checkSelected(generation);
       } else this.presentAnonymous();
     } catch { this.failedStorage(); }
+  }
+  private recoverySubject(): Exclude<View["recoveryKind"], ""> | undefined {
+    return this.records.authentication ? "login" : this.records.registration?.pending ? "registration" :
+      this.selectedLogout() ? "logout" : undefined;
   }
   private pending(message: string, canCheck = !!this.records.session) {
     const material = this.records.authentication ?? this.records.registration?.pending;
     const logoutPending = !material && !!this.selectedLogout();
     this.publish({ ...blank(), phase: "pending", canLogin: false, canCheck: logoutPending ? false : canCheck, logoutPending,
-      recoveryKind: this.records.authentication ? "login" : this.records.registration?.pending ? "registration" : logoutPending ? "logout" : "",
+      recoveryKind: this.recoverySubject() ?? "",
       canRecover: material ? !material.stopped && material.retryAt <= this.now() : logoutPending,
       message });
   }
   private presentAnonymous() {
     if (this.records.authentication) {
-      this.pending("登录状态待确认。请继续检查本次登录，暂时不用再次授权手机号。");
+      this.pending(this.records.authentication.stopped ? "暂时无法确认此前的登录结果。" : "暂时无法确认是否已登录，请稍后查看登录结果。");
     } else if (this.records.registration?.pending) {
-      this.pending("暂时无法确认注册结果。请继续检查本次注册，暂时不要再次提交。");
+      this.pending(this.records.registration.pending.stopped ? "暂时无法确认此前的注册结果。" : "暂时无法确认注册结果，请稍后查看结果，暂时不要再次提交。");
     } else if (this.records.registration) {
       this.publish({ ...blank(), phase: "registration", canLogin: false });
     } else {
       this.publish({ ...blank(), message: this.records.unresolved ?
-        "此前办理结果仍无法确认。可重新验证手机号并检查当前账户；当前账户不证明此前注册结果。" : blank().message });
+        (this.records.unresolved === "authentication" ? "暂时无法确认此前的登录结果。" : "暂时无法确认此前的注册结果。") +
+          "可重新验证手机号后打开个人账户。" : blank().message });
     }
   }
   async check() {
@@ -220,7 +225,7 @@ export class Controller {
   private async checkSelected(generation: number) {
     const selected = this.records.session;
     if (!selected) return this.presentAnonymous();
-    this.publish({ ...blank(), phase: "checking", busy: true, canLogin: false, message: "正在检查当前登录…" });
+    this.publish({ ...blank(), phase: "checking", busy: true, canLogin: false, message: "正在打开个人账户…" });
     const id = await operation(this.platform);
     if (!this.current(generation)) return;
     const result = await this.call({ method: "GET", path: "/api/v1/accounts/current", operation: id, token: selected.token }, generation);
@@ -232,7 +237,7 @@ export class Controller {
         this.retain({ ...this.records, session: { ...selected, accountId: account.id } });
         if (this.page === "sessions") return this.readSessions(generation);
         this.publish({ ...blank(), phase: "account", canLogin: false, canCheck: !this.selectedLogout(),
-          message: this.records.expiredLogouts?.includes(account.id) ? "此前退出结果已无法继续查看，不表示此前退出失败。" : "",
+          message: this.records.expiredLogouts?.includes(account.id) ? "暂时无法查看此前的退出结果。" : "",
           name: account.name, suffix: account.idNumber.suffix, avatar: account.avatar.href,
           bound: account.binding !== null, logoutPending: !!this.selectedLogout(),
           canRecover: !!this.selectedLogout() });
@@ -243,12 +248,12 @@ export class Controller {
     if (result?.status === 401 && result.value.code === "authentication_invalid") {
       this.retain({ ...this.records, session: undefined });
       this.presentAnonymous();
-      this.publish({ message: "请重新登录后继续。此前退出结果仍可在同一账户重新登录后查看。" });
+      this.publish({ message: "请重新登录后继续。" });
     } else if (this.selectedLogout()) {
-      this.pending("此前退出结果仍待确认。请查看退出结果。");
+      this.pending("暂时无法确认是否已退出，请查看退出结果。");
     } else {
       this.publish({ ...blank(), phase: "unavailable", canLogin: false, canCheck: true,
-        message: result?.status === 403 ? "你无权查看这项内容。" : "暂时无法加载，请刷新后重试。" });
+        message: result?.status === 403 ? "目前无法查看个人账户。" : "个人资料暂时无法加载，请重新检查。" });
     }
   }
   private async readSessions(generation: number) {
@@ -270,13 +275,13 @@ export class Controller {
   private sessionFailure(result: Awaited<ReturnType<Controller["call"]>>) {
     if (result?.status === 401 && result.value.code === "authentication_invalid") {
       this.retain({ ...this.records, session: undefined });
-      this.publish({ ...blank(), message: "请重新登录。登录后可查看登录情况。" });
+      this.publish({ ...blank(), message: "请重新登录后查看登录情况。" });
     } else if (this.selectedLogout()) {
-      this.pending("登录列表暂时无法加载。此前退出结果仍待确认，请查看退出结果。");
+      this.pending("登录列表暂时无法加载，可先查看退出结果。");
     } else {
       this.publish({ ...blank(), phase: "sessions", canLogin: false, canCheck: true,
         message: result?.status === 403 ? "目前无法查看登录情况。" :
-          this.otherUnknown === this.records.session?.id ? "退出结果仍待确认，登录列表暂时无法加载。请刷新列表查看。" : "登录列表暂时无法加载，请重试。" });
+          this.otherUnknown === this.records.session?.id ? "暂时无法确认是否已退出，登录列表也未能加载，请刷新列表。" : "登录列表暂时无法加载，请重试。" });
     }
   }
   targetSelection(targetId: string): SessionTarget | undefined {
@@ -308,18 +313,19 @@ export class Controller {
       } else if (result?.status === 401 || result?.status === 403) this.sessionFailure(result);
       else this.publish({ ...blank(), phase: "sessions", canLogin: false, canCheck: true,
         message: result?.status === 404 && result.value.code === "resource_not_found" ? "所选登录暂时无法操作，请刷新列表。" :
-          result?.status === 409 && result.value.code === "current_session" ? "所选登录是本次登录，不能在这里退出。请刷新列表。" :
-          "退出结果待确认。暂时无法确认是否已退出，请刷新列表查看。" });
+          result?.status === 409 && result.value.code === "current_session" ? "所选登录是本次登录，请刷新列表。" :
+          "暂时无法确认是否已退出，请刷新列表查看。" });
     } catch { if (this.current(generation)) this.failedStorage(); }
   }
   async authorize(code: unknown) {
     if (this.view.busy || !this.view.canLogin) return;
     if (typeof code !== "string" || !code) {
-      this.publish({ message: "未取得手机号授权。你可以再次选择手机号登录。" });
+      this.publish({ message: "未授权手机号，可重新选择。" });
       return;
     }
     const generation = this.advance();
-    this.publish({ busy: true, canLogin: false, message: "正在验证手机号…" });
+    this.publish({ busy: true, canLogin: false, message: "正在登录…" });
+    let mayHaveSubmitted = false;
     try {
       this.read();
       if (this.records.authentication || this.records.registration || this.records.session) return this.presentAnonymous();
@@ -330,13 +336,16 @@ export class Controller {
       const now = this.now();
       this.retain({ ...this.records, unresolved: undefined,
         authentication: { operation: id, input, createdAt: now, deadline: now + 10 * 60000, retryAt: 0, stopped: false, uncertain: false } });
+      mayHaveSubmitted = true;
       await this.submitAuthentication(generation);
-    } catch { if (this.current(generation)) this.writeFailed(!!this.records.authentication); }
+    } catch { if (this.current(generation)) this.writeFailed(mayHaveSubmitted, "login"); }
   }
-  private writeFailed(sent = true) {
+  private writeFailed(sent = true, kind?: "login" | "registration" | "logout") {
+    const label = kind && { login: "登录", registration: "注册", logout: "退出" }[kind];
+    const handoff = (kind === "login" || kind === "registration") && !!this.records.session;
     this.publish({ ...blank(), phase: "unavailable", canCheck: true, canLogin: false,
-      message: sent ? "设备暂时无法保存办理结果，请重新检查。此前办理结果仍待确认。" :
-        "设备暂时无法保存办理信息，本次操作尚未发送。" });
+      message: handoff ? "个人资料暂时无法加载，请重新检查。" : !sent ? "本次尚未提交，请重新检查。" :
+        label ? `暂时无法确认${label}结果，请重新检查。` : "登录信息暂时无法使用，请重新检查。" });
   }
   private async submitAuthentication(generation: number) {
     const pending = this.records.authentication;
@@ -347,7 +356,7 @@ export class Controller {
       this.retain({ ...this.records, authentication: { ...pending, uncertain: true,
         retryAt: Math.max(pending.retryAt, this.now() + requestTimeout + 5000) } });
     } catch {
-      if (this.current(generation)) this.writeFailed(previouslyUnknown);
+      if (this.current(generation)) this.writeFailed(previouslyUnknown, "login");
       return;
     }
     const result = await this.call({ method: "POST", path: "/api/v1/sessions", operation: pending.operation, input: pending.input }, generation);
@@ -364,18 +373,18 @@ export class Controller {
     } else if (["authentication_invalid", "permission_denied", "invalid_input"].includes(result?.value.code ?? "") && !previouslyUnknown) {
       this.retain({ ...this.records, authentication: undefined });
       this.presentAnonymous();
-      this.publish({ message: result?.value.code === "permission_denied" ? "你无权进行此操作。" :
-        result?.value.code === "authentication_invalid" ? "本次手机号验证未通过，请重新授权手机号。" : "请重新授权手机号后继续。" });
+      this.publish({ message: result?.value.code === "permission_denied" ? "目前无法登录。" :
+        result?.value.code === "authentication_invalid" ? "本次手机号验证未通过，请重新授权。" : "请重新授权手机号后继续。" });
     } else if (result?.value.code === "verification_required" || result?.value.code === "mobile_unsupported") {
       this.retain({ ...this.records, authentication: undefined });
       this.presentAnonymous();
-      this.publish({ message: result.value.code === "mobile_unsupported" ? "该手机号暂不支持。请使用中国大陆手机号。" : "本次验证已无法继续，请重新授权手机号。" });
+      this.publish({ message: result.value.code === "mobile_unsupported" ? "暂不支持此手机号，请使用中国大陆手机号。" : "请重新授权手机号后继续。" });
     } else {
       const stopped = ["authentication_invalid", "request_mismatch", "permission_denied", "invalid_input"].includes(result?.value.code ?? "");
       this.retain({ ...this.records, authentication: { ...pending, stopped,
         uncertain: previouslyUnknown || !result || result.status >= 500,
         retryAt: this.now() + Math.max(5000, result?.retryAfter ?? 0) } });
-      this.pending(stopped ? "暂时无法确认此前登录结果。请稍后重新检查，或返回公开首页。" : "登录状态待确认。请稍后继续检查本次登录，暂时不用再次授权手机号。");
+      this.pending(stopped ? "暂时无法确认此前的登录结果。" : "暂时无法确认是否已登录，请稍后查看登录结果。");
     }
   }
   private inWindow(value: { createdAt: number; deadline: number }): boolean {
@@ -384,7 +393,8 @@ export class Controller {
   async register(name: string, idNumber: string) {
     if (this.view.busy || this.view.phase !== "registration") return;
     const generation = this.advance();
-    this.publish({ busy: true, message: "正在提交注册…" });
+    this.publish({ busy: true, message: "正在创建账户…" });
+    let mayHaveSubmitted = false;
     try {
       this.read();
       const registration = this.records.registration;
@@ -393,7 +403,7 @@ export class Controller {
         name: name.trim().normalize("NFC"), idNumber: idNumber.trim().replace(/x$/, "X") };
       if (!this.protocol.validRegistrationInput(input) || !/^[0-9]{17}[0-9X]$/.test(input.idNumber)) {
         this.presentAnonymous();
-        this.publish({ message: "请检查填写内容。姓名及 18 位居民身份证号均为必填。" });
+        this.publish({ message: "请检查姓名和 18 位居民身份证号是否填写正确。" });
         return;
       }
       const id = await operation(this.platform);
@@ -401,8 +411,9 @@ export class Controller {
       const now = this.now();
       this.retain({ ...this.records, registration: { ...registration,
         pending: { operation: id, input, createdAt: now, deadline: now + 10 * 60000, retryAt: 0, stopped: false, uncertain: false } } });
+      mayHaveSubmitted = true;
       await this.submitRegistration(generation);
-    } catch { if (this.current(generation)) this.writeFailed(!!this.records.registration?.pending); }
+    } catch { if (this.current(generation)) this.writeFailed(mayHaveSubmitted, "registration"); }
   }
   private async submitRegistration(generation: number) {
     const registration = this.records.registration;
@@ -413,7 +424,7 @@ export class Controller {
       this.retain({ ...this.records, registration: { ...registration, pending: { ...pending, uncertain: true,
         retryAt: Math.max(pending.retryAt, this.now() + requestTimeout + 5000) } } });
     } catch {
-      if (this.current(generation)) this.writeFailed(previouslyUnknown);
+      if (this.current(generation)) this.writeFailed(previouslyUnknown, "registration");
       return;
     }
     const result = await this.call({ method: "POST", path: "/api/v1/registrations", operation: pending.operation, input: pending.input }, generation);
@@ -425,9 +436,9 @@ export class Controller {
       (["invalid_input", "permission_denied"].includes(result?.value.code ?? "") && !previouslyUnknown)) {
       this.retain({ ...this.records, registration: result?.value.code === "mobile_taken" ? undefined : { ...registration, pending: undefined } });
       this.presentAnonymous();
-      this.publish({ message: result?.value.code === "id_number_taken" ? "该身份证号已被使用。请检查填写内容。" :
-        result?.value.code === "mobile_taken" ? "该手机号已被使用，请重新验证手机号后登录。" :
-        result?.value.code === "permission_denied" ? "你无权进行此操作。" : "请检查填写内容。" });
+      this.publish({ message: result?.value.code === "id_number_taken" ? "该身份证号已用于注册，请检查填写的号码。" :
+        result?.value.code === "mobile_taken" ? "该手机号已有账户，请重新验证手机号后登录。" :
+        result?.value.code === "permission_denied" ? "目前无法创建账户。" : "请检查姓名和居民身份证号。" });
     } else if (result?.value.code === "verification_required") {
       this.retain({ ...this.records, registration: undefined, unresolved: "registration" });
       this.presentAnonymous();
@@ -436,7 +447,7 @@ export class Controller {
       this.retain({ ...this.records, registration: { ...registration, pending: { ...pending, stopped,
         uncertain: previouslyUnknown || !result || result.status >= 500,
         retryAt: this.now() + Math.max(5000, result?.retryAfter ?? 0) } } });
-      this.pending("暂时无法确认注册结果。请稍后检查本次注册，暂时不要再次提交。");
+      this.pending(stopped ? "暂时无法确认此前的注册结果。" : "暂时无法确认注册结果，请稍后查看结果，暂时不要再次提交。");
     }
   }
   private async acceptSession(session: Session, generation: number) {
@@ -447,15 +458,19 @@ export class Controller {
   async recover() {
     if (this.view.busy) return;
     const generation = this.advance();
+    let kind = this.recoverySubject();
+    let mayHaveSubmitted = kind === "logout" || !!this.records.authentication?.uncertain || !!this.records.registration?.pending?.uncertain;
     try {
       this.read();
-      this.publish({ busy: true, canRecover: false, canLogin: false, message: "正在检查本次办理结果…" });
-      if (this.records.authentication) await this.submitAuthentication(generation);
-      else if (this.records.registration?.pending) await this.submitRegistration(generation);
-      else if (this.selectedLogout()) await this.readLogout(generation);
+      kind = this.recoverySubject();
+      const label = kind && { login: "登录", registration: "注册", logout: "退出" }[kind];
+      this.publish({ busy: true, canRecover: false, canLogin: false, message: label ? `正在查看${label}结果…` : "正在打开个人账户…" });
+      if (this.records.authentication) { mayHaveSubmitted = true; await this.submitAuthentication(generation); }
+      else if (this.records.registration?.pending) { mayHaveSubmitted = true; await this.submitRegistration(generation); }
+      else if (this.selectedLogout()) { mayHaveSubmitted = true; await this.readLogout(generation); }
       else if (this.records.session) await this.checkSelected(generation);
       else this.presentAnonymous();
-    } catch { if (this.current(generation)) this.writeFailed(); }
+    } catch { if (this.current(generation)) this.writeFailed(mayHaveSubmitted, kind); }
   }
   async switchAccount(selection = this.selection()) {
     if (!this.matches(selection)) return;
@@ -469,38 +484,40 @@ export class Controller {
   async logout(scope: "current" | "all", selection = this.selection()) {
     if (this.view.busy || !this.matches(selection)) return;
     const generation = this.advance();
+    let mayHaveSubmitted = !!this.selectedLogout();
     try {
       this.read();
       const selected = this.records.session;
-      if (!selected?.accountId || this.selectedLogout()) return this.pending("请先查看此前退出结果。", true);
-      this.publish({ busy: true, canLogin: false, message: "正在退出…" });
+      if (!selected?.accountId || this.selectedLogout()) return this.pending("请先查看尚未确认的退出结果。", true);
+      this.publish({ busy: true, canLogin: false, message: scope === "current" ? "正在退出登录…" : "正在退出全部登录…" });
       const id = await operation(this.platform);
       if (!this.current(generation)) return;
       const now = this.now();
       this.retain({ ...this.records, logouts: [...(this.records.logouts ?? []), { operation: id, accountId: selected.accountId,
         sessionId: selected.id, scope, createdAt: now, deadline: now + 10 * 60000 }] });
       const path = scope === "current" ? "/api/v1/sessions/current" : "/api/v1/sessions";
+      mayHaveSubmitted = true;
       const result = await this.call({ method: "DELETE", path, operation: id, token: selected.token }, generation);
       if (!this.current(generation)) return;
       const completion = result?.value.completion;
       if (result?.status === 200 && completion?.id === id && Number.isSafeInteger(completion.count) &&
           completion.count > 0 && (scope === "all" || completion.count === 1)) {
         this.retain({ ...this.records, session: undefined, logouts: this.withoutSelectedLogout() });
-        this.publish({ ...blank(), phase: "complete", completedScope: scope, homeAction: true, message: scope === "current" ? "已退出本次登录。" : "已退出全部登录。" });
+        this.publish({ ...blank(), phase: "complete", completedScope: scope, homeAction: true });
       } else {
         if (result?.status === 401 && result.value.code === "authentication_invalid") {
           this.retain({ ...this.records, session: undefined });
           this.presentAnonymous();
-          this.publish({ message: "暂时无法确认退出结果。请重新登录同一账户后查看本次退出结果。" });
-        } else this.pending("退出结果待确认。请查看退出结果。");
+          this.publish({ message: "请使用原账户的手机号登录，继续查看退出结果。" });
+        } else this.pending("暂时无法确认是否已退出，请查看退出结果。");
       }
-    } catch { if (this.current(generation)) this.writeFailed(); }
+    } catch { if (this.current(generation)) this.writeFailed(mayHaveSubmitted, "logout"); }
   }
   private async readLogout(generation: number) {
     const logout = this.selectedLogout();
     const selected = this.records.session;
     if (!logout || !selected?.accountId || logout.accountId !== selected.accountId) {
-      this.pending("请先重新登录此前退出的同一账户，再查看本次退出结果。", !!selected);
+      this.pending("请使用原账户的手机号登录，继续查看退出结果。", !!selected);
       return;
     }
     const id = await operation(this.platform);
@@ -516,8 +533,8 @@ export class Controller {
     } else if (result?.status === 401 && result.value.code === "authentication_invalid") {
       this.retain({ ...this.records, session: undefined });
       this.presentAnonymous();
-      this.publish({ message: "请重新登录同一账户后查看此前退出结果。" });
-    } else this.pending("暂时无法确认此前退出结果。当前没有可确认的退出证明，请稍后重试。", true);
+      this.publish({ message: "请使用原账户的手机号登录，继续查看退出结果。" });
+    } else this.pending(this.selectedLogout() ? "暂时无法确认此前的退出结果，请稍后再查看。" : "暂时无法确认此前的退出结果。", true);
   }
   private selectedLogout() {
     return this.records.logouts?.find(value => value.accountId === this.records.session?.accountId);

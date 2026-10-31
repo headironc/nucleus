@@ -99,7 +99,7 @@ test("native sessions page binds delayed modal confirmations and exposes only sa
   accountPage.onShow(); await platform.next(2); platform.reply(2, { code: "ok", account: account() });
   await new Promise(resolve => setTimeout(resolve, 0));
   accountPage.sessions(); expect(navigation).toEqual({ url: "/pages/sessions/index" });
-  accountPage.logoutCurrent(); expect(modal.title).toBe("退出本次登录？"); expect(modal.content).toContain("其他登录不受影响");
+  accountPage.logoutCurrent(); expect(modal.title).toBe("退出登录？"); expect(modal.content).toContain("其他登录不受影响");
   const current = modal; accountPage.onHide(); current.success({ confirm: true });
   expect(platform.requests).toHaveLength(3);
   application.onHide();

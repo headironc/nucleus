@@ -11,7 +11,7 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 type NativePage = { data: Record<string, any>; onShow(): void; onHide(): void; recover(): void;
   authorize(event: { detail: { code: string } }): void; logoutCurrent(): void; logoutAll(): void; check(): void };
 
-async function native(scope: "current" | "all", later = false, readFailure?: { path: "current" | "list"; status: 401 | 403 | 503 }) {
+async function native(scope: "current" | "all", later = false, readFailure?: { path: "current" | "list"; status: 401 | 403 | 503 }, freshSuccess = false) {
   const platform = new FakePlatform();
   platform.setStorageSync(storageKey, { version: 1, session: { ...session(later ? ids.later : ids.session), accountId: ids.account },
     ...(later ? { logouts: [{ operation: ids.registration, accountId: ids.account, sessionId: ids.session, scope, createdAt: epoch, deadline: epoch + 600000 }] } : {}) });
@@ -43,9 +43,26 @@ async function native(scope: "current" | "all", later = false, readFailure?: { p
     modal.success({ confirm: true }); await platform.next(index);
   }
   const original = platform.records().logouts![0];
-  if (!later) { platform.disconnect(index); await tick(); }
+  if (!later) {
+    if (freshSuccess) platform.reply(index, { code: "ok", completion: { id: platform.requests[index].header["Operation-Id"], count: 1, revokedAt: "2026-10-30T08:01:00Z" } });
+    else platform.disconnect(index);
+    await tick();
+  }
   return { ...showing, platform, application, original, load, setNow(value: number) { now = value; } };
 }
+
+test.each(["current", "all"] as const)("native fresh %s completion states its actual scope and returns home", async scope => {
+  const h = await native(scope, false, undefined, true);
+  expect(h.page.data.heading).toBe(scope === "current" ? "已退出登录" : "已退出全部登录");
+  expect(h.page.data.message).toBe("");
+  expect(h.page.data.homeAction).toBe(true);
+  const home = [...h.source.matchAll(/<navigator\b([^>]*)>返回首页<\/navigator>/g)]
+    .find(match => match[1].includes('wx:if="{{homeAction}}"'))!;
+  expect(runInNewContext(home[1].match(/wx:if="\{\{(.*?)\}\}"/)![1], h.page.data)).toBe(true);
+  expect(home[1]).toContain('url="/pages/home/index"');
+  expect(home[1]).toContain('open-type="reLaunch"');
+  expect(h.platform.records().session).toBeUndefined();
+});
 
 // These two actual WXML controls own the recovery choice; inspect their real bindings and conditions.
 function actions(source: string, page: NativePage) {
@@ -90,7 +107,7 @@ test.each(["current", "all"] as const)("native %s offers current-login checking 
     const h = await native(scope); const count = h.platform.requests.length;
     if (reason === "expired") { h.setNow(epoch + 600001); h.application.onShow(); }
     else { h.platform.storageReadFails = true; h.page.recover(); await tick(); }
-    expect(actions(h.source, h.page)).toEqual([{ binding: scope === "current" ? "check" : "refresh", text: "检查登录状态" }]);
+    expect(actions(h.source, h.page)).toEqual([{ binding: scope === "current" ? "check" : "refresh", text: "重新检查" }]);
     expect(h.platform.requests).toHaveLength(count);
     expect(h.page.data.canLogin).toBe(false);
     h.platform.storageReadFails = false;
