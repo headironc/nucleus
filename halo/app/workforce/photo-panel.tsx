@@ -87,23 +87,28 @@ export function ApplicationPhotoPanel({
         <h2 id={`${id}-title`}>工牌照片</h2>
         <p>选择本人照片，调整后确认裁剪效果。</p>
       </div>
-      <label htmlFor={`${id}-file`}>
+      <label
+        htmlFor={`${id}-file`}
+        className="application-photo-picker"
+        aria-disabled={disabled || busy}
+      >
         {editing ? "重新选择照片" : "选择照片"}
+        <input
+          id={`${id}-file`}
+          ref={input}
+          className="visually-hidden"
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          disabled={disabled || busy}
+          aria-describedby={`${id}-hint${state.kind === "error" ? ` ${id}-error` : ""}`}
+          aria-invalid={state.kind === "error" || undefined}
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (file) void photo.choose(file, frame);
+          }}
+        />
       </label>
-      <input
-        id={`${id}-file`}
-        ref={input}
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        disabled={disabled || busy}
-        aria-describedby={`${id}-hint${state.kind === "error" ? ` ${id}-error` : ""}`}
-        aria-invalid={state.kind === "error" || undefined}
-        onChange={(event) => {
-          const file = event.currentTarget.files?.[0];
-          event.currentTarget.value = "";
-          if (file) void photo.choose(file, frame);
-        }}
-      />
       <p className="field-hint" id={`${id}-hint`}>
         静态 JPEG、PNG 或 WebP，最多 8 MiB。
       </p>

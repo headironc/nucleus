@@ -34,7 +34,7 @@ test.beforeEach(async ({ page }) => {
   await page.waitForFunction(() => !!window.applicationPhoto);
 });
 
-async function choose(page: Page, width = 800, height = 600) {
+async function photoFile(page: Page, width = 800, height = 600) {
   // Actual browser-encoded pixels: a circle reveals any stretching in the crop.
   const base64 = await page.evaluate(({ width, height }) => {
     const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
@@ -44,7 +44,10 @@ async function choose(page: Page, width = 800, height = 600) {
     context.fillStyle = "#9b4239"; context.fillRect(0, 0, width / 8, height);
     return canvas.toDataURL("image/png").split(",")[1];
   }, { width, height });
-  await page.locator('input[type="file"]').setInputFiles({ name: "本人明确裁剪的照片.png", mimeType: "image/png", buffer: Buffer.from(base64, "base64") });
+  return { name: "本人明确裁剪的照片.png", mimeType: "image/png", buffer: Buffer.from(base64, "base64") };
+}
+async function choose(page: Page, width = 800, height = 600) {
+  await page.locator('input[type="file"]').setInputFiles(await photoFile(page, width, height));
   await expect(page.getByRole("img", { name: "工牌照片裁剪预览" })).toBeVisible();
 }
 
@@ -79,6 +82,102 @@ test("removal returns focus to the file field and destroys the previous canvas",
   await expect(page.locator('input[type="file"]')).toBeFocused();
   await expect(page.getByRole("img")).toHaveCount(0);
   expect(await node!.evaluate((canvas: HTMLCanvasElement) => [canvas.width, canvas.height])).toEqual([0, 0]);
+});
+
+test("the native photo picker keeps a visible keyboard target through confirmation, same-file reselection and removal", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  const file = await photoFile(page, 600, 800);
+  const input = page.locator('input[type="file"]');
+  const picker = page.locator(".application-photo-picker");
+  await expect(input).toHaveAccessibleName("选择照片");
+  await page.keyboard.press("Tab");
+  await expect(input).toBeFocused();
+  await expect(picker).toHaveCSS("outline-style", "solid");
+  await page.screenshot({
+    path: test.info().outputPath("photo-picker-keyboard-320-dark.png"),
+    fullPage: true,
+  });
+  const first = page.waitForEvent("filechooser");
+  await page.keyboard.press("Enter");
+  await (await first).setFiles(file);
+  await expect(input).toHaveAccessibleName("重新选择照片");
+  await expect(
+    page.getByRole("img", { name: "工牌照片裁剪预览" }),
+  ).toBeVisible();
+  expect(await input.inputValue()).toBe("");
+
+  await page.evaluate(() => {
+    const original = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function (
+      this: HTMLCanvasElement,
+      callback,
+      type,
+      quality,
+    ) {
+      original.call(
+        this,
+        (blob) => {
+          (
+            window as Window & { finishPhotoEncoding?: () => void }
+          ).finishPhotoEncoding = () => {
+            HTMLCanvasElement.prototype.toBlob = original;
+            delete (window as Window & { finishPhotoEncoding?: () => void })
+              .finishPhotoEncoding;
+            callback(blob);
+          };
+        },
+        type,
+        quality,
+      );
+    };
+  });
+  await page.getByRole("button", { name: "确认裁剪效果", exact: true }).click();
+  await expect(input).toBeDisabled();
+  await expect(picker).toHaveAttribute("aria-disabled", "true");
+  await page.waitForFunction(
+    () =>
+      !!(window as Window & { finishPhotoEncoding?: () => void })
+        .finishPhotoEncoding,
+  );
+  await page.evaluate(() =>
+    (window as Window & { finishPhotoEncoding?: () => void })
+      .finishPhotoEncoding!(),
+  );
+  await expect(
+    page.getByRole("button", { name: "已确认裁剪效果" }),
+  ).toBeDisabled();
+  await expect(input).toBeEnabled();
+  await expect(picker).toHaveAttribute("aria-disabled", "false");
+  await page.screenshot({
+    path: test.info().outputPath("photo-picker-confirmed-320-dark.png"),
+    fullPage: true,
+  });
+
+  await input.focus();
+  const repeated = page.waitForEvent("filechooser");
+  await page.keyboard.press("Enter");
+  await (await repeated).setFiles(file);
+  await expect(
+    page.getByRole("button", { name: "确认裁剪效果", exact: true }),
+  ).toBeEnabled();
+  expect(await input.inputValue()).toBe("");
+  await page.getByRole("button", { name: "移除照片", exact: true }).click();
+  await expect(input).toBeFocused();
+  await expect(input).toHaveAccessibleName("选择照片");
+  await expect(picker).toHaveCSS("outline-style", "solid");
+  await expect(page.getByRole("img", { name: "工牌照片裁剪预览" })).toHaveCount(
+    0,
+  );
+  expect(await page.evaluate(() => window.applicationPhoto.snapshot())).toEqual(
+    { kind: "empty" },
+  );
+  await page.screenshot({
+    path: test.info().outputPath("photo-picker-removed-focus-320-dark.png"),
+    fullPage: true,
+  });
 });
 
 test("rejects a subpixel crop rather than stretching a 3:4 image into a square", async ({ page }) => {
