@@ -10,94 +10,10 @@ use image::{
         webp::{WebPDecoder, WebPEncoder},
     },
 };
-use serde::Deserialize;
 
-use super::{Error as ApplicationError, ResourceId};
-use crate::identity::person;
-
-/// Deployment capacity for retained photographs, including unsuccessful preparations.
-#[derive(Clone, Copy, Deserialize)]
-#[serde(try_from = "LimitInput")]
-pub struct Limits {
-    person_files: u64,
-    person_bytes: u64,
-    total_files: u64,
-    total_bytes: u64,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct LimitInput {
-    person_files: u64,
-    person_bytes: u64,
-    total_files: u64,
-    total_bytes: u64,
-}
-
-impl TryFrom<LimitInput> for Limits {
-    type Error = ApplicationError;
-
-    fn try_from(input: LimitInput) -> Result<Self, Self::Error> {
-        Self::new(
-            input.person_files,
-            input.person_bytes,
-            input.total_files,
-            input.total_bytes,
-        )
-    }
-}
-
-impl Limits {
-    pub fn new(
-        person_files: u64,
-        person_bytes: u64,
-        total_files: u64,
-        total_bytes: u64,
-    ) -> Result<Self, ApplicationError> {
-        if person_files == 0
-            || person_bytes == 0
-            || person_files > total_files
-            || person_bytes > total_bytes
-        {
-            return Err(ApplicationError::Configuration);
-        }
-        Ok(Self {
-            person_files,
-            person_bytes,
-            total_files,
-            total_bytes,
-        })
-    }
-
-    pub(super) fn publish(
-        &self,
-        directory: &platform::files::Directory,
-        person: person::Id,
-        id: ResourceId,
-        bytes: &[u8],
-    ) -> Result<(), ApplicationError> {
-        let storage = directory.exclusive(&["workforce", "photos"])?;
-        let person = person.to_string();
-        let total = storage.usage(&[])?;
-        let owned = storage.usage(&[&person])?;
-        let size = u64::try_from(bytes.len()).map_err(|_| ApplicationError::Configuration)?;
-        for (usage, files, budget) in [
-            (total, self.total_files, self.total_bytes),
-            (owned, self.person_files, self.person_bytes),
-        ] {
-            if usage.files >= files || size > budget.saturating_sub(usage.bytes) {
-                return Err(ApplicationError::PhotoCapacity);
-            }
-        }
-        storage.publish(
-            &[&person],
-            &id.to_string(),
-            &uuid::Uuid::new_v4().to_string(),
-            bytes,
-        )?;
-        Ok(())
-    }
-}
+#[cfg(test)]
+use super::ResourceId;
+pub use super::capacity::Limits;
 
 pub const INPUT_LIMIT: usize = 8 * 1024 * 1024;
 const OUTPUT_LIMIT: usize = 64 * 1024 * 1024 + 1024 * 1024;
@@ -274,12 +190,24 @@ mod tests {
         let limits = Limits::new(2, 6, 4, 9).expect("capacity");
         let directory = settings.open().expect("storage");
         limits
-            .publish(&directory, person, super::ResourceId::allocate(), b"abc")
+            .publish(
+                &directory,
+                "photos",
+                person,
+                &super::ResourceId::allocate().to_string(),
+                b"abc",
+            )
             .expect("first photo");
         assert!(
             matches!(
-                limits.publish(&directory, person, super::ResourceId::allocate(), b"abcd"),
-                Err(super::ApplicationError::PhotoCapacity)
+                limits.publish(
+                    &directory,
+                    "photos",
+                    person,
+                    &super::ResourceId::allocate().to_string(),
+                    b"abcd"
+                ),
+                Err(super::super::Error::Capacity)
             ),
             "bytes are checked independently of file count"
         );
@@ -295,25 +223,44 @@ mod tests {
         drop(directory);
         let directory = settings.open().expect("restarted storage");
         assert!(matches!(
-            limits.publish(&directory, person, super::ResourceId::allocate(), b"a"),
-            Err(super::ApplicationError::PhotoCapacity)
+            limits.publish(
+                &directory,
+                "photos",
+                person,
+                &super::ResourceId::allocate().to_string(),
+                b"a"
+            ),
+            Err(super::super::Error::Capacity)
         ));
         limits
-            .publish(&directory, other, super::ResourceId::allocate(), b"abc")
+            .publish(
+                &directory,
+                "photos",
+                other,
+                &super::ResourceId::allocate().to_string(),
+                b"abc",
+            )
             .expect("another member's remaining capacity");
         assert!(matches!(
-            limits.publish(&directory, other, super::ResourceId::allocate(), b"a"),
-            Err(super::ApplicationError::PhotoCapacity)
+            limits.publish(
+                &directory,
+                "photos",
+                other,
+                &super::ResourceId::allocate().to_string(),
+                b"a"
+            ),
+            Err(super::super::Error::Capacity)
         ));
         assert!(
             matches!(
                 Limits::new(2, 99, 4, 99).expect("file limits").publish(
                     &directory,
+                    "photos",
                     person,
-                    super::ResourceId::allocate(),
+                    &super::ResourceId::allocate().to_string(),
                     b"a"
                 ),
-                Err(super::ApplicationError::PhotoCapacity)
+                Err(super::super::Error::Capacity)
             ),
             "per-person file count is independent of bytes"
         );
@@ -321,11 +268,12 @@ mod tests {
             matches!(
                 Limits::new(3, 99, 3, 99).expect("file limits").publish(
                     &directory,
+                    "photos",
                     other,
-                    super::ResourceId::allocate(),
+                    &super::ResourceId::allocate().to_string(),
                     b"a"
                 ),
-                Err(super::ApplicationError::PhotoCapacity)
+                Err(super::super::Error::Capacity)
             ),
             "total file count is independent of bytes"
         );
@@ -353,8 +301,9 @@ mod tests {
                     ready.wait();
                     let result = limits.publish(
                         &directory,
+                        "photos",
                         crate::identity::person::Id::allocate(),
-                        super::ResourceId::allocate(),
+                        &super::ResourceId::allocate().to_string(),
                         b"abc",
                     );
                     send.send(result).expect("result receiver");
@@ -376,7 +325,7 @@ mod tests {
         assert_eq!(
             results
                 .iter()
-                .filter(|result| matches!(result, Err(super::ApplicationError::PhotoCapacity)))
+                .filter(|result| matches!(result, Err(super::super::Error::Capacity)))
                 .count(),
             1
         );

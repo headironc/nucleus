@@ -89,10 +89,11 @@ impl Service {
                 &photo,
                 font,
             )?;
-            settings.directory.publish(
-                &["workforce", "badges"],
+            settings.badge_limits.publish(
+                &settings.directory,
+                "badges",
+                owner,
                 &badge_id.to_string(),
-                &uuid::Uuid::new_v4().to_string(),
                 &bytes,
             )?;
             Ok::<_, Error>(bytes.len())
@@ -177,15 +178,18 @@ impl Service {
             let manager = match Box::pin(self.manager(client, actor, Read::Snapshot(view))).await {
                 Ok(_) => true, Err(Error::Grant(grant::Error::Denied)) => false, Err(error) => return Err(error),
             };
-            let row = client.query_opt("SELECT badge.size FROM workforce.badges badge JOIN workforce.applications application ON application.id=badge.application_id WHERE badge.id=$1 AND ($2 OR application.person_id=$3)", &[&id,&manager,&person]).await?.ok_or(Error::TargetUnavailable)?;
-            u64::try_from(row.try_get::<_, i64>(0)?).map_err(|_| Error::Configuration)
+            let row = client.query_opt("SELECT badge.size,application.person_id FROM workforce.badges badge JOIN workforce.applications application ON application.id=badge.application_id WHERE badge.id=$1 AND ($2 OR application.person_id=$3)", &[&id,&manager,&person]).await?.ok_or(Error::TargetUnavailable)?;
+            Ok((u64::try_from(row.try_get::<_, i64>(0)?).map_err(|_| Error::Configuration)?, row.try_get::<_, person::Id>(1)?))
         })).await.map_err(|_| Error::Timeout)?;
-        let size = finish(self, lease, result, false).await?;
+        let (size, owner) = finish(self, lease, result, false).await?;
         let bytes = tokio::task::spawn_blocking(move || {
             let _capacity = capacity;
             let file = settings
                 .directory
-                .open(&["workforce", "badges"], &id.to_string())?
+                .open(
+                    &["workforce", "badges", &owner.to_string()],
+                    &id.to_string(),
+                )?
                 .ok_or(Error::MissingFile)?;
             if head {
                 file.verify_size(size)?;
