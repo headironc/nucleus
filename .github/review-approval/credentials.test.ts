@@ -84,3 +84,29 @@ test("unknown token issuance is not retried", async () => {
   await expect(installationToken(env)).rejects.toThrow("unknown issuance");
   expect(calls.filter((c) => c.url.endsWith("/access_tokens"))).toHaveLength(1);
 });
+
+test("shared signing preserves one JWT for the existing GET and mint requests", async () => {
+  const calls = transport();
+  const credential = await installationToken(env);
+  expect(calls.map((c) => c.method)).toEqual(["GET", "GET", "POST"]);
+  const authorization = calls.map((c) => c.headers.Authorization);
+  expect(new Set(authorization).size).toBe(1);
+  const payload = JSON.parse(
+    Buffer.from(
+      authorization[0].slice("Bearer ".length).split(".")[1],
+      "base64url",
+    ).toString(),
+  );
+  expect(payload.iss).toBe("synthetic-client");
+  expect(payload.exp - payload.iat).toBe(600);
+  await credential.revoke();
+  expect(calls.at(-1).method).toBe("DELETE");
+});
+
+test("a bad synthetic signing key never reaches the existing mint transport", async () => {
+  const calls = transport();
+  await expect(
+    installationToken({ ...env, CLADIRON_PRIVATE_KEY: "not-a-key" }),
+  ).rejects.toThrow();
+  expect(calls).toHaveLength(0);
+});

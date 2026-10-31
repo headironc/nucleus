@@ -1,4 +1,4 @@
-import { createSign } from "node:crypto";
+import { appJwt } from "./app-jwt.ts";
 import {
   appId,
   installationId,
@@ -12,13 +12,11 @@ export async function installationToken(env = process.env) {
     env.CLADIRON_CLIENT_ID && env.CLADIRON_PRIVATE_KEY,
     "App credential metadata/value unavailable",
   );
-  const encode = (v: unknown) =>
-    Buffer.from(JSON.stringify(v)).toString("base64url");
-  const now = Math.floor(Date.now() / 1000);
-  const message = `${encode({ alg: "RS256", typ: "JWT" })}.${encode({ iat: now - 60, exp: now + 540, iss: env.CLADIRON_CLIENT_ID })}`;
-  const signer = createSign("RSA-SHA256");
-  signer.update(message);
-  const jwt = `${message}.${signer.sign(env.CLADIRON_PRIVATE_KEY, "base64url")}`;
+  const jwt = appJwt(
+    env.CLADIRON_CLIENT_ID,
+    env.CLADIRON_PRIVATE_KEY,
+    Date.now(),
+  );
   const request = async (path: string, method = "GET", body?: unknown) => {
     const response = await fetch(`https://api.github.com${path}`, {
       method,
