@@ -118,6 +118,7 @@ function fixture(deadlineMs: number): {
   mkdirSync(join(root, "build/server"), { recursive: true });
   for (const module of [
     "browser-ready.ts",
+    "browser-scope.ts",
     "evidence.ts",
     "nginx.ts",
     "process.ts",

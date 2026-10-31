@@ -842,6 +842,7 @@ export async function reviewBadgeApplications(page: Page, context: Context) {
         originalGrantId: submitted.grantId,
       }),
     );
+    return role;
   } finally {
     // Playwright closes timed-out pages; retain the original request failure.
     if (!page.isClosed()) {

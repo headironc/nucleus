@@ -10,6 +10,7 @@ import { ownTermination } from "./termination";
 import { admissionAndFirstNumber } from "./admission-number";
 import { ownBadgeApplications } from "./badge-applications";
 import { reviewBadgeApplications } from "./badge-reviews";
+import { cancelBadgeApplications } from "./badge-cancellations";
 import { ownMobileChange } from "./mobile-change";
 import { cookieDigests, identityObservation, identityReads } from "./identity";
 import { affiliationObservation } from "./affiliation";
@@ -2194,8 +2195,12 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     const other = await registerRealAccount(page, "13900000018", "Badge Observer", "000000200002298899");
     const fixture = await prepareBadgeDirectory(page, replacement, other);
     const submitted = await ownBadgeApplications(page, replacement, colleague, other, (session) => choose(page, session));
-    await reviewBadgeApplications(page, {
+    const role = await reviewBadgeApplications(page, {
       manager: replacement, owner: colleague, reviewer: other, fixture, submitted,
+      select: (session) => choose(page, session),
+    });
+    await cancelBadgeApplications(page, {
+      manager: replacement, owner: colleague, reviewer: other, role, submitted,
       select: (session) => choose(page, session),
     });
   });
