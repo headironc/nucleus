@@ -225,18 +225,10 @@ impl Administration {
 
     pub async fn correct_affiliation(
         &self,
-        operation_id: identity::operation::Id,
         input: affiliation::admin::Input,
         dry_run: bool,
     ) -> Result<Option<()>, affiliation::admin::Error> {
-        affiliation::admin::run(
-            self.app.clone(),
-            Arc::clone(&self.keys),
-            operation_id,
-            input,
-            dry_run,
-        )
-        .await
+        affiliation::admin::run(self.app.clone(), Arc::clone(&self.keys), input, dry_run).await
     }
 
     pub async fn confirm(&self) -> Result<(), Error> {

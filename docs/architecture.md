@@ -111,7 +111,7 @@ Person 保留稳定人员 ID，Account 表达登录身份。注销保留必要�
 
 ### 内核组成
 
-迁移前 domain::kernel、domain::history、Work 和 Registry 已被账户、会话、角色、目录、Center 等调用。旧消费者继续遵守实际合同，停止把其他能力迁入这套机制。
+domain::kernel、domain::history、Work 和 Registry 仍被账户、会话、角色、目录等旧消费者调用。Center 已退出通用执行器、状态历史与原操作登记，保留实际依赖的身份及权限鉴别。旧消费者继续遵守实际合同，停止把其他能力迁入这套机制。
 
 ### 用例执行器
 

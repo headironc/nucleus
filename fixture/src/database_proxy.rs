@@ -36,6 +36,7 @@ pub enum Fault {
     StalledCurrent,
     LostClockCommit,
     RewoundCurrent,
+    EqualAffiliationTime,
     StalledRollback,
     DelayedKeyCommit,
     CommitTermination,
@@ -52,7 +53,6 @@ pub enum Fault {
     StalledCorrectionCount,
     StalledCorrectionPage,
     StalledGrant,
-    StalledAffiliation,
     StalledAffiliationCount,
     StalledAffiliationPage,
     StalledAffiliationRead,
@@ -207,6 +207,7 @@ impl Proxy {
                 Fault::StalledCurrent => 11,
                 Fault::LostClockCommit => 12,
                 Fault::RewoundCurrent => 13,
+                Fault::EqualAffiliationTime => 30,
                 Fault::StalledRollback => 14,
                 Fault::DelayedKeyCommit => 15,
                 Fault::CommitTermination => 16,
@@ -223,7 +224,6 @@ impl Proxy {
                 Fault::StalledCorrectionCount => 27,
                 Fault::StalledCorrectionPage => 28,
                 Fault::StalledGrant => 29,
-                Fault::StalledAffiliation => 30,
                 Fault::StalledAffiliationCount => 31,
                 Fault::StalledAffiliationPage => 32,
                 Fault::StalledAffiliationRead => 33,
@@ -518,6 +518,32 @@ async fn relay(
                 control.pause(&backend_pid).await?;
                 stalled_query.store(false, Ordering::SeqCst);
                 resumed.notify_one();
+            }
+            if message[0] == b'P'
+                && message
+                    .windows(b"SELECT clock_timestamp() AS observed_at".len())
+                    .any(|bytes| bytes == b"SELECT clock_timestamp() AS observed_at")
+                && control
+                    .fault
+                    .compare_exchange(30, 0, Ordering::SeqCst, Ordering::SeqCst)
+                    .is_ok()
+            {
+                let observed = b"clock_timestamp() AS observed_at";
+                let offset = message
+                    .windows(observed.len())
+                    .position(|bytes| bytes == observed)
+                    .ok_or(io::ErrorKind::InvalidData)?;
+                message.splice(
+                    offset..offset + observed.len(),
+                    b"(SELECT max(created_at) FROM center.affiliations) AS observed_at"
+                        .iter()
+                        .copied(),
+                );
+                let length = u32::try_from(message.len() - 1)
+                    .map_err(integer)?
+                    .to_be_bytes();
+                message[1..5].copy_from_slice(&length);
+                control.pause(&backend_pid).await?;
             }
             if message[0] == b'P'
                 && message
@@ -936,9 +962,12 @@ async fn relay(
                     .any(|bytes| bytes == b"FROM access.grants state WHERE state.person_id=$1 AND state.termination IS NULL"));
             let affiliation_state = message[0] == b'P'
                 && message
-                    .windows(b"FROM center.profiles state".len())
-                    .any(|bytes| bytes == b"FROM center.profiles state");
-            let affiliation_count = affiliation_state && control.fault.load(Ordering::SeqCst) == 31;
+                    .windows(b"FROM center.affiliations WHERE person_id=$1 ORDER BY created_at DESC LIMIT 1".len())
+                    .any(|bytes| bytes == b"FROM center.affiliations WHERE person_id=$1 ORDER BY created_at DESC LIMIT 1");
+            let affiliation_count = message[0] == b'P'
+                && message
+                    .windows(b"SELECT count(*), max(created_at) FROM center.affiliations WHERE person_id=$1".len())
+                    .any(|bytes| bytes == b"SELECT count(*), max(created_at) FROM center.affiliations WHERE person_id=$1");
             let number_history_count = control.fault.load(Ordering::SeqCst) == 39
                 && message[0] == b'P'
                 && message
@@ -1015,18 +1044,12 @@ async fn relay(
                     .any(|bytes| bytes == b"FROM workforce.numbers state")
             {
                 38
-            } else if message[0] == b'P'
-                && message
-                    .windows(b"WHERE record.operation_id = $1".len())
-                    .any(|bytes| bytes == b"WHERE record.operation_id = $1")
-            {
-                30
             } else if affiliation_count {
                 31
             } else if message[0] == b'P'
                 && message
-                    .windows(b"FROM center.affiliations record WHERE record.person_id = $1 ORDER BY record.sequence DESC LIMIT $2 OFFSET $3".len())
-                    .any(|bytes| bytes == b"FROM center.affiliations record WHERE record.person_id = $1 ORDER BY record.sequence DESC LIMIT $2 OFFSET $3")
+                    .windows(b"FROM center.affiliations WHERE person_id=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3".len())
+                    .any(|bytes| bytes == b"FROM center.affiliations WHERE person_id=$1 ORDER BY created_at DESC LIMIT $2 OFFSET $3")
             {
                 32
             } else if grant {

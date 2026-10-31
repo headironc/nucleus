@@ -1,9 +1,4 @@
-import {
-  test,
-  expect,
-  type BrowserContext,
-  type Page,
-} from "@playwright/test";
+import { test, expect, type BrowserContext, type Page } from "@playwright/test";
 import { build } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { resolve } from "node:path";
@@ -140,7 +135,10 @@ test.beforeAll(async () => {
   html = `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" href="data:,">${styles.join("")}</head><body><div id="fixture"></div><script type="module" src="/fixture.js"></script></body></html>`;
 });
 
-function fulfill(route: Parameters<Parameters<BrowserContext["route"]>[1]>[0], reply: Reply) {
+function fulfill(
+  route: Parameters<Parameters<BrowserContext["route"]>[1]>[0],
+  reply: Reply,
+) {
   return route.fulfill({
     status: reply.status ?? 200,
     headers: {
@@ -148,9 +146,7 @@ function fulfill(route: Parameters<Parameters<BrowserContext["route"]>[1]>[0], r
       ...reply.headers,
     },
     body:
-      typeof reply.body === "string"
-        ? reply.body
-        : JSON.stringify(reply.body),
+      typeof reply.body === "string" ? reply.body : JSON.stringify(reply.body),
   });
 }
 
@@ -204,7 +200,10 @@ async function install(context: BrowserContext, state: Control) {
           const body: unknown = JSON.parse(request.postData() ?? "null");
           const operation = request.headers()["operation-id"] ?? "";
           state.puts.push({ operation, sessionId: selected, body });
-          const reply = await state.put(body, { operation, sessionId: selected });
+          const reply = await state.put(body, {
+            operation,
+            sessionId: selected,
+          });
           await fulfill(route, reply);
           return;
         }
@@ -248,7 +247,9 @@ async function openForm(page: Page) {
     page.getByRole("heading", { name: "尚未填写政治面貌" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "填写政治面貌" }).click();
-  await expect(page.getByRole("heading", { name: "填写政治面貌" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "填写政治面貌" }),
+  ).toBeVisible();
   await expect(page.locator('input[name="affiliation"]')).toHaveCount(13);
   await page.getByRole("radio", { name: "民革会员" }).check();
   await page.getByRole("button", { name: "继续" }).click();
@@ -271,6 +272,28 @@ async function sensitiveStorage(page: Page) {
   );
 }
 
+async function advanceClock(page: Page, milliseconds: number) {
+  await page.clock.setFixedTime(
+    (await page.evaluate(() => Date.now())) + milliseconds,
+  );
+}
+
+async function captureState(page: Page, state: string) {
+  for (const width of [320, 390, 768, 1440]) {
+    for (const scheme of ["light", "dark"] as const) {
+      await page.setViewportSize({ width, height: 900 });
+      await page.emulateMedia({ colorScheme: scheme });
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(width + 1);
+      await page.screenshot({
+        path: `test-results/affiliation-${state}-${width}-${scheme}.png`,
+        fullPage: true,
+      });
+    }
+  }
+}
+
 test.beforeEach(async ({ context }) => {
   await context.route("https://fixture.invalid/**", (route) =>
     route.fulfill({ contentType: "image/webp", body: avatar }),
@@ -286,13 +309,7 @@ test("account entry, exact first fill, success and independent current read", as
   await expect(
     page.getByRole("link", { name: "政治面貌", exact: true }),
   ).toBeVisible();
-  await expect(
-    page.locator(".account-affiliation").filter({
-      has: page.getByRole("link", { name: "政治面貌", exact: true }),
-    }).locator(".field-hint"),
-  ).toHaveText(
-    "进入本人政治面貌页面。未填写时可自愿首次填写；已有值只读。",
-  );
+  await expect(page.getByText("进入本人政治面貌页面。未填写时可自愿首次填写；已有值只读。", { exact: true })).toBeVisible();
   await page.getByRole("link", { name: "政治面貌", exact: true }).click();
   await expect(page).toHaveURL(/\/account\/affiliation$/);
   await expect(page.locator("#page-title")).toHaveText("政治面貌");
@@ -303,7 +320,10 @@ test("account entry, exact first fill, success and independent current read", as
     page.getByText("提交后，你不能自行修改、撤回或清空。"),
   ).toBeVisible();
   await expect(page.locator(".confirm-choice")).toHaveText("04 民革会员");
-  await page.screenshot({ path: "test-results/affiliation-confirm-desktop.png", fullPage: true });
+  await page.screenshot({
+    path: "test-results/affiliation-confirm-desktop.png",
+    fullPage: true,
+  });
 
   const gate = deferred();
   state.put = async () => {
@@ -320,9 +340,7 @@ test("account entry, exact first fill, success and independent current read", as
   const marker = await page.evaluate(() =>
     sessionStorage.getItem("halo:affiliation"),
   );
-  expect(JSON.parse(marker!)).toEqual({ version: 1, session: id });
-  expect(marker).not.toContain("04");
-  expect(marker).not.toContain("民革");
+  expect(marker).toBeNull();
   expect(await sensitiveStorage(page)).not.toContain("民革会员");
   gate.resolve();
   await expect(
@@ -330,9 +348,7 @@ test("account entry, exact first fill, success and independent current read", as
   ).toBeVisible();
   await expect(page.locator("[data-focus]")).toBeFocused();
   await expect
-    .poll(() =>
-      page.evaluate(() => sessionStorage.getItem("halo:affiliation")),
-    )
+    .poll(() => page.evaluate(() => sessionStorage.getItem("halo:affiliation")))
     .toBeNull();
   expect(await sensitiveStorage(page)).not.toContain("民革会员");
   expect(await sensitiveStorage(page)).not.toContain('"affiliation":"04"');
@@ -350,7 +366,10 @@ test("account entry, exact first fill, success and independent current read", as
   await expect(current).toContainText("04");
   await expect(current).toContainText("民革会员");
   await expect(current).toContainText("2026年10月25日 03:04");
-  await page.screenshot({ path: "test-results/affiliation-success-current.png", fullPage: true });
+  await page.screenshot({
+    path: "test-results/affiliation-success-current.png",
+    fullPage: true,
+  });
   await expect(
     page.getByRole("heading", { name: "政治面貌已填写" }),
   ).toBeVisible();
@@ -369,9 +388,7 @@ test("leave confirmation distinguishes unsent choice from a sent request and res
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("heading")).toHaveText("放弃当前选择？");
   await expect(dialog).toContainText("当前选择尚未提交。离开后需要重新选择。");
-  await expect(
-    dialog.getByRole("button", { name: "留在此页" }),
-  ).toBeFocused();
+  await expect(dialog.getByRole("button", { name: "留在此页" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
   await expect(account).toBeFocused();
@@ -389,9 +406,7 @@ test("leave confirmation distinguishes unsent choice from a sent request and res
     "离开前，请留意填写结果",
   );
   await expect(dialog).toContainText("离开不会取消已经发出的填写。");
-  await expect(
-    dialog.getByRole("button", { name: "留在此页" }),
-  ).toBeFocused();
+  await expect(dialog.getByRole("button", { name: "留在此页" })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(dialog).not.toBeVisible();
   await expect(home).toBeFocused();
@@ -402,7 +417,10 @@ test("leave confirmation distinguishes unsent choice from a sent request and res
 });
 
 for (const failure of ["disconnected", "unavailable"] as const) {
-  test(`an existing record with ${failure} names never claims unset`, async ({ page, context }) => {
+  test(`an existing record with ${failure} names never claims unset`, async ({
+    page,
+    context,
+  }) => {
     const state = control({
       read: () => ({ body: { code: "ok", affiliation: record } }),
     });
@@ -419,56 +437,88 @@ for (const failure of ["disconnected", "unavailable"] as const) {
     await page.waitForFunction(() => !!window.accountSessions);
     await choose(page);
     await page.goto(origin + "/account/affiliation");
-    await expect(page.getByRole("heading", { name: "当前政治面貌暂时无法显示" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "当前政治面貌暂时无法显示" }),
+    ).toBeVisible();
     await expect(page.locator("main")).not.toContainText("尚未填写");
-    await expect(page.getByRole("button", { name: /秒后重新读取/ })).toBeDisabled();
-    await expect(page.getByRole("button", { name: "填写政治面貌", exact: true })).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: /秒后重新读取/ }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("button", { name: "填写政治面貌", exact: true }),
+    ).toHaveCount(0);
     expect(state.puts).toHaveLength(0);
   });
 }
 
 for (const currentFailure of ["503", "disconnected"] as const) {
-  test(`initial ${currentFailure} read preserves the parallel dictionary cooldown`, async ({ page, context }) => {
-    await page.clock.install();
-    const state = control({ read: () => ({ status: 503, body: { code: "dependency_unavailable" } }) });
+  test(`initial ${currentFailure} read preserves the parallel dictionary cooldown`, async ({
+    page,
+    context,
+  }) => {
+    await page.clock.setFixedTime(Date.now());
+    const state = control({
+      read: () => ({ status: 503, body: { code: "dependency_unavailable" } }),
+    });
     await install(context, state);
     let dictionaryReads = 0;
     let available = false;
     await context.route(`${origin}/api/v1/affiliations`, async (route) => {
       dictionaryReads++;
-      await fulfill(route, available
-        ? { body: { code: "ok", affiliations } }
-        : { status: 429, body: { code: "rate_limited" }, headers: { "Retry-After": "60" } });
+      await fulfill(
+        route,
+        available
+          ? { body: { code: "ok", affiliations } }
+          : {
+              status: 429,
+              body: { code: "rate_limited" },
+              headers: { "Retry-After": "60" },
+            },
+      );
     });
     if (currentFailure === "disconnected") {
-      await context.route(`${origin}/api/v1/accounts/current/affiliation`, async (route) => {
-        state.reads++;
-        if (available) await fulfill(route, { status: 404, body: { code: "affiliation_unset" } });
-        else await route.abort("connectionclosed");
-      });
+      await context.route(
+        `${origin}/api/v1/accounts/current/affiliation`,
+        async (route) => {
+          state.reads++;
+          if (available)
+            await fulfill(route, {
+              status: 404,
+              body: { code: "affiliation_unset" },
+            });
+          else await route.abort("connectionclosed");
+        },
+      );
     }
     await page.goto(origin);
     await page.waitForFunction(() => !!window.accountSessions);
     await choose(page);
     await page.goto(origin + "/account/affiliation");
-    await expect(page.getByRole("heading", { name: "暂时无法读取当前政治面貌" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "暂时无法读取当前政治面貌" }),
+    ).toBeVisible();
     const retry = page.getByRole("button", { name: /重新读取/ });
-    await page.clock.fastForward(59_000);
+    await advanceClock(page, 59_000);
     await expect(retry).toBeDisabled();
     expect(state.reads).toBe(1);
     expect(dictionaryReads).toBe(1);
     available = true;
     state.read = () => ({ status: 404, body: { code: "affiliation_unset" } });
-    await page.clock.fastForward(2_000);
+    await advanceClock(page, 2_000);
     await retry.click();
-    await expect(page.getByRole("heading", { name: "尚未填写政治面貌" })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "尚未填写政治面貌" }),
+    ).toBeVisible();
     expect(state.reads).toBe(2);
     expect(dictionaryReads).toBe(2);
     expect(state.puts).toHaveLength(0);
   });
 }
 
-test("native reload warns about a draft and explicit page departure needs only one confirmation", async ({ page, context }) => {
+test("native reload warns about a draft and explicit page departure needs only one confirmation", async ({
+  page,
+  context,
+}) => {
   const state = control();
   await start(page, context, state);
   await openForm(page);
@@ -479,7 +529,9 @@ test("native reload warns about a draft and explicit page departure needs only o
   const warning = await dialog;
   expect(warning.type()).toBe("beforeunload");
   await warning.dismiss();
-  await expect(page.getByRole("heading", { name: "确认填写政治面貌" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "确认填写政治面貌" }),
+  ).toBeVisible();
   expect(state.puts).toHaveLength(0);
   let redundantWarning = false;
   page.on("dialog", async (prompt) => {
@@ -487,7 +539,10 @@ test("native reload warns about a draft and explicit page departure needs only o
     await prompt.dismiss();
   });
   await page.getByRole("link", { name: "返回首页 ↗" }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "离开此页", exact: true }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "离开此页", exact: true })
+    .click();
   await expect(page.getByText("Public fixture", { exact: true })).toBeVisible();
   expect(redundantWarning).toBe(false);
 });
@@ -515,13 +570,6 @@ const rejections = [
     retry: false,
   },
   {
-    name: "request mismatch",
-    status: 409,
-    code: "request_mismatch",
-    heading: "本次填写无法继续",
-    retry: false,
-  },
-  {
     name: "dependency unavailable",
     status: 503,
     code: "dependency_unavailable",
@@ -530,15 +578,16 @@ const rejections = [
   },
   {
     name: "unknown outcome",
-    status: 500,
+    status: 503,
     code: "outcome_unknown",
-    heading: "暂时无法确认填写结果",
+    heading: "未能确认填写结果",
     retry: true,
   },
 ] as const;
 
 for (const rejection of rejections) {
   test(`first send rejection: ${rejection.name}`, async ({ page, context }) => {
+    await page.clock.setFixedTime(Date.now());
     const state = control({
       put: () => {
         const reply: Reply = {
@@ -569,28 +618,23 @@ for (const rejection of rejections) {
     }
     if (rejection.code === "outcome_unknown") {
       await expect(
-        page.getByText(
-          "本次填写可能已经完成。离开本页不会取消已经发出的填写。",
-        ),
+        page.getByText("请刷新查看。", { exact: true }),
       ).toBeVisible();
-      await expect(page.locator(".retry-note")).toContainText(
-        "重试本次填写会再次提交上面的选项，可能完成本次填写。请不要另选一项。",
-      );
+      await expect(
+        page.getByRole("button", { name: "重试本次填写" }),
+      ).toHaveCount(0);
+      await expect(page.locator(".pending-summary")).toHaveCount(0);
     }
     if (rejection.code === "rate_limited") {
       await expect(
-        page.getByRole("button", { name: /秒后可重新提交/ }),
+        page.getByRole("button", { name: /秒后可刷新/ }),
       ).toBeVisible();
-      await page.waitForTimeout(5_100);
-      state.put = () => ({ status: 200, body: { code: "ok" } });
-      await page.getByRole("button", { name: "重试本次填写" }).click();
+      await advanceClock(page, 5_100);
+      await page.getByRole("button", { name: "刷新", exact: true }).click();
       await expect(
-        page.getByRole("heading", { name: "政治面貌已填写" }),
+        page.getByRole("heading", { name: "尚未填写政治面貌" }),
       ).toBeVisible();
-      expect(state.puts).toHaveLength(2);
-      expect(state.puts[1].operation).toBe(state.puts[0].operation);
-      expect(state.puts[1].body).toEqual(state.puts[0].body);
-      expect(state.puts[1].sessionId).toBe(state.puts[0].sessionId);
+      expect(state.puts).toHaveLength(1);
     }
   });
 }
@@ -604,8 +648,7 @@ for (const status of [401, 403] as const) {
       put: () => ({
         status,
         body: {
-          code:
-            status === 401 ? "authentication_invalid" : "permission_denied",
+          code: status === 401 ? "authentication_invalid" : "permission_denied",
         },
       }),
     });
@@ -623,139 +666,218 @@ for (const status of [401, 403] as const) {
   });
 }
 
-test("unknown original retries with the same operation while current reads stay independent", async ({
+test("a lost response refreshes the ordinary unset page before a new explicit confirmation", async ({
   page,
   context,
 }) => {
+  await page.clock.setFixedTime(Date.now());
   const state = control({
-    put: () => ({ status: 500, body: { code: "outcome_unknown" } }),
+    put: () => {
+      throw Error("connection closed");
+    },
   });
   await start(page, context, state);
   await openForm(page);
   await page.getByRole("button", { name: "确认填写" }).click();
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认填写结果" }),
+    page.getByRole("heading", { name: "未能确认填写结果" }),
   ).toBeVisible();
   const marker = await page.evaluate(() =>
     sessionStorage.getItem("halo:affiliation"),
   );
-  expect(JSON.parse(marker!)).toEqual({ version: 1, session: id });
+  expect(marker).toBeNull();
+  await captureState(page, "submit-error");
 
   state.read = () => ({ status: 404, body: { code: "affiliation_unset" } });
-  await page.getByRole("button", { name: "查看当前政治面貌" }).click();
+  await page.getByRole("button", { name: "刷新", exact: true }).click();
   await expect(
-    page.locator(".current-panel").getByRole("heading", {
-      name: "当前尚未填写",
-    }),
+    page.getByRole("heading", { name: "尚未填写政治面貌" }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认填写结果" }),
-  ).toBeVisible();
+    page.getByRole("heading", { name: "未能确认填写结果" }),
+  ).toHaveCount(0);
   await expect(page.locator('input[name="affiliation"]')).toHaveCount(0);
-  await expect(page.locator(".current-panel")).toContainText(
-    "不能证明原填写未完成",
+  await expect(page.locator(".current-panel")).toHaveCount(0);
+  await expect(page.locator("main")).not.toContainText(
+    /原填写|原结果|另行读取/,
   );
   expect(await sensitiveStorage(page)).not.toContain("民革会员");
+  await captureState(page, "ordinary-unset");
 
   state.put = () => ({ status: 200, body: { code: "ok" } });
-  await page.getByRole("button", { name: "重试本次填写" }).click();
+  expect(state.puts).toHaveLength(1);
+  await expect(page.getByRole("button", { name: "重试本次填写" })).toHaveCount(
+    0,
+  );
+  await page.getByRole("button", { name: "填写政治面貌", exact: true }).click();
+  await expect(page.locator('input[name="affiliation"]:checked')).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("button", { name: "继续", exact: true }),
+  ).toBeDisabled();
+  await page.getByRole("radio", { name: "民盟盟员", exact: true }).check();
+  await page.getByRole("button", { name: "继续", exact: true }).click();
+  expect(state.puts).toHaveLength(1);
+  await page.getByRole("button", { name: "确认填写", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "政治面貌已填写" }),
   ).toBeVisible();
   expect(state.puts).toHaveLength(2);
-  expect(state.puts[1].operation).toBe(state.puts[0].operation);
-  expect(state.puts[1].body).toEqual({ affiliation: "04" });
+  expect(state.puts[1].operation).not.toBe(state.puts[0].operation);
+  expect(state.puts[1].body).toEqual({ affiliation: "05" });
   await expect
-    .poll(() =>
-      page.evaluate(() => sessionStorage.getItem("halo:affiliation")),
-    )
+    .poll(() => page.evaluate(() => sessionStorage.getItem("halo:affiliation")))
     .toBeNull();
 });
 
+test("a submission without a response can leave normally after showing the refresh prompt", async ({
+  page,
+  context,
+}) => {
+  const state = control({
+    put: () => {
+      throw Error("connection closed");
+    },
+  });
+  await start(page, context, state);
+  await openForm(page);
+  await page.getByRole("button", { name: "确认填写" }).click();
+  await expect(
+    page.getByRole("heading", { name: "未能确认填写结果" }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "← 返回个人账户", exact: true }).click();
+  await expect(page).toHaveURL(/\/account$/);
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(state.puts).toHaveLength(1);
+});
+
 for (const response of [
-  { code: "request_mismatch", status: 409, heading: "本次重试无法继续" },
-  { code: "state_conflict", status: 409, heading: "当前已有政治面貌记录" },
-  { code: "invalid_input", status: 400, heading: "本次重试未被受理" },
+  { code: "rate_limited", status: 429 },
+  { code: "dependency_unavailable", status: 503 },
 ]) {
-  test(`terminal retry ${response.code} displays independent loading, failure and record`, async ({ page, context }) => {
-    await page.clock.install();
-    const state = control({ put: () => ({ status: 500, body: { code: "outcome_unknown" } }) });
+  test(`a refreshed ${response.code} uses the ordinary read error and current record`, async ({
+    page,
+    context,
+  }) => {
+    await page.clock.setFixedTime(Date.now());
+    const state = control({
+      put: () => {
+        throw Error("connection closed");
+      },
+    });
     await start(page, context, state);
     await openForm(page);
     await page.getByRole("button", { name: "确认填写" }).click();
-    await expect(page.getByRole("heading", { name: "暂时无法确认填写结果" })).toBeVisible();
-    await page.clock.fastForward(5_001);
-    state.put = () => ({ status: response.status, body: { code: response.code } });
-    await page.getByRole("button", { name: "重试本次填写" }).click();
-    await expect(page.getByRole("heading", { name: response.heading })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "未能确认填写结果" }),
+    ).toBeVisible();
     const gate = deferred();
     state.read = async () => {
       await gate.promise;
-      return { status: 429, body: { code: "rate_limited" }, headers: { "Retry-After": "60" } };
+      return {
+        status: response.status,
+        body: { code: response.code },
+        headers: { "Retry-After": "60" },
+      };
     };
-    const action = page.getByRole("button", { name: "查看当前政治面貌", exact: true });
+    const action = page.getByRole("button", {
+      name: "刷新",
+      exact: true,
+    });
     await action.click();
-    await expect(page.locator(".current-panel").getByRole("heading", { name: "正在读取当前政治面貌" })).toBeVisible();
-    await expect(action).toBeDisabled();
+    await expect(
+      page.getByRole("heading", { name: "正在读取当前政治面貌" }),
+    ).toBeVisible();
+    await expect(action).toHaveCount(0);
     gate.resolve();
-    await expect(page.locator(".current-panel").getByRole("heading", { name: "暂时无法读取当前政治面貌" })).toBeVisible();
-    await expect(action).toBeDisabled();
-    await page.clock.fastForward(59_000);
-    await expect(action).toBeDisabled();
+    await expect(
+      page.getByRole("heading", { name: "暂时无法读取当前政治面貌" }),
+    ).toBeVisible();
+    const retry = page.getByRole("button", { name: /重新读取/ });
+    await expect(retry).toBeDisabled();
+    await advanceClock(page, 59_000);
+    await expect(retry).toBeDisabled();
     expect(state.reads).toBe(2);
     state.read = () => ({ body: { code: "ok", affiliation: record } });
-    await page.clock.fastForward(2_000);
-    await expect(action).toBeEnabled();
-    await action.click();
-    await expect(page.locator(".current-panel")).toContainText("民革会员");
-    await expect(page.locator(".current-panel")).toContainText("原结果仍未确认");
-    await expect(page.getByRole("heading", { name: response.heading })).toBeVisible();
+    await advanceClock(page, 2_000);
+    await expect(retry).toBeEnabled();
+    await retry.click();
+    await expect(page.locator(".record-panel")).toContainText("民革会员");
+    await expect(page.locator(".current-panel")).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "未能确认填写结果" }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "政治面貌已填写" }),
+    ).toHaveCount(0);
+    await expect(page.locator("main")).not.toContainText(
+      /原填写|原结果|另行读取/,
+    );
+    if (response.status === 429) await captureState(page, "ordinary-record");
     expect(state.reads).toBe(3);
-    expect(state.puts).toHaveLength(2);
-    expect(state.puts[1]).toEqual(state.puts[0]);
+    expect(state.puts).toHaveLength(1);
   });
 }
 
 for (const marker of ["present", "denied"] as const) {
-  test(`independent read with ${marker} marker keeps its loading and cooldown disabled`, async ({ page, context }) => {
-    await page.clock.install();
-    await page.addInitScript(({ marker, id }) => {
-      if (marker === "present") {
-        sessionStorage.setItem("halo:affiliation", JSON.stringify({ version: 1, session: id }));
-      } else {
-        const original = Storage.prototype.getItem;
-        Storage.prototype.getItem = function (key: string) {
-          if (key === "halo:affiliation") throw new DOMException("Unavailable", "SecurityError");
-          return original.call(this, key);
-        };
-      }
-    }, { marker, id });
+  test(`independent read with ${marker} marker keeps its loading and cooldown disabled`, async ({
+    page,
+    context,
+  }) => {
+    await page.clock.setFixedTime(Date.now());
+    await page.addInitScript(
+      ({ marker, id }) => {
+        if (marker === "present") {
+          sessionStorage.setItem(
+            "halo:affiliation",
+            JSON.stringify({ version: 1, session: id }),
+          );
+        } else {
+          const original = Storage.prototype.getItem;
+          Storage.prototype.getItem = function (key: string) {
+            if (key === "halo:affiliation")
+              throw new DOMException("Unavailable", "SecurityError");
+            return original.call(this, key);
+          };
+        }
+      },
+      { marker, id },
+    );
     const gate = deferred();
-    const state = control({ read: async () => {
-      await gate.promise;
-      return { status: 429, body: { code: "rate_limited" }, headers: { "Retry-After": "60" } };
-    } });
+    const state = control({
+      read: async () => {
+        await gate.promise;
+        return {
+          status: 429,
+          body: { code: "rate_limited" },
+          headers: { "Retry-After": "60" },
+        };
+      },
+    });
     await start(page, context, state);
-    const action = page.getByRole("button", { name: "查看当前政治面貌", exact: true });
-    await action.click();
-    await expect(action).toBeDisabled();
-    await expect(page.locator(".current-panel")).toContainText("正在读取当前政治面貌");
+    await expect(
+      page.getByRole("heading", { name: "正在读取当前政治面貌" }),
+    ).toBeVisible();
     gate.resolve();
-    await expect(page.locator(".current-panel")).toContainText("暂时无法读取当前政治面貌");
-    await page.clock.fastForward(59_000);
+    await expect(
+      page.getByRole("heading", { name: "暂时无法读取当前政治面貌" }),
+    ).toBeVisible();
+    const action = page.getByRole("button", { name: /重新读取/ });
+    await advanceClock(page, 59_000);
     await expect(action).toBeDisabled();
     expect(state.reads).toBe(1);
     state.read = () => ({ body: { code: "ok", affiliation: record } });
-    await page.clock.fastForward(2_000);
+    await advanceClock(page, 2_000);
     await action.click();
-    await expect(page.locator(".current-panel")).toContainText("民革会员");
+    await expect(page.locator(".record-panel")).toContainText("民革会员");
     expect(state.reads).toBe(2);
     expect(state.puts).toHaveLength(0);
   });
 }
 
 for (const kind of ["present", "corrupt"] as const) {
-  test(`a ${kind} marker with missing original input never opens a fresh form`, async ({
+  test(`a retired ${kind} marker cannot lock current-state reads or a new form`, async ({
     page,
     context,
   }) => {
@@ -776,25 +898,72 @@ for (const kind of ["present", "corrupt"] as const) {
     );
     await page.goto(origin + "/account/affiliation");
     await expect(
-      page.getByRole("heading", { name: "暂时无法确认填写结果" }),
+      page.getByRole("heading", { name: "尚未填写政治面貌" }),
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: "重试本次填写" }),
     ).toHaveCount(0);
     await expect(page.locator('input[name="affiliation"]')).toHaveCount(0);
-    expect(state.reads).toBe(0);
-
-    state.read = () => ({
-      status: 200,
-      body: { code: "ok", affiliation: record },
-    });
-    await page.getByRole("button", { name: "查看当前政治面貌" }).click();
-    await expect(page.locator(".current-panel")).toContainText("民革会员");
+    expect(state.reads).toBe(1);
+    expect(
+      await page.evaluate(() => sessionStorage.getItem("halo:affiliation")),
+    ).toBeNull();
+    await openForm(page);
+    await page.getByRole("button", { name: "确认填写" }).click();
     await expect(
-      page.getByRole("heading", { name: "暂时无法确认填写结果" }),
+      page.getByRole("heading", { name: "政治面貌已填写" }),
     ).toBeVisible();
+    expect(state.puts).toHaveLength(1);
   });
 }
+
+test("unavailable legacy marker storage does not gate a first write or change router state", async ({
+  page,
+  context,
+}) => {
+  await page.addInitScript(() => {
+    history.replaceState(
+      {
+        ...history.state,
+        keep: { route: "unchanged" },
+        "halo:affiliation": "broken",
+      },
+      "",
+    );
+    const get = Storage.prototype.getItem;
+    const set = Storage.prototype.setItem;
+    const remove = Storage.prototype.removeItem;
+    Storage.prototype.getItem = function (key) {
+      if (key === "halo:affiliation")
+        throw new DOMException("Unavailable", "SecurityError");
+      return get.call(this, key);
+    };
+    Storage.prototype.setItem = function (key, value) {
+      if (key === "halo:affiliation")
+        throw new DOMException("Unavailable", "SecurityError");
+      set.call(this, key, value);
+    };
+    Storage.prototype.removeItem = function (key) {
+      if (key === "halo:affiliation")
+        throw new DOMException("Unavailable", "SecurityError");
+      remove.call(this, key);
+    };
+  });
+  const state = control();
+  await start(page, context, state);
+  await openForm(page);
+  await page.getByRole("button", { name: "确认填写" }).click();
+  await expect(
+    page.getByRole("heading", { name: "政治面貌已填写" }),
+  ).toBeVisible();
+  expect(state.puts).toHaveLength(1);
+  expect(await page.evaluate(() => history.state.keep)).toEqual({
+    route: "unchanged",
+  });
+  expect(
+    await page.evaluate(() => Object.hasOwn(history.state, "halo:affiliation")),
+  ).toBe(false);
+});
 
 test("a failed later current read cannot downgrade a known success", async ({
   page,
@@ -821,7 +990,7 @@ test("a failed later current read cannot downgrade a known success", async ({
     page.getByRole("heading", { name: "政治面貌已填写" }),
   ).toBeVisible();
   await expect(page.locator(".current-panel")).toContainText(
-    "已确认的填写结果仍然有效",
+    "填写已完成。你可以稍后再查看当前记录。",
   );
 });
 
@@ -873,7 +1042,7 @@ test("a late initial read cannot cross a pagehide or a parallel account selectio
   expect(state.readSessions.at(-1)).toBe(other);
 });
 
-test("a late write and a missing tab marker cannot reopen a submitted history entry", async ({
+test("a late hidden write is discarded and a later trusted state read remains usable", async ({
   page,
   context,
 }) => {
@@ -903,20 +1072,16 @@ test("a late write and a missing tab marker cannot reopen a submitted history en
   ).toHaveCount(0);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认填写结果" }),
+    page.getByRole("heading", { name: "尚未填写政治面貌" }),
   ).toBeVisible();
   await expect(page.locator('input[name="affiliation"]')).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "重试本次填写" }),
-  ).toHaveCount(0);
-  page.once("dialog", async (dialog) => {
-    expect(dialog.type()).toBe("beforeunload");
-    await dialog.accept();
-  });
+  await expect(page.getByRole("button", { name: "重试本次填写" })).toHaveCount(
+    0,
+  );
   await page.reload();
-  await expect(page.getByRole("heading", { name: "暂时无法确认填写结果" })).toBeVisible();
-  await page.getByRole("button", { name: "查看当前政治面貌" }).click();
-  await expect(page.locator(".current-panel")).toContainText("未填写");
+  await expect(
+    page.getByRole("heading", { name: "尚未填写政治面貌" }),
+  ).toBeVisible();
   await expect(page.locator('input[name="affiliation"]')).toHaveCount(0);
   expect(state.puts).toHaveLength(1);
 });
@@ -942,9 +1107,14 @@ test("form layout, keyboard and focus remain usable at all target widths and sch
       expect(
         await page.evaluate(() => document.documentElement.scrollWidth),
       ).toBeLessThanOrEqual(width + 1);
-      const box = await page.locator(".affiliation-option").first().boundingBox();
+      const box = await page
+        .locator(".affiliation-option")
+        .first()
+        .boundingBox();
       expect(box?.height).toBeGreaterThanOrEqual(44);
-      await page.getByRole("heading", { name: "填写政治面貌", exact: true }).focus();
+      await page
+        .getByRole("heading", { name: "填写政治面貌", exact: true })
+        .focus();
       await page.screenshot({
         path: `test-results/affiliation-form-${width}-${scheme}.png`,
         fullPage: true,
@@ -969,5 +1139,8 @@ test("form layout, keyboard and focus remain usable at all target widths and sch
     page.getByRole("heading", { name: "确认填写政治面貌" }),
   ).toBeVisible();
   await expect(page.locator(".confirm-choice")).toHaveText("05 民盟盟员");
-  await page.screenshot({ path: "test-results/affiliation-confirm-mobile.png", fullPage: true });
+  await page.screenshot({
+    path: "test-results/affiliation-confirm-mobile.png",
+    fullPage: true,
+  });
 });

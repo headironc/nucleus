@@ -588,10 +588,9 @@ impl Input {
             Self::Initialize(input) => app.initialize(operation, input, dry_run).await?.is_some(),
             Self::Appoint(input) => app.appoint(operation, input, dry_run).await?.is_some(),
             Self::Correct(input) => app.correct(operation, input, dry_run).await?.is_some(),
-            Self::CorrectAffiliation(input) => app
-                .correct_affiliation(operation, input, dry_run)
-                .await?
-                .is_some(),
+            Self::CorrectAffiliation(input) => {
+                app.correct_affiliation(input, dry_run).await?.is_some()
+            }
         };
         Ok(if completed { "completed" } else { "dry_run" })
     }
