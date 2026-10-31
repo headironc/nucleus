@@ -13,6 +13,7 @@ use crate::{application::*, database::*, supplier::*};
 
 mod admission;
 mod allocation;
+mod badge;
 mod cancellation;
 mod mobile;
 mod termination;
@@ -243,9 +244,10 @@ fn browser_c1_preserves_original_send() {
             let name = database(&server).await;
             let origin = format!("https://127.0.0.1:{port}");
             assert_ne!(media_origin, origin, "the configured media origin differs from the site origin");
+            let (badge_settings,badge_directory)=badge::settings();
             let application = Application::start(
                 connections(&server, &name, "clerk"), keys(0),
-                services_with_avatar(8, avatar_settings_at(&media_origin, Duration::from_secs(60))).expect("settings"),
+                services_with_avatar(8, avatar_settings_at(&media_origin, Duration::from_secs(60))).expect("settings").with_application(badge_settings),
                 process::Settings::new(Duration::from_secs(5)).expect("stop"),
                 supplier.client(), message_at(sms.address(), sms.authority()),
             ).await.expect("isolated application");
@@ -276,6 +278,9 @@ fn browser_c1_preserves_original_send() {
             let allocation_observer = connections(&server, &name, "clerk").recover().await.expect("first allocation observer");
             let mut allocation_tick = tokio::time::interval(Duration::from_millis(100));
             let mut allocation = allocation::Observer::default();
+            let badge_observer = connections(&server, &name, "clerk").recover().await.expect("badge observer");
+            let mut badge_tick = tokio::time::interval(Duration::from_millis(100));
+            let mut badge = badge::Observer::new(badge_directory);
             let termination_observer = connections(&server, &name, "clerk").recover().await.expect("termination read observer");
             let mut termination_tick = tokio::time::interval(Duration::from_millis(100));
             let mut termination = termination::Observer::default();
@@ -311,6 +316,11 @@ fn browser_c1_preserves_original_send() {
                     }
                     _ = allocation_tick.tick(), if admission.complete() && !allocation.complete() => {
                         allocation.observe(allocation_observer.client(), material.path()).await;
+                    }
+                    _ = badge_tick.tick(), if allocation.complete() && !badge.complete() => {
+                        if badge.observe(badge_observer.client(), material.path()).await {
+                            logs.record("badge_observation",badge.evidence());
+                        }
                     }
                     _ = mobile_tick.tick(), if !mobile_change.complete() => {
                         mobile_change.observe(mobile_observer.client(), material.path()).await;
@@ -708,6 +718,8 @@ fn browser_c1_preserves_original_send() {
             admission_observer.terminate().await.expect("end admission observer");
             assert!(allocation.complete(), "first allocation, original replay and current number read have independent durable evidence");
             allocation_observer.terminate().await.expect("end allocation observer");
+            assert!(badge.complete(), "all sixteen badge submission, recovery, capacity and authorization observations completed");
+            badge_observer.terminate().await.expect("end badge observer");
             assert!(termination.complete(), "original termination and new-Session replay have independent durable evidence");
             termination_observer.terminate().await.expect("end termination observer");
             assert!(mobile_change.complete(), "mobile completion and original-result reads have independent durable evidence");
@@ -719,7 +731,7 @@ fn browser_c1_preserves_original_send() {
             for mobile in ["13900000000", "13900000001", "13900000002", "13900000003", "13900000004",
                 "13900000005", "13900000006", "13900000007", "13900000008",
                 "13900000009", "13900000010", "13900000011", "13900000012", "13900000013", "13900000014",
-                "13900000015", "13900000016", "13900000017"] {
+                "13900000015", "13900000016", "13900000017", "13900000018"] {
                 let expected = if mobile == "13900000000" { 4 }
                     else if matches!(mobile, "13900000013" | "13900000016") { 2 }
                     else { 1 };
@@ -727,8 +739,8 @@ fn browser_c1_preserves_original_send() {
             }
             assert_eq!(counts.get("13900000040"), Some(&3), "registration, second login and original-mobile verification each send once");
             assert_eq!(counts.get("13900000041"), Some(&2), "new-mobile verification and later login each send once");
-            assert_eq!(counts.len(), 20, "only explicit identity flows, re-registration and the separate number and admission beneficiary setups send SMS");
-            assert!(supplier.calls.load(Ordering::SeqCst) >= 28);
+            assert_eq!(counts.len(), 21, "only explicit identity flows, re-registration, number, admission and badge observer setups send SMS");
+            assert!(supplier.calls.load(Ordering::SeqCst) >= 29);
             let login: serde_json::Value = serde_json::from_slice(
                 &std::fs::read(material.path().join("login.json")).expect("browser login evidence"),
             ).expect("non-secret login evidence");
@@ -897,7 +909,7 @@ fn browser_c1_preserves_original_send() {
                 serde_json::json!({ "outcome": "completed" }),
             );
             logs.finish().expect("browser evidence writes");
-            println!("Identity evidence: 28 explicit sends for 20 mobiles, including separate admission, number recovery and mobile-change accounts; original login and registration retain their Sessions and expiry; registration retains one Account and Person with later explicit Workforce admission and rejoining; current logout preserves its original singleton; all logout freezes two sessions and separately accepts one; pre-classification navigation and classification-save failure both recover after login; both later logins survive original-result reads; normal and lost-response cancellations retain independent Account, Person, Holder, Grant, Session, R2 and avatar evidence, while a same-number re-registration is distinct; delayed avatar expiry and five current-number windows preserve independently observed business facts, Cookies and expiry; mobile replacement revokes both originals and removes their Handoffs, while the later new-number login survives reading the original completion");
+            println!("Identity evidence: 29 explicit sends for 21 mobiles, including separate admission, number recovery, badge observer and mobile-change accounts; original login and registration retain their Sessions and expiry; registration retains one Account and Person with later explicit Workforce admission and rejoining; current logout preserves its original singleton; all logout freezes two sessions and separately accepts one; pre-classification navigation and classification-save failure both recover after login; both later logins survive original-result reads; normal and lost-response cancellations retain independent Account, Person, Holder, Grant, Session, R2 and avatar evidence, while a same-number re-registration is distinct; delayed avatar expiry and five current-number windows preserve independently observed business facts, Cookies and expiry; mobile replacement revokes both originals and removes their Handoffs, while the later new-number login survives reading the original completion");
         }).await.expect("bounded website acceptance");
     });
 }
