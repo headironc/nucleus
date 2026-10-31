@@ -157,7 +157,7 @@ test("account entry, four states, keyboard, responsive long name and read-only m
   });
   await page.route("https://fixture.invalid/**", (route) => route.abort());
   await page.goto(origin + "/account");
-  await page.getByRole("link", { name: "查看员工服务" }).click();
+  await page.getByRole("link", { name: "员工服务" }).click();
   await expect(
     page.getByRole("heading", { name: "员工服务已开通" }),
   ).toBeVisible();
@@ -225,7 +225,7 @@ test("account entry, four states, keyboard, responsive long name and read-only m
   expect(stored).not.toContain("terminated");
   expect(stored).not.toContain("92605");
   await page.getByRole("link", { name: "返回个人账户" }).click();
-  await expect(page.getByRole("heading", { name: "当前已登录" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "个人账户" })).toBeVisible();
   await page.goBack();
   await expect(
     page.getByRole("heading", { name: "员工服务已结束" }),

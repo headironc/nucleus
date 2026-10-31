@@ -75,7 +75,7 @@ for (const sent of [false, true]) {
         exact: true,
       })
       .click();
-    const title = sent ? "请稍后查看登录结果" : "请稍后继续验证";
+    const title = sent ? "暂时无法查看登录结果" : "暂时无法登录";
     await expect(
       page.getByRole("heading", { name: title, exact: true }),
     ).toBeVisible();
@@ -100,7 +100,7 @@ for (const sent of [false, true]) {
     );
     await page.clock.fastForward((sent ? 30 : 5) * 60_000);
     await expect(
-      page.getByRole("heading", { name: "登录状态待确认", exact: true }),
+      page.getByRole("heading", { name: "暂时无法确认此前的登录结果", exact: true }),
     ).toBeVisible();
     expect(writes).toHaveLength(2);
     expect(
@@ -154,7 +154,7 @@ test("a damaged receipt retries refused cleanup before opening the saved new cod
   });
   await page.goto("/authentication/login");
   await expect(
-    page.getByRole("heading", { name: "暂时无法继续登录", exact: true }),
+    page.getByRole("heading", { name: "登录信息暂时无法使用", exact: true }),
   ).toBeVisible();
   expect(await page.evaluate((key) => sessionStorage.getItem(key), key)).toBe(
     '{"version":1',
@@ -168,7 +168,7 @@ test("a damaged receipt retries refused cleanup before opening the saved new cod
     .toBeNull();
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "请输入验证码", exact: true }),
+    page.getByRole("heading", { name: "手机号登录", exact: true }),
   ).toBeVisible();
   expect(await page.evaluate(() => sessionStorage.getItem("unrelated"))).toBe(
     "preserve",
@@ -274,10 +274,10 @@ for (const kind of ["login", "registration", "editing"] as const) {
     await page.goto("/authentication/login");
     const heading =
       kind === "login"
-        ? "登录结果待确认"
+        ? "暂时无法确认是否已登录"
         : kind === "registration"
-          ? "填写注册资料"
-          : "请输入验证码";
+          ? "创建个人账户"
+          : "手机号登录";
     await expect(
       page.getByRole("heading", { name: heading, exact: true }),
     ).toBeVisible();
@@ -383,7 +383,7 @@ for (const boundary of ["expiry", "clock rollback", "damage"] as const) {
       });
       await page.goto("/authentication/login");
       await expect(
-        page.getByRole("heading", { name: "请输入验证码" }),
+        page.getByRole("heading", { name: "手机号登录" }),
       ).toBeVisible();
       await page.getByRole("link", { name: "司籍处首页" }).click();
       await expect
@@ -450,7 +450,7 @@ for (const boundary of ["expiry", "clock rollback", "damage"] as const) {
       await page.goto("/authentication/codes");
       await expect(
         page.getByRole("heading", {
-          name: "暂时无法查看本次发送结果",
+          name: "暂时无法查看发送结果",
           exact: true,
         }),
       ).toBeVisible();
@@ -466,7 +466,7 @@ for (const boundary of ["expiry", "clock rollback", "damage"] as const) {
       await page.reload();
       await expect(
         page.getByRole("heading", {
-          name: "暂时无法查看本次发送结果",
+          name: "暂时无法查看发送结果",
           exact: true,
         }),
       ).toBeVisible();
@@ -661,7 +661,7 @@ test("a determined R1 verification refusal permits explicit new C1 instead of an
   await page.goto("/authentication/login");
   await page.getByRole("link", { name: "重新获取验证码", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "申请短信验证码", exact: true }),
+    page.getByRole("heading", { name: "获取短信验证码", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "完成安全验证（测试替身）" }),

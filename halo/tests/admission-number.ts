@@ -245,7 +245,7 @@ export async function admissionAndFirstNumber(
     });
     const cookies = await cookieDigests(page);
 
-    await page.getByRole("link", { name: "开通员工服务", exact: true }).click();
+    await page.getByRole("link", { name: "为同事开通员工服务", exact: true }).click();
     const candidateRead = responseFor(
       page,
       "/api/v1/workforce/grants/candidates",

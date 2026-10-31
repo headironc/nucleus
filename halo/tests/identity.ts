@@ -87,11 +87,11 @@ export async function identityReads(
   expect(response.headers()["cache-control"]).toBe("no-store");
   expect(response.headers()["set-cookie"]).toBeUndefined();
   const summary = page.locator(".current-summary");
-  await expect(summary.locator("dt")).toHaveText(["姓名", "身份证号", "微信"]);
+  await expect(summary.locator("dt")).toHaveText(["姓名", "居民身份证号", "微信关联"]);
   await expect(summary.locator("dd")).toHaveText([
     name,
     `尾号 ${suffix}`,
-    "未绑定",
+    "未关联",
   ]);
   const avatar = page.locator(".avatar-image");
   await expect(page.locator('.avatar-slot[data-state="ready"]')).toBeVisible();
@@ -127,7 +127,7 @@ export async function identityReads(
   await expect(summary.locator("dd")).toHaveText([
     name,
     `尾号 ${suffix}`,
-    "未绑定",
+    "未关联",
   ]);
   await expect(page.locator('.avatar-slot[data-state="ready"]')).toBeVisible();
   expect((await avatar.getAttribute("src")) === body.account.avatar.href).toBe(

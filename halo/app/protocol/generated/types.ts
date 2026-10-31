@@ -4446,7 +4446,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Decision and audit committed atomically; approval does not generate a PDF */
+            /** @description Decision and audit committed atomically; approval does not generate a badge artifact */
             200: {
                 headers: {
                     /** @description no-store */
