@@ -84,20 +84,17 @@ function identityCopy(state: CurrentState): [string, string] {
     case "expired":
       return ["请重新登录", "当前登录已失效。"];
     case "storage":
-      return ["暂时无法检查登录状态", "浏览器无法读取登录信息，请重试。"];
+      return ["登录信息暂时无法使用", "请重新检查，或使用手机号登录。"];
     case "reload":
-      return ["请重新加载页面", "暂时无法检查登录状态，请重新加载页面。"];
+      return ["请重新加载", "页面暂时无法继续，请重新加载后再试。"];
     case "denied":
-      return [
-        "无法查看这项内容",
-        "本次读取未能完成，你可以返回个人账户或首页。",
-      ];
+      return ["目前无法查看员工服务", "可以返回个人账户或首页。"];
     case "limited":
       return ["请稍后再检查", "暂时无法检查登录状态，请稍后重试。"];
     case "unavailable":
       return ["暂时无法检查登录状态", "请稍后重试，或先浏览首页。"];
     default:
-      return ["正在检查登录状态", "请稍候。"];
+      return ["正在检查登录状态…", "请稍候。"];
   }
 }
 
@@ -114,13 +111,13 @@ function NumberCard({ controller, now }: { controller: Numbers; now: number }) {
       : 0;
   const copy =
     state.kind === "loading"
-      ? "正在读取工号，请稍候。"
+      ? "正在加载工号…"
       : state.kind === "limited"
-        ? "暂时无法处理，请稍后再试。"
+        ? "暂时无法加载工号，请稍后再试。"
         : state.kind === "unavailable"
-          ? "暂时无法读取工号，请稍后重试。"
+          ? "工号暂时无法加载，请重试。"
           : state.kind === "ready" && state.number === null
-            ? "当前没有工号。"
+            ? "当前没有可用工号"
             : undefined;
   return (
     <section
@@ -140,7 +137,7 @@ function NumberCard({ controller, now }: { controller: Numbers; now: number }) {
       {copy && <p role="status">{copy}</p>}
       {state.kind === "ready" && state.number === null && (
         <a className="primary" href="/workforce/number">
-          首次领取工号
+          申请工号
         </a>
       )}
       {state.kind !== "loading" && (
@@ -194,10 +191,13 @@ function Service({
   const seconds = Math.max(0, Math.ceil((retryAt - now) / 1000));
   const status = state.kind === "ready" ? state.status : undefined;
   const descriptions = {
-    absent: ["员工服务未开通", "你尚未开通员工服务。个人账户仍可使用。"],
-    active: ["员工服务已开通", "你可以在这里查看当前员工服务状态。"],
-    suspended: ["员工服务已暂停", "员工服务暂停期间，个人账户仍可使用。"],
-    terminated: ["员工服务已结束", "个人账户仍可使用。"],
+    absent: ["尚未加入员工服务", "个人账户可继续使用。"],
+    active: ["已加入员工服务", ""],
+    suspended: [
+      "员工服务已暂停",
+      "暂停期间不能申请工号或提交新的工牌申请，个人账户可继续使用。",
+    ],
+    terminated: ["员工服务已结束", "个人账户可继续使用。"],
   } as const;
   const [title, copy] =
     account.kind !== "ready"
@@ -205,10 +205,10 @@ function Service({
       : status
         ? descriptions[status]
         : state.kind === "limited"
-          ? ["暂时无法处理，请稍后再试", "请等待后重新加载员工服务状态。"]
+          ? ["暂时无法加载服务状态", "请稍后再试。"]
           : state.kind === "unavailable"
-            ? ["暂时无法加载员工服务", "请稍后重试。"]
-            : ["正在读取员工服务状态", "请稍候。"];
+            ? ["员工服务状态暂时无法加载", "请重试。"]
+            : ["正在加载员工服务状态…", "请稍候。"];
   return (
     <div className="authentication-layout compact">
       <section
@@ -223,9 +223,11 @@ function Service({
           {account.kind === "ready" && (
             <p className="workforce-name">{account.account.name}</p>
           )}
-          <p className="result-copy" role="status">
-            {copy}
-          </p>
+          {copy && (
+            <p className="result-copy" role="status">
+              {copy}
+            </p>
+          )}
           {account.kind === "ready" && status === "active" && (
             <NumberCard controller={numbers} now={now} />
           )}
@@ -252,7 +254,9 @@ function Service({
                   disabled={seconds > 0}
                   onClick={() => void controller.refresh()}
                 >
-                  {seconds > 0 ? `${seconds} 秒后可重新加载` : "刷新服务状态"}
+                  {seconds > 0
+                    ? `${seconds} 秒后可刷新服务状态`
+                    : "刷新服务状态"}
                 </Button>
               )}
             {account.kind !== "ready" &&
@@ -267,7 +271,7 @@ function Service({
               )}
             {account.kind === "reload" && (
               <Button className="primary" onClick={() => location.reload()}>
-                重新加载页面
+                重新加载
               </Button>
             )}
             {["anonymous", "expired", "storage"].includes(account.kind) && (

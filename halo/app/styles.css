@@ -347,6 +347,7 @@
   line-height: 1.2;
 }
 .number-refresh {
+  display: block;
   margin-top: 20px;
   min-height: 44px;
   text-decoration: underline;
