@@ -52,6 +52,22 @@ macro_rules! identifier {
 identifier!(Id, Id);
 identifier!(PhotoId, PhotoId);
 identifier!(ResourceId, ResourceId);
+identifier!(BadgeId, BadgeId);
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[schema(as = application::Badge)]
+pub struct Badge {
+    pub(super) id: BadgeId,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(as = application::RenderError)]
+pub enum RenderError {
+    MissingGlyph,
+    TextOverflow,
+    DependencyUnavailable,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -68,6 +84,7 @@ pub enum Kind {
 pub enum Status {
     Submitted,
     Approved,
+    Ready,
     Rejected,
     Cancelled,
 }
@@ -89,6 +106,14 @@ pub enum Decision {
     Approved {
         #[serde(flatten)]
         approval: Approval,
+        #[serde(rename = "renderError", skip_serializing_if = "Option::is_none")]
+        #[schema(value_type = RenderError, required = false, nullable = false)]
+        render_error: Option<RenderError>,
+    },
+    Ready {
+        #[serde(flatten)]
+        approval: Approval,
+        badge: Badge,
     },
     Rejected {
         #[serde(rename = "reviewerId")]
@@ -104,6 +129,9 @@ pub enum Decision {
         #[serde(flatten)]
         #[schema(schema_with = cancelled_approval)]
         approval: Option<Approval>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        #[schema(value_type = Badge, required = false, nullable = false)]
+        badge: Option<Badge>,
     },
 }
 
@@ -164,6 +192,7 @@ pub enum ReviewInput {
 pub enum CancellableStatus {
     Submitted,
     Approved,
+    Ready,
 }
 
 #[derive(Debug, Deserialize, ToSchema)]
@@ -266,6 +295,7 @@ mod cancellation_tests {
         for value in [
             r#"{"mode":"self","expectedStatus":"submitted"}"#,
             r#"{"mode":"self","expectedStatus":"approved"}"#,
+            r#"{"mode":"self","expectedStatus":"ready"}"#,
             r#"{"mode":"manager","expectedStatus":"submitted","reason":" Correct the application "}"#,
             r#"{"mode":"manager","expectedStatus":"approved","reason":"Duplicate"}"#,
         ] {
@@ -279,7 +309,7 @@ mod cancellation_tests {
             r#"{"mode":"self"}"#,
             r#"{"mode":"self","expectedStatus":null}"#,
             r#"{"mode":"self","expectedStatus":"rejected"}"#,
-            r#"{"mode":"self","expectedStatus":"ready"}"#,
+            r#"{"mode":"self","expectedStatus":"issued"}"#,
             r#"{"mode":"self","expectedStatus":"cancelled"}"#,
             r#"{"mode":"self","expectedStatus":"submitted","reason":"Not accepted"}"#,
             r#"{"mode":"self_service","expectedStatus":"submitted"}"#,
@@ -324,20 +354,27 @@ mod cancellation_tests {
             "reviewerName":"林*", "reviewedAt":"2026-10-31T01:15:00Z"
         });
         assert_eq!(
-            serde_json::to_value(Decision::Cancelled { approval: None })
-                .expect("unreviewed cancellation"),
+            serde_json::to_value(Decision::Cancelled {
+                approval: None,
+                badge: None
+            })
+            .expect("unreviewed cancellation"),
             json!({"status":"cancelled"})
         );
         assert_eq!(
             serde_json::to_value(Decision::Cancelled {
-                approval: Some(approval.clone())
+                approval: Some(approval.clone()),
+                badge: None
             })
             .expect("approved cancellation"),
             fields
         );
         assert_eq!(
-            serde_json::to_value(Decision::Approved { approval })
-                .expect("unchanged approval shape"),
+            serde_json::to_value(Decision::Approved {
+                approval,
+                render_error: None
+            })
+            .expect("unchanged approval shape"),
             json!({
                 "status":"approved", "reviewerId":reviewer_id,
                 "reviewerName":"林*", "reviewedAt":"2026-10-31T01:15:00Z"

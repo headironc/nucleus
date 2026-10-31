@@ -127,6 +127,7 @@ mod tests {
                 serde_json::to_string(&domain::workforce::application::fixture_template())
                     .expect("fixture template"),
             )
+            .env("NUCLEUS_WORKFORCE__APPLICATION__PIXELS_PER_INCH", "300")
             .env("NUCLEUS_WECHAT__WEBSITE__APP_ID", "website-fixture")
             .env(
                 "NUCLEUS_DATABASE__AUTHORITY",

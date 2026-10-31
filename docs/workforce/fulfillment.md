@@ -1,18 +1,18 @@
 # 工牌成品与发放
 
-状态：简化后的目标设计，尚未实施。批准先保存，随后按固定申请快照生成成品。失败或中断由有权人员重试，不建立 Render 记录、执行代次、后台队列或自动接管。申请状态由[申请专题](applications.md#阶段审批与结束)拥有。
+批准先保存，随后由管理者明确按固定申请快照生成成品。失败或中断由有权人员重试，不建立 Render 记录、执行代次、后台队列或自动接管。申请状态由[申请专题](applications.md#阶段审批与结束)拥有。发放仍属后续切片。
 
 ## 成品格式
 
 正式成品采用单面静态无损 WebP。下载响应使用 `image/webp`，文件名以 `.webp` 结尾。牌面内容、排版与透明度遵守[固定媒体规则](media.md)。
 
-生产物理尺寸和输出像素尺寸尚待确认。正式模板、字体的服务器使用和打印许可、实际打印样本分别验收。隔离测试模板及其输出参数不代表生产参数。
+部署显式配置正整数 PPI，尺寸换算与预算见[固定工牌输入](../settings.md#33-固定工牌输入)。正式模板、字体的服务器使用和打印许可、实际打印样本分别验收。隔离测试模板及其输出参数不代表生产参数。
 
 ## 渲染尝试
 
 采用一个固定模板、确定的背景与字体，使用申请快照中的姓名、工号、科室、职称、照片和布局。领取地点只在办理页面展示，不打印。新办、增办、换证均从本次快照生成，不复用来源 Layout。
 
-批准成功后可在当前请求继续尝试生成，也可由管理页面明确触发。两者都先检查申请仍为 approved、当前办理人有审批权及对象范围、申请人资格有效。生成不持有数据库业务事务。
+管理页面明确触发生成。先检查申请仍为 approved、当前办理人有审批权及对象范围、申请人资格有效。生成不持有数据库业务事务。处理许可由实际阻塞任务持有，调用方停止等待后仍覆盖该任务的真实生命周期。
 
 完整输出先写入服务端唯一文件名。随后短事务再次检查权限、资格与 approved 状态，以条件更新将申请改为 ready，插入唯一成品并写审计。任何一步失败则事务整体回滚。取消已先保存时，不接纳晚到文件。
 
@@ -42,6 +42,7 @@
 | application_id | uuid        | 非空、唯一，引用 workforce.applications  |
 | generated_by   | uuid        | 非空，引用实际触发生成者的 Person ID     |
 | generated_at   | timestamptz | 非空，数据库记录时间                     |
+| size           | bigint      | 已接纳文件的准确长度，1 至 16777216 字节 |
 | issued_by      | uuid        | 引用实际发放者的 Person ID，未发放时为空 |
 | issued_at      | timestamptz | 与 issued_by 同时有值或为空              |
 
@@ -56,6 +57,12 @@ ready 对应未发放成品，issued 对应有发放字段的成品。cancelled 
 | POST /api/v1/workforce/badges/{id}/deliveries    | 登记已发放                       |
 
 renders 和 deliveries 是动作入口，不代表存在同名记录表。详情从申请读取状态及成品信息，不设按 Operation-Id 恢复的 GET。使用当前会话鉴权，不另签短期下载 URL。未收到响应时刷新；成品图片与错误响应不泄露凭据或他人信息。
+
+生成正文为 `{}`，拒绝未知字段，上限 8 KiB。成功为 `200 {code: "ok", application: {id, status: "ready", badge: {id}}}`。客户端随后刷新详情。状态竞争或申请人失效分别为 `409 state_changed`、`409 applicant_unavailable`；缺字或文字溢出为 `422 missing_glyph`、`422 text_overflow`；依赖故障或提交未知为 `503 dependency_unavailable`、`503 outcome_unknown`。正常来源、会话、关联头和限频规则继续适用。提交未知只刷新；刷新仍为 approved 且无成品时，管理者可明确再次生成，不要求证明旧尝试失败。
+
+完整申请在 ready 时必含 `badge: {id}`，取消曾生成的申请保留该字段。只有 approved 可含 `renderError`，值限 `missing_glyph`、`text_overflow`、`dependency_unavailable`；成功或取消清空错误。其他状态不披露错误。
+
+每次 `GET /api/v1/workforce/badges/{id}.webp` 及 HEAD 都重新检查正常账户、活跃 Grant 及本人归属或当前管理权限和范围。不可披露目标统一为 `404 target_unavailable`。成功返回准确 `Content-Length`、`image/webp`、`Cache-Control: no-store` 和 `Content-Disposition: attachment; filename="badge-{id}.webp"`，不设置 cookie。HEAD 检查同一文件身份和长度，不读取正文。文件缺失或长度不符为 `503 dependency_unavailable`。读取不触发生成。
 
 ## 验收
 

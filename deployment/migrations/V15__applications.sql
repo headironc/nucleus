@@ -26,16 +26,18 @@ CREATE TABLE workforce.applications (
     id uuid PRIMARY KEY,
     person_id uuid NOT NULL REFERENCES identity.persons (id),
     kind text NOT NULL CHECK (kind IN ('issuance', 'duplication', 'replacement')),
-    status text NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted', 'approved', 'rejected', 'cancelled')),
+    status text NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted', 'approved', 'rejected', 'ready', 'cancelled')),
     submitted_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
     reviewer_id uuid REFERENCES identity.persons (id),
     reviewed_at timestamptz,
     rejection_reason text,
+    render_error text CHECK (render_error IN ('missing_glyph', 'text_overflow', 'dependency_unavailable')),
+    CHECK (status = 'approved' OR render_error IS NULL),
     CONSTRAINT applications_review_check CHECK (
         (status = 'submitted' AND reviewer_id IS NULL AND reviewed_at IS NULL AND rejection_reason IS NULL)
-        OR (status IN ('approved', 'rejected') AND reviewer_id IS NOT NULL
+        OR (status IN ('approved', 'ready', 'rejected') AND reviewer_id IS NOT NULL
             AND reviewed_at IS NOT NULL AND reviewed_at >= submitted_at
-            AND ((status = 'approved' AND rejection_reason IS NULL)
+            AND ((status IN ('approved', 'ready') AND rejection_reason IS NULL)
                 OR (status = 'rejected' AND rejection_reason IS NOT NULL
                     AND length(btrim(rejection_reason, U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000')) > 0)))
         OR (status = 'cancelled' AND rejection_reason IS NULL
@@ -95,6 +97,54 @@ CREATE INDEX applications_person_id_submitted_at_id_idx
 CREATE INDEX applications_status_submitted_at_id_idx
     ON workforce.applications (status, submitted_at DESC, id DESC);
 
+CREATE TABLE workforce.badges (
+    id uuid PRIMARY KEY,
+    application_id uuid NOT NULL UNIQUE REFERENCES workforce.applications (id),
+    generated_by uuid NOT NULL REFERENCES identity.persons (id),
+    generated_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
+    size bigint NOT NULL CHECK (size BETWEEN 1 AND 16777216)
+);
+
+CREATE FUNCTION workforce.admit_badge() RETURNS trigger
+LANGUAGE plpgsql SET search_path = '' AS $$
+DECLARE stage text;
+BEGIN
+    SELECT status INTO stage FROM workforce.applications WHERE id = NEW.application_id FOR SHARE;
+    IF stage IS DISTINCT FROM 'ready' THEN
+        RAISE EXCEPTION 'a new badge requires the ready transition'
+            USING ERRCODE = '23514', CONSTRAINT = 'badges_admission_check';
+    END IF;
+    RETURN NEW;
+END
+$$;
+CREATE TRIGGER badges_admission BEFORE INSERT ON workforce.badges
+    FOR EACH ROW EXECUTE FUNCTION workforce.admit_badge();
+
+-- Adoption spans two tables; validate their final state at the transaction boundary.
+CREATE FUNCTION workforce.check_badge_pair() RETURNS trigger
+LANGUAGE plpgsql SET search_path = '' AS $$
+DECLARE
+    application uuid;
+    stage text;
+    present boolean;
+BEGIN
+    IF TG_TABLE_NAME = 'badges' THEN application := NEW.application_id;
+    ELSE application := NEW.id;
+    END IF;
+    SELECT status INTO stage FROM workforce.applications WHERE id = application;
+    SELECT EXISTS (SELECT 1 FROM workforce.badges WHERE application_id = application) INTO present;
+    IF (stage = 'ready' AND NOT present) OR (present AND stage NOT IN ('ready', 'cancelled')) THEN
+        RAISE EXCEPTION 'application and adopted badge must agree'
+            USING ERRCODE = '23514', CONSTRAINT = 'applications_badge_check';
+    END IF;
+    RETURN NULL;
+END
+$$;
+CREATE CONSTRAINT TRIGGER applications_badge_pair AFTER INSERT OR UPDATE ON workforce.applications
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION workforce.check_badge_pair();
+CREATE CONSTRAINT TRIGGER badges_application_pair AFTER INSERT ON workforce.badges
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION workforce.check_badge_pair();
+
 CREATE SCHEMA audit;
 CREATE TABLE audit.events (
     id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -129,7 +179,12 @@ BEGIN
     IF OLD.status = 'submitted' AND NEW.status IN ('approved', 'rejected') THEN
         RETURN NEW;
     END IF;
-    IF OLD.status IN ('submitted', 'approved') AND NEW.status = 'cancelled'
+    IF OLD.status = 'approved' AND NEW.status IN ('approved', 'ready')
+        AND ROW(NEW.reviewer_id, NEW.reviewed_at, NEW.rejection_reason)
+            IS NOT DISTINCT FROM ROW(OLD.reviewer_id, OLD.reviewed_at, OLD.rejection_reason) THEN
+        RETURN NEW;
+    END IF;
+    IF OLD.status IN ('submitted', 'approved', 'ready') AND NEW.status = 'cancelled'
         AND ROW(NEW.reviewer_id, NEW.reviewed_at, NEW.rejection_reason)
             IS NOT DISTINCT FROM ROW(OLD.reviewer_id, OLD.reviewed_at, OLD.rejection_reason) THEN
         RETURN NEW;
@@ -155,4 +210,6 @@ CREATE TRIGGER photos_immutable BEFORE UPDATE OR DELETE ON workforce.photos
 CREATE TRIGGER resources_immutable BEFORE UPDATE OR DELETE ON workforce.resources
     FOR EACH ROW EXECUTE FUNCTION workforce.reject_application_mutation();
 CREATE TRIGGER audit_immutable BEFORE UPDATE OR DELETE ON audit.events
+    FOR EACH ROW EXECUTE FUNCTION workforce.reject_application_mutation();
+CREATE TRIGGER badges_immutable BEFORE UPDATE OR DELETE ON workforce.badges
     FOR EACH ROW EXECUTE FUNCTION workforce.reject_application_mutation();

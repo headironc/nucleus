@@ -48,7 +48,7 @@ fn fixed_badges_use_trusted_preview_and_private_resources_without_request_dedupl
             template["fontId"]=json!(Uuid::new_v4());
             template["layout"]["department"]=json!({"area":{"xUm":4000,"yUm":30000,"widthUm":120,"heightUm":20000},"fontSizeUm":100,"lineHeightUm":140,"wrap":true});
             let pickup="P".repeat(4094);
-            let settings=domain::workforce::application::Settings::new(avatar_storage(),serde_json::from_value(template).expect("template values"),"image/png",background.into_inner(),include_bytes!("../../domain/tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(),vec![pickup.clone()],domain::workforce::application::photo::Limits::new(1,1 << 30,2,2 << 30).expect("fixture capacity")).expect("legal CJK fixture");
+            let settings=domain::workforce::application::Settings::new(avatar_storage(),serde_json::from_value(template).expect("template values"),"image/png",background.into_inner(),include_bytes!("../../domain/tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(),vec![pickup.clone()],domain::workforce::application::photo::Limits::new(1,1 << 30,2,2 << 30).expect("fixture capacity"),domain::workforce::application::render::Resolution::try_from(300).expect("resolution")).expect("legal CJK fixture");
             let application=Application::start(connections(&server,&name,"clerk"),keys(0),services(8).expect("services").with_application(settings),process::Settings::new(Duration::from_secs(10)).expect("stop"),supplier.client(),message_at(sms.address(),sms.authority())).await.expect("application");
             let (base,stop,task)=running(application).await;
             let institution=issued_session_for(&base,&mut sms,"13900000000").await;
@@ -148,7 +148,7 @@ fn fixed_badges_use_trusted_preview_and_private_resources_without_request_dedupl
             let management = management.json::<Value>().await.expect("management JSON");
             assert_eq!(management["count"],4);
             assert_eq!(management["applications"][0].as_object().expect("fixed management summary").len(),7);
-            for query in ["page=0","size=101","page=1&page=2","status=ready","mobile=13800138000"] {
+            for query in ["page=0","size=101","page=1&page=2","status=issued","mobile=13800138000"] {
                 assert_eq!(get(&format!("/api/v1/workforce/applications?{query}"),&manager).send().await.expect("invalid management query").status(),400);
             }
             for path in ["/api/v1/workforce/applications".to_owned(),format!("/api/v1/workforce/applications/{}",ids[0])] {
@@ -240,7 +240,7 @@ fn fixed_badges_use_trusted_preview_and_private_resources_without_request_dedupl
             assert!(schema["paths"]["/api/v1/workforce/applications"]["post"]["parameters"].as_array().expect("headers").iter().any(|parameter|parameter["name"]=="Operation-Id"));
             assert!(!schema["paths"]["/api/v1/workforce/application-resources/{id}"]["get"]["parameters"].as_array().expect("resource headers").iter().any(|parameter|parameter["name"]=="Operation-Id"));
             let cancellation_path = |id: &str| format!("/api/v1/workforce/applications/{id}/cancellations");
-            for input in [json!({"mode":"self"}),json!({"mode":"self","expectedStatus":"submitted","reason":"unexpected"}),json!({"mode":"manager","expectedStatus":"approved","reason":"  "}),json!({"mode":"self","expectedStatus":"ready"})] {
+            for input in [json!({"mode":"self"}),json!({"mode":"self","expectedStatus":"submitted","reason":"unexpected"}),json!({"mode":"manager","expectedStatus":"approved","reason":"  "}),json!({"mode":"self","expectedStatus":"issued"})] {
                 cadence.tick().await;
                 let response=post(&cancellation_path(&ids[2]),&manager).json(&input).send().await.expect("invalid cancellation");
                 assert_eq!(response.status(),422);
@@ -277,8 +277,34 @@ fn fixed_badges_use_trusted_preview_and_private_resources_without_request_dedupl
             assert!(cancelled_list["applications"].as_array().expect("cancelled summaries").iter().all(|row|row["status"]=="cancelled"));
             cadence.tick().await;
             assert_eq!(post(&cancellation_path(&ids[2]),&manager).json(&json!({"mode":"self","expectedStatus":"submitted"})).send().await.expect("terminal cancellation").status(),409);
+            cadence.tick().await;
+            let submitted=post("/api/v1/workforce/applications",&manager).json(&json!({"kind":"issuance","selections":selections,"expected":preview["snapshot"]})).send().await.expect("render fixture").json::<Value>().await.expect("submitted");
+            let generated_id=submitted["application"]["id"].as_str().expect("id");
+            let render_path=format!("/api/v1/workforce/applications/{generated_id}/renders");
+            assert_eq!(post(&render_path,&other).json(&json!({})).send().await.expect("render authority").status(),403);
+            assert_eq!(post(&render_path,&manager).json(&json!({"extra":true})).send().await.expect("unknown field").status(),422);
+            assert_eq!(post(&render_path,&manager).json(&json!({})).send().await.expect("not approved").status(),409);
+            cadence.tick().await;
+            assert_eq!(post(&format!("/api/v1/workforce/applications/{generated_id}/reviews"),&manager).json(&json!({"decision":"approve"})).send().await.expect("approve render fixture").status(),200);
+            let rendered=post(&render_path,&manager).json(&json!({})).send().await.expect("explicit render");
+            assert_eq!(rendered.status(),200);
+            let rendered=rendered.json::<Value>().await.expect("narrow render response");
+            let badge_id=rendered["application"]["badge"]["id"].as_str().expect("badge id");
+            assert_eq!(rendered,json!({"code":"ok","application":{"id":generated_id,"status":"ready","badge":{"id":badge_id}}}));
+            let badge_path=format!("/api/v1/workforce/badges/{badge_id}.webp");
+            let media=request(reqwest::Method::GET,&badge_path,&manager,false).send().await.expect("badge GET without correlation header");
+            assert_eq!(media.status(),200);assert_eq!(media.headers()["content-type"],"image/webp");assert_eq!(media.headers()["cache-control"],"no-store");assert!(!media.headers().contains_key("set-cookie"));
+            assert_eq!(media.headers()["content-disposition"],format!("attachment; filename=\"badge-{badge_id}.webp\""));
+            let length=media.content_length().expect("accurate length");let bytes=media.bytes().await.expect("complete artifact");assert_eq!(bytes.len() as u64,length);assert_eq!(&bytes[12..16],b"VP8L");
+            let head=request(reqwest::Method::HEAD,&badge_path,&manager,false).send().await.expect("badge HEAD");assert_eq!(head.status(),200);assert_eq!(head.headers()["content-length"],length.to_string());assert!(head.bytes().await.expect("no HEAD body").is_empty());
+            assert_eq!(request(reqwest::Method::GET,&badge_path,&other,false).send().await.expect("concealed badge").status(),404);
+            let ready=get(&format!("/api/v1/workforce/applications/{generated_id}"),&manager).send().await.expect("ready detail").json::<Value>().await.expect("ready JSON");
+            assert_eq!(ready["application"]["badge"],json!({"id":badge_id}));assert!(ready["application"].get("renderError").is_none());
+            cadence.tick().await;
+            assert_eq!(post(&cancellation_path(generated_id),&manager).json(&json!({"mode":"self","expectedStatus":"ready"})).send().await.expect("cancel ready").status(),200);
+            assert_eq!(request(reqwest::Method::GET,&badge_path,&manager,false).send().await.expect("retained badge").bytes().await.expect("retained bytes"),bytes);
             if let Some(path)=std::env::var_os("NUCLEUS_BADGE_SCHEMA_EXPORT") {
-                std::fs::write(path,serde_json::to_vec(&json!({"schema":schema,"submitted":detail["application"],"approved":approved["application"],"rejected":rejected["application"],"cancelledBefore":cancelled_before["application"],"cancelledAfter":cancelled_after["application"]})).expect("real schema and response JSON")).expect("export actual HTTP schema evidence");
+                std::fs::write(path,serde_json::to_vec(&json!({"schema":schema,"submitted":detail["application"],"approved":approved["application"],"ready":ready["application"],"rendered":rendered,"rejected":rejected["application"],"cancelledBefore":cancelled_before["application"],"cancelledAfter":cancelled_after["application"]})).expect("real schema and response JSON")).expect("export actual HTTP schema evidence");
             }
             let font_path=format!("/api/v1/workforce/application-resources/{}",preview["snapshot"]["template"]["fontId"].as_str().expect("retained multi-megabyte font"));
             let mut slow=Vec::new();

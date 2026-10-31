@@ -37,6 +37,7 @@ tokio = { version = "1.47.1", default-features = false, features = ["macros", "r
 tokio-postgres = { version = "0.7.18", default-features = false, features = ["with-chrono-0_4", "with-uuid-1"] }
 tracing = { version = "0.1.44", default-features = false, features = ["std"] }
 ttf-parser = { version = "0.25.1", default-features = false, features = ["std", "opentype-layout", "variable-fonts"] }
+tiny-skia = { version = "0.11.4", default-features = false, features = ["std"] }
 parley = { version = "=0.11.1", default-features = false, features = ["std", "complex-scripts"] }
 url = { version = "2.5.8", default-features = false, features = ["std"] }
 utoipa = { version = "6.0.0", default-features = false, features = ["macros", "chrono", "uuid"] }

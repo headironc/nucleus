@@ -25,6 +25,7 @@ pub(crate) struct Input {
     pickups: Vec<String>,
     #[serde_as(as = "JsonString")]
     photo_limits: application::photo::Limits,
+    pixels_per_inch: application::render::Resolution,
 }
 
 pub(crate) struct Settings {
@@ -65,6 +66,7 @@ impl Settings {
             font,
             self.input.pickups,
             self.input.photo_limits,
+            self.input.pixels_per_inch,
         )?)
     }
 }

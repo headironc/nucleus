@@ -93,6 +93,8 @@ R1/R2 共用来源、Session 和恢复设置，默认值与校验归 `domain::id
 
 ### 3.3 固定工牌输入
 
+正式成品必填同前缀的 `PIXELS_PER_INCH`，由 `application::render::Resolution` 校验为正整数，没有生产默认值。快照微米尺寸乘以 PPI 后除以 25400，分别向上取整。单边最多 4096 像素，总像素最多 4194304；单张 RGBA 画布最多 16 MiB。无损 WebP 编码器的实际输出另限 16 MiB，超限明确失败。画布限额不代表进程总内存上限。隔离夹具的 85000 × 54000 微米和显式 300 PPI 输出 1004 × 638 像素。
+
 在线入口必填 `NUCLEUS_WORKFORCE__APPLICATION__BACKGROUND_PATH`、`BACKGROUND_MEDIA_TYPE`、`FONT_PATH`、`TEMPLATE`、`PICKUPS` 和 `PHOTO_LIMITS`，均使用同一 `NUCLEUS_WORKFORCE__APPLICATION__` 前缀。两个路径必须为绝对常规文件；背景声明 `image/jpeg`、`image/png` 或 `image/webp`，最多 8 MiB，字体最多 32 MiB。`TEMPLATE` 是[媒体合同](workforce/media.md#模板与固定资源)定义的 JSON 对象，`PICKUPS` 是非空 JSON 字符串数组，逐项非空且不含控制字符。每项按 JSON 序列化后最多 4 KiB，为预览输入的其他字段保留空间；引号和反斜杠的转义计入预算。字段未知、输入缺失或显式无效均拒绝，没有示例生产默认值。
 
 `PHOTO_LIMITS` 是 JSON 对象，必填 `person_files`、`person_bytes`、`total_files`、`total_bytes` 四个正整数，分别限制每人及全部照片的累计文件数、字节数。每人上限不能大于对应总上限，由工牌照片能力的 `photo::Limits` 受控构造。部署者按磁盘容量和保留需求显式配置，测试夹具值不是生产默认值。正式照片、未完成候选和无引用残留均占预算；具体拒绝及维护规则见[照片存储](workforce/media.md#存储与原结果)。

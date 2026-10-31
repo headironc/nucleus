@@ -64,6 +64,7 @@ const TABLES: &[Table] = &[
     table("workforce.resources", &[Select, Insert], "", ""),
     table("workforce.photos", &[Select, Insert], "", ""),
     table("workforce.applications", &[Select, Insert, Update], "", ""),
+    table("workforce.badges", &[Select, Insert], "", ""),
     table("audit.events", &[Select, Insert], "", ""),
     table(
         crate::content::column::COLUMNS,

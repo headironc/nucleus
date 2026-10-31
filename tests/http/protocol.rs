@@ -456,7 +456,10 @@ fn http_validates_requests_before_business_work_and_describes_actual_routes() {
                     assert_eq!(value["components"]["schemas"][schema]["properties"]["code"]["pattern"], "^[0-9]{6}$");
                 }
                 let paths = value["paths"].as_object().expect("paths");
-                assert_eq!(paths.len(), 97);
+                assert_eq!(paths.len(), 99);
+                assert_eq!(paths["/api/v1/workforce/applications/{id}/renders"]["post"]["operationId"],"workforceApplicationRender");
+                assert_eq!(paths["/api/v1/workforce/badges/{image}"]["get"]["operationId"],"workforceBadge");
+                assert_eq!(paths["/api/v1/workforce/badges/{image}"]["head"]["operationId"],"workforceBadgeHead");
                 assert_eq!(paths["/api/v1/workforce/applications"]["get"]["operationId"],"workforceApplications");
                 assert_eq!(paths["/api/v1/workforce/applications/{id}"]["get"]["operationId"],"workforceApplication");
                 assert_eq!(paths["/api/v1/workforce/applications/{id}/reviews"]["post"]["operationId"],"workforceApplicationReview");

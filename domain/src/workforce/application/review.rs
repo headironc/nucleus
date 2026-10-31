@@ -48,7 +48,7 @@ impl Service {
         finish(self, lease, result, false).await
     }
 
-    async fn applicant(
+    pub(super) async fn applicant(
         &self,
         client: &Client,
         person: person::Id,
@@ -134,26 +134,7 @@ impl Service {
         let client = lease.client();
         let result = async {
             transaction::begin_current(self.app.context(), client).await?;
-            transaction::shared(client, b"access/scope", b"workforce").await?;
-            Box::pin(self.manager(client, actor, Read::Shared)).await?;
-            // Discover only immutable lock participants; authority is checked after locking.
-            let target = database::owner(client, id).await?;
-            account::state::lock_participants(client, actor.account_id(), &[target]).await?;
-            let operator = account::state::discover_owner(client, actor.account_id())
-                .await?
-                .ok_or(current::Error::Invalid)?;
-            let mut persons = vec![operator, target];
-            persons.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
-            persons.dedup();
-            for person in persons {
-                person::state::lock_shared(client, person).await?;
-            }
-            actor.lock_session(client).await?;
-            member::lock_current(client, actor.account_id()).await?;
-            if let Some(account) = account::state::discover_person(client, target).await? {
-                member::lock_current(client, account).await?;
-            }
-            let (reviewer, now) = Box::pin(self.manager(client, actor, Read::Shared)).await?;
+            let (target, reviewer, now) = self.lock_managed(client, actor, id).await?;
             if matches!(input, ReviewInput::Approve {}) {
                 let (account, participation) =
                     Box::pin(self.applicant(client, target, Read::Shared, now)).await?;
@@ -173,5 +154,33 @@ impl Service {
         }
         .await;
         finish(self, lease, result, true).await
+    }
+
+    pub(super) async fn lock_managed(
+        &self,
+        client: &Client,
+        actor: &Actor,
+        id: Id,
+    ) -> Result<(person::Id, person::Id, DateTime<Utc>), Error> {
+        transaction::shared(client, b"access/scope", b"workforce").await?;
+        Box::pin(self.manager(client, actor, Read::Shared)).await?;
+        let target = database::owner(client, id).await?;
+        account::state::lock_participants(client, actor.account_id(), &[target]).await?;
+        let operator = account::state::discover_owner(client, actor.account_id())
+            .await?
+            .ok_or(current::Error::Invalid)?;
+        let mut persons = vec![operator, target];
+        persons.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+        persons.dedup();
+        for person in persons {
+            person::state::lock_shared(client, person).await?;
+        }
+        actor.lock_session(client).await?;
+        member::lock_current(client, actor.account_id()).await?;
+        if let Some(account) = account::state::discover_person(client, target).await? {
+            member::lock_current(client, account).await?;
+        }
+        let (operator, now) = Box::pin(self.manager(client, actor, Read::Shared)).await?;
+        Ok((target, operator, now))
     }
 }

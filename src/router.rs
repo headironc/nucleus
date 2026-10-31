@@ -120,8 +120,13 @@ async fn identify(request: extract::Request, next: Next) -> Response {
                 .extensions()
                 .get::<extract::MatchedPath>()
                 .is_some_and(|path| {
-                    path.as_str().strip_prefix(PREFIX)
-                        == Some(crate::workforce::application::RESOURCE_ROUTE)
+                    matches!(
+                        path.as_str().strip_prefix(PREFIX),
+                        Some(
+                            crate::workforce::application::RESOURCE_ROUTE
+                                | crate::workforce::application::BADGE_ROUTE
+                        )
+                    )
                 })
             || (request
                 .extensions()

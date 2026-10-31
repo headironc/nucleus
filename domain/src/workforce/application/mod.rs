@@ -1,8 +1,10 @@
 //! Confirmed fixed badge applications: ordinary transactions and current self-state refresh.
 
+mod badge;
 mod cancellation;
 mod database;
 pub mod photo;
+pub mod render;
 mod review;
 mod settings;
 mod value;
@@ -553,6 +555,8 @@ pub enum Error {
     Font(#[from] font::InputError),
     #[error("photo preparation failed")]
     Photo(#[from] photo::Error),
+    #[error("badge image decoding or encoding failed")]
+    RenderImage(#[source] image::ImageError),
     #[error("application encoding failed")]
     Encoding(#[from] serde_json::Error),
     #[error("application processing is busy")]
@@ -647,6 +651,7 @@ pub fn fixture_settings(storage: platform::files::Settings) -> Settings {
         include_bytes!("../../../tests/fixtures/fonts/SourceSans3-Regular.ttf").to_vec(),
         vec!["Fixture reception".to_owned()],
         photo::Limits::new(100, 1 << 30, 1000, 10 << 30).expect("fixture capacity"),
+        render::Resolution::try_from(300).expect("fixture resolution"),
     )
     .expect("legal fixture settings")
 }
@@ -764,7 +769,7 @@ mod tests {
             }).await.expect("writer reached the controlled application row lock")
         }
 
-        async fn ended_backend(client: &Client, backend: i32) {
+        pub(super) async fn ended_backend(client: &Client, backend: i32) {
             timeout(Duration::from_secs(3), async {
                 let mut cadence = tokio::time::interval(Duration::from_millis(10));
                 loop {
@@ -1016,7 +1021,7 @@ mod tests {
             ended_backend(client, backend).await;
             assert!(matches!(
                 Box::pin(full(service, applicant, ids[3])).await.decision,
-                Decision::Cancelled { approval: None }
+                Decision::Cancelled { approval: None, .. }
             ));
             assert_eq!(audit_count(client, ids[3]).await, 1, "no automatic replay");
             ordered_decisions(
@@ -1303,7 +1308,7 @@ mod tests {
                     let storage=platform::files::Settings::new(root,mount,device).expect("storage");
                     let mut background=Cursor::new(Vec::new());
                     image::DynamicImage::new_rgb8(85,54).write_to(&mut background,image::ImageFormat::Png).expect("background");
-                    let settings=Settings::new(storage,fixture_template(),"image/png",background.into_inner(),include_bytes!("../../../tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(),vec!["Fixture reception".to_owned()],photo::Limits::new(1,1 << 30,2,2 << 30).expect("limits")).expect("settings");
+                    let settings=Settings::new(storage,fixture_template(),"image/png",background.into_inner(),include_bytes!("../../../tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(),vec!["Fixture reception".to_owned()],photo::Limits::new(1,1 << 30,2,2 << 30).expect("limits"),render::Resolution::try_from(300).expect("resolution")).expect("settings");
                     let proxy=fixture::database_proxy::Proxy::start(&server).await;
                     let context=Context::new(authentication::proxied(&database,&proxy)).await.expect("context");
                     let services=application_services(&context,ServicesSettings::new(4,crate::identity::message::Limits::default(),authentication::session_settings(),crate::registration::Limits::default(),authentication::avatar_settings()).expect("services settings").with_application(settings),&supplier).await;
@@ -1851,10 +1856,347 @@ mod tests {
             )
             .expect("detail JSON");
             assert_eq!(retained_detail["application"]["reviewerName"], "H*");
+            Box::pin(verify_badges(
+                service,
+                applicant,
+                institution,
+                observer.client(),
+                owner.client(),
+                proxy,
+                ids[1],
+            ))
+            .await;
             owner.terminate().await.expect("owner ended");
             observer.terminate().await.expect("observer ended");
             expected_cancellable
         })
+    }
+
+    async fn verify_badges(
+        service: &Service,
+        applicant: &Actor,
+        outsider: &Actor,
+        client: &Client,
+        owner: &Client,
+        proxy: &fixture::database_proxy::Proxy,
+        source: Id,
+    ) {
+        let id = Id::allocate();
+        client.execute("INSERT INTO workforce.applications (id,person_id,kind,snapshot) SELECT $1,person_id,kind,snapshot FROM workforce.applications WHERE id=$2", &[&id,&source]).await.expect("isolated retained-input fixture");
+        assert!(matches!(
+            Box::pin(service.render(outsider, id)).await,
+            Err(Error::Grant(grant::Error::Denied))
+        ));
+        assert!(matches!(
+            Box::pin(service.render(applicant, id)).await,
+            Err(Error::StateChanged)
+        ));
+        Box::pin(service.review(applicant, id, ReviewInput::Approve {}))
+            .await
+            .expect("explicit approval");
+        let detail = service
+            .managed_detail(applicant, id)
+            .await
+            .expect("retained render inputs");
+        let background = detail.application.snapshot.template.background_id;
+        let original = service
+            .resource(applicant, background, read_capacity(), false)
+            .await
+            .expect("retained original background")
+            .bytes;
+        let storage = &service.settings().expect("settings").directory;
+        storage
+            .remove(&["workforce"], &background.to_string())
+            .expect("isolated missing input injection");
+        assert!(matches!(
+            Box::pin(service.render(applicant, id)).await,
+            Err(Error::MissingFile)
+        ));
+        let failed = serde_json::to_value(
+            service
+                .detail(applicant, id)
+                .await
+                .expect("failed render detail"),
+        )
+        .expect("safe render error");
+        assert_eq!(failed["application"]["status"], "approved");
+        assert_eq!(
+            failed["application"]["renderError"],
+            "dependency_unavailable"
+        );
+        assert!(failed["application"].get("badge").is_none());
+        storage
+            .publish(
+                &["workforce"],
+                &background.to_string(),
+                &uuid::Uuid::new_v4().to_string(),
+                &original,
+            )
+            .expect("restore exact retained input bytes");
+        let (first, second) = tokio::join!(
+            Box::pin(service.render(applicant, id)),
+            Box::pin(service.render(applicant, id))
+        );
+        let badge = match (first, second) {
+            (Ok(badge), Err(Error::StateChanged)) | (Err(Error::StateChanged), Ok(badge)) => badge,
+            result => panic!("exactly one artifact is adopted: {result:?}"),
+        };
+        assert_eq!(
+            client
+                .query_one(
+                    "SELECT count(*) FROM workforce.badges WHERE application_id=$1",
+                    &[&id]
+                )
+                .await
+                .expect("unique adoption")
+                .get::<_, i64>(0),
+            1
+        );
+        let bytes = service
+            .badge(applicant, badge.id, read_capacity(), false)
+            .await
+            .expect("owner GET")
+            .bytes;
+        assert_eq!(&bytes[12..16], b"VP8L");
+        let head = service
+            .badge(applicant, badge.id, read_capacity(), true)
+            .await
+            .expect("owner HEAD");
+        assert!(head.bytes.is_empty());
+        assert_eq!(head.size, bytes.len() as u64);
+        assert!(matches!(
+            service
+                .badge(outsider, badge.id, read_capacity(), true)
+                .await,
+            Err(Error::TargetUnavailable)
+        ));
+        let Detail::Full { application } =
+            service.detail(applicant, id).await.expect("ready detail")
+        else {
+            panic!("full");
+        };
+        assert!(matches!(application.decision, Decision::Ready { .. }));
+        service
+            .cancel(
+                applicant,
+                id,
+                CancellationInput::SelfService {
+                    expected_status: CancellableStatus::Ready,
+                },
+            )
+            .await
+            .expect("cancel ready");
+        let Detail::Full { application } = service
+            .detail(applicant, id)
+            .await
+            .expect("retained cancelled detail")
+        else {
+            panic!("full");
+        };
+        assert!(matches!(
+            application.decision,
+            Decision::Cancelled { badge: Some(_), .. }
+        ));
+        assert_eq!(
+            service
+                .badge(applicant, badge.id, read_capacity(), false)
+                .await
+                .expect("retained cancelled bytes")
+                .bytes,
+            bytes
+        );
+        assert!(
+            client
+                .execute("DELETE FROM workforce.badges WHERE id=$1", &[&badge.id])
+                .await
+                .is_err()
+        );
+        assert!(
+            client
+                .execute(
+                    "UPDATE workforce.applications SET status='approved' WHERE id=$1",
+                    &[&id]
+                )
+                .await
+                .is_err()
+        );
+        let directory = &service.settings().expect("settings").directory;
+        directory
+            .remove(&["workforce", "badges"], &badge.id.to_string())
+            .expect("isolated loss injection");
+        assert!(matches!(
+            service
+                .badge(applicant, badge.id, read_capacity(), true)
+                .await,
+            Err(Error::MissingFile)
+        ));
+        directory
+            .publish(
+                &["workforce", "badges"],
+                &badge.id.to_string(),
+                &uuid::Uuid::new_v4().to_string(),
+                &bytes[..bytes.len() - 1],
+            )
+            .expect("isolated truncated recovery");
+        assert!(matches!(
+            service
+                .badge(applicant, badge.id, read_capacity(), true)
+                .await,
+            Err(Error::File(_))
+        ));
+        directory
+            .remove(&["workforce", "badges"], &badge.id.to_string())
+            .expect("remove isolated corrupt restore");
+        directory
+            .publish(
+                &["workforce", "badges"],
+                &badge.id.to_string(),
+                &uuid::Uuid::new_v4().to_string(),
+                &bytes,
+            )
+            .expect("restore original saved bytes");
+        assert_eq!(
+            service
+                .badge(applicant, badge.id, read_capacity(), false)
+                .await
+                .expect("backup restore")
+                .bytes,
+            bytes
+        );
+        let (entered, started) = tokio::sync::oneshot::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let gate = tokio::task::spawn_blocking(move || {
+            entered.send(()).expect("single worker held");
+            released
+                .recv_timeout(Duration::from_secs(15))
+                .expect("release generation worker");
+        });
+        started.await.expect("blocking worker occupied");
+        let preparing = {
+            let service = service.clone();
+            let actor = applicant.clone();
+            tokio::spawn(async move { service.prepare_badge(&actor, source).await })
+        };
+        timeout(Duration::from_secs(5), async {
+            while service.processing.available_permits() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("generation queued with its permit");
+        preparing.abort();
+        assert!(preparing.await.is_err_and(|error| error.is_cancelled()));
+        assert_eq!(
+            service.processing.available_permits(),
+            1,
+            "caller exit keeps the actual generation permit"
+        );
+        release.send(()).expect("release physical generation");
+        gate.await.expect("blocking gate ended");
+        timeout(Duration::from_secs(5), async {
+            while service.processing.available_permits() != 2 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("completed physical generation releases its permit");
+        assert_eq!(
+            client
+                .query_one(
+                    "SELECT count(*) FROM workforce.badges WHERE application_id=$1",
+                    &[&source]
+                )
+                .await
+                .expect("disconnected preparation has no adopted badge")
+                .get::<_, i64>(0),
+            0
+        );
+        for case in ["cancel", "audit", "unknown"] {
+            let fresh = Id::allocate();
+            client.execute("INSERT INTO workforce.applications (id,person_id,kind,snapshot) SELECT $1,person_id,kind,snapshot FROM workforce.applications WHERE id=$2", &[&fresh,&source]).await.expect("isolated generation failure fixture");
+            Box::pin(service.review(applicant, fresh, ReviewInput::Approve {}))
+                .await
+                .expect("approve explicit generation");
+            let candidate = Box::pin(service.prepare_badge(applicant, fresh))
+                .await
+                .expect("complete durable candidate");
+            match case {
+                "cancel" => {
+                    service
+                        .cancel(
+                            applicant,
+                            fresh,
+                            CancellationInput::SelfService {
+                                expected_status: CancellableStatus::Approved,
+                            },
+                        )
+                        .await
+                        .expect("cancellation wins before adoption");
+                    assert!(matches!(
+                        Box::pin(service.adopt_badge(applicant, candidate)).await,
+                        Err(Error::StateChanged)
+                    ));
+                    assert_eq!(
+                        client
+                            .query_one(
+                                "SELECT count(*) FROM workforce.badges WHERE application_id=$1",
+                                &[&fresh]
+                            )
+                            .await
+                            .expect("no late adoption")
+                            .get::<_, i64>(0),
+                        0
+                    );
+                }
+                "audit" => {
+                    owner.batch_execute("CREATE FUNCTION audit.reject_badge_fixture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture badge audit rejection'; END $$; CREATE TRIGGER reject_badge_fixture BEFORE INSERT ON audit.events FOR EACH ROW EXECUTE FUNCTION audit.reject_badge_fixture()").await.expect("inject audit fault");
+                    assert!(
+                        Box::pin(service.adopt_badge(applicant, candidate))
+                            .await
+                            .is_err()
+                    );
+                    owner.batch_execute("DROP TRIGGER reject_badge_fixture ON audit.events; DROP FUNCTION audit.reject_badge_fixture()").await.expect("remove audit fault");
+                    assert!(
+                        matches!(service.detail(applicant, fresh).await.expect("rollback state"), Detail::Full { application } if matches!(application.decision, Decision::Approved { .. }))
+                    );
+                    assert_eq!(
+                        client
+                            .query_one(
+                                "SELECT count(*) FROM workforce.badges WHERE application_id=$1",
+                                &[&fresh]
+                            )
+                            .await
+                            .expect("no rolled back badge")
+                            .get::<_, i64>(0),
+                        0
+                    );
+                }
+                _ => {
+                    proxy.arm(fixture::database_proxy::Fault::LostCommit);
+                    assert!(matches!(
+                        Box::pin(service.adopt_badge(applicant, candidate)).await,
+                        Err(Error::Unknown(_))
+                    ));
+                    let backend = proxy.intercepted().await;
+                    proxy.release();
+                    cancellation::ended_backend(client, backend).await;
+                    assert!(
+                        matches!(service.detail(applicant, fresh).await.expect("refresh actual state"), Detail::Full { application } if matches!(application.decision, Decision::Ready { .. }))
+                    );
+                    assert_eq!(
+                        client
+                            .query_one(
+                                "SELECT count(*) FROM workforce.badges WHERE application_id=$1",
+                                &[&fresh]
+                            )
+                            .await
+                            .expect("unknown did not replay")
+                            .get::<_, i64>(0),
+                        1
+                    );
+                }
+            }
+        }
     }
 
     async fn cancelled_resource_read(service: &Service, actor: &Actor, id: ResourceId) {
@@ -2513,7 +2855,7 @@ mod tests {
                 image::DynamicImage::new_rgb8(85,54).write_to(&mut background,image::ImageFormat::Png).expect("background");
                 let mut template = fixture_template();
                 template.font_id = ResourceId::allocate();
-                let settings = Settings::new(storage,template,"image/png",background.into_inner(),include_bytes!("../../../tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(),vec!["Fixture reception".to_owned()], photo::Limits::new(1, 1 << 30, 2, 2 << 30).expect("fixture capacity")).expect("CJK fixture");
+                let settings = Settings::new(storage,template,"image/png",background.into_inner(),include_bytes!("../../../tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(),vec!["Fixture reception".to_owned()], photo::Limits::new(1, 1 << 30, 2, 2 << 30).expect("fixture capacity"),render::Resolution::try_from(300).expect("resolution")).expect("CJK fixture");
                 let proxy=fixture::database_proxy::Proxy::start(&server).await;
                 let context = Context::new(authentication::proxied(&database,&proxy)).await.expect("context");
                 let services = application_services(&context,ServicesSettings::new(4,crate::identity::message::Limits::default(),authentication::session_settings(),crate::registration::Limits::default(),authentication::avatar_settings()).expect("settings").with_application(settings),&supplier).await;
@@ -2585,7 +2927,7 @@ mod tests {
     #[test]
     fn reviews_preserve_current_authority_atomic_decisions_privacy_and_unknown_outcomes() {
         let server = server();
-        Runtime::new().expect("runtime").block_on(Box::pin(async {
+        tokio::runtime::Builder::new_multi_thread().worker_threads(2).max_blocking_threads(1).enable_all().build().expect("runtime").block_on(Box::pin(async {
             timeout(Duration::from_secs(90), Box::pin(async {
                 let database = Database::initialized(Arc::clone(&server)).await;
                 let mut supplier = Supplier::new().await;
@@ -2593,7 +2935,7 @@ mod tests {
                 let storage = platform::files::Settings::new(root, mount, device).expect("storage");
                 let mut background = Cursor::new(Vec::new());
                 image::DynamicImage::new_rgb8(85,54).write_to(&mut background,image::ImageFormat::Png).expect("background");
-                let settings = Settings::new(storage, fixture_template(), "image/png", background.into_inner(), include_bytes!("../../../tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(), vec!["Fixture reception".to_owned()], photo::Limits::new(1,1 << 30,2,2 << 30).expect("limits")).expect("settings");
+                let settings = Settings::new(storage, fixture_template(), "image/png", background.into_inner(), include_bytes!("../../../tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(), vec!["Fixture reception".to_owned()], photo::Limits::new(1,1 << 30,2,2 << 30).expect("limits"),render::Resolution::try_from(300).expect("resolution")).expect("settings");
                 let proxy = fixture::database_proxy::Proxy::start(&server).await;
                 let context = Context::new(authentication::proxied(&database,&proxy)).await.expect("context");
                 let services = application_services(&context,ServicesSettings::new(4,crate::identity::message::Limits::default(),authentication::session_settings(),crate::registration::Limits::default(),authentication::avatar_settings()).expect("services settings").with_application(settings),&supplier).await;

@@ -32,6 +32,7 @@ use crate::{
 };
 
 pub(crate) const RESOURCE_ROUTE: &str = "/workforce/application-resources/{id}";
+pub(crate) const BADGE_ROUTE: &str = "/workforce/badges/{image}";
 
 struct Binary;
 impl utoipa::PartialSchema for Binary {
@@ -75,6 +76,7 @@ pub(crate) fn router(
                 .routes(routes!(managed_detail))
                 .routes(routes!(review).map(|router| router.layer(DefaultBodyLimit::max(8192))))
                 .routes(routes!(cancel).map(|router| router.layer(DefaultBodyLimit::max(8192))))
+                .routes(routes!(render).map(|router| router.layer(DefaultBodyLimit::max(8192))))
                 .route_layer(middleware::from_fn_with_state(
                     authentication.clone(),
                     identity::current::authenticate,
@@ -85,6 +87,7 @@ pub(crate) fn router(
         .merge(
             OpenApiRouter::new()
                 .routes(routes!(resource))
+                .routes(routes!(badge))
                 .route_layer(middleware::from_fn_with_state(admission, transfer))
                 .route_layer(middleware::from_fn_with_state(
                     authentication,
@@ -176,9 +179,95 @@ async fn wait(request: Request, next: Next) -> Response {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 struct Empty {}
+
+#[derive(Serialize, ToSchema)]
+#[schema(as = application::Rendered)]
+struct Rendered {
+    code: &'static str,
+    application: Ready,
+}
+
+#[derive(Serialize, ToSchema)]
+#[schema(as = application::Ready)]
+struct Ready {
+    id: Id,
+    #[schema(inline, value_type = ReadyStatus)]
+    status: ReadyStatus,
+    badge: application::Badge,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+enum ReadyStatus {
+    Ready,
+}
+
+#[utoipa::path(post, path = "/workforce/applications/{id}/renders", operation_id = "workforceApplicationRender",
+    params(("Operation-Id" = uuid::Uuid, Header), ("Session-Id" = uuid::Uuid, Header), ("Origin" = String, Header), ("id" = Id, Path)),
+    request_body(content = Empty, description = "Empty JSON object; unknown fields are rejected"),
+    responses((status = 200, body = Rendered, description = "Durable lossless WebP adopted with the ready state and audit"),
+        (status = 400, body = Failure, description = "invalid_input"), (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"), (status = 404, body = Failure, description = "target_unavailable"),
+        (status = 409, body = Failure, description = "state_changed or applicant_unavailable"), (status = 413, body = Failure, description = "invalid_input"), (status = 415, body = Failure, description = "invalid_input"),
+        (status = 422, body = Failure, description = "missing_glyph or text_overflow"), (status = 429, body = Failure, description = "rate_limited"), (status = 503, body = Failure, description = "dependency_unavailable or outcome_unknown; refresh detail before any explicit retry")))]
+async fn render(
+    State(service): State<application::Service>,
+    Extension(actor): Extension<Actor>,
+    Extension(id): Extension<Id>,
+    Query(_): Query<Empty>,
+    Json(_): Json<Empty>,
+) -> Response {
+    respond(service.render(&actor, id).await, |badge| {
+        Json(Rendered {
+            code: "ok",
+            application: Ready {
+                id,
+                status: ReadyStatus::Ready,
+                badge,
+            },
+        })
+        .into_response()
+    })
+}
+
+#[utoipa::path(get, path = "/workforce/badges/{image}", operation_id = "workforceBadge",
+    params(("Session-Id" = uuid::Uuid, Header), ("image" = String, Path, description = "Badge UUID followed by .webp")),
+    responses((status = 200, content_type = "image/webp", body = Binary, description = "Current authorized download; HEAD checks the same file without a body", headers(("Content-Length" = u64), ("Content-Disposition" = String))),
+        (status = 400, body = Failure, description = "invalid_input"), (status = 401, body = Failure, description = "authentication_invalid"), (status = 404, body = Failure, description = "target_unavailable"), (status = 429, body = Failure, description = "rate_limited"), (status = 503, body = Failure, description = "dependency_unavailable")))]
+async fn badge(
+    State(service): State<application::Service>,
+    Extension(actor): Extension<Actor>,
+    Extension(id): Extension<application::BadgeId>,
+    Extension(capacity): Extension<Arc<OwnedSemaphorePermit>>,
+    method: Method,
+    Query(_): Query<Empty>,
+    bytes: Result<Bytes, BytesRejection>,
+) -> Response {
+    if let Err(status) = super::validate_empty(bytes) {
+        return invalid(status);
+    }
+    respond(
+        service
+            .badge(&actor, id, capacity, method == Method::HEAD)
+            .await,
+        |resource| {
+            (
+                [
+                    (header::CONTENT_TYPE, resource.media_type),
+                    (header::CONTENT_LENGTH, resource.size.to_string()),
+                    (
+                        header::CONTENT_DISPOSITION,
+                        format!("attachment; filename=\"badge-{id}.webp\""),
+                    ),
+                ],
+                resource.bytes,
+            )
+                .into_response()
+        },
+    )
+}
 
 #[derive(Serialize, ToSchema)]
 #[schema(as = application::PhotoResponse)]
@@ -329,7 +418,7 @@ async fn review(
 
 #[utoipa::path(post, path = "/workforce/applications/{id}/cancellations", operation_id = "workforceApplicationCancellation",
     params(("Operation-Id" = uuid::Uuid, Header, description = "Diagnostic only; refresh after an unknown outcome"), ("Session-Id" = uuid::Uuid, Header), ("Origin" = String, Header), ("id" = Id, Path)),
-    request_body(content = application::CancellationInput, description = "At most 8 KiB; explicit self or manager mode and the confirmed submitted or approved state; a manager reason is required"),
+    request_body(content = application::CancellationInput, description = "At most 8 KiB; explicit self or manager mode and the confirmed submitted, approved or ready state; a manager reason is required"),
     responses((status = 200, body = Cancellation, description = "Expected state cancelled and audited atomically; prior application facts remain retained"),
         (status = 400, body = Failure, description = "invalid_input"), (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"), (status = 404, body = Failure, description = "target_unavailable"),
         (status = 409, body = Failure, description = "state_changed; refresh and confirm again"), (status = 413, body = Failure, description = "invalid_input"), (status = 415, body = Failure, description = "invalid_input"), (status = 422, body = Failure, description = "invalid_input"),
@@ -538,7 +627,17 @@ async fn resource(
 }
 
 async fn target(Path(id): Path<String>, mut request: Request, next: Next) -> Response {
-    if request.uri().path().contains("/application-resources/") {
+    if request.uri().path().contains("/badges/") {
+        match id
+            .strip_suffix(".webp")
+            .and_then(|id| id.parse::<application::BadgeId>().ok())
+        {
+            Some(id) => {
+                request.extensions_mut().insert(id);
+            }
+            None => return invalid(StatusCode::BAD_REQUEST),
+        }
+    } else if request.uri().path().contains("/application-resources/") {
         match id.parse::<ResourceId>() {
             Ok(id) => {
                 request.extensions_mut().insert(id);
