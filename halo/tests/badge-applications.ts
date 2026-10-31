@@ -322,8 +322,8 @@ export async function ownBadgeApplications(
   const prepare = async (kind: PreviewInput["kind"]) => {
     const html = await page.goto("/workforce/applications/new");
     assertDocumentPolicy(html!.headers(), false);
-    await expect(page.getByLabel("实际科室", { exact: true })).toBeVisible();
-    const department = page.getByLabel("实际科室", { exact: true });
+    await expect(page.getByLabel("科室", { exact: true })).toBeVisible();
+    const department = page.getByLabel("科室", { exact: true });
     const departmentId = await department
       .locator("option")
       .evaluateAll(
@@ -335,7 +335,7 @@ export async function ownBadgeApplications(
     expect(departmentId).toBeTruthy();
     await department.selectOption(departmentId!);
     await page
-      .getByRole("checkbox", { name: "我确认本次工牌使用上述科室" })
+      .getByRole("checkbox", { name: "本次工牌使用以上科室。", exact: true })
       .check();
     for (const label of ["职务（选填）", "职称（选填）"]) {
       const field = page.getByLabel(label, { exact: true });
@@ -511,7 +511,7 @@ export async function ownBadgeApplications(
       "/api/v1/workforce/current/applications",
       owner.session.id,
     );
-    await page.getByRole("link", { name: "刷新申请列表", exact: true }).click();
+    await page.getByRole("link", { name: "查看我的申请", exact: true }).click();
     const list = await trusted<ApplicationList>(
       await wire(await listResponse),
       "GET /api/v1/workforce/current/applications",

@@ -1448,7 +1448,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     ])
       await expect(other.getByRole("radio", { name })).toBeVisible();
     await other.getByRole("radio", { name: "民革会员" }).check();
-    await other.getByRole("button", { name: "继续" }).click();
+    await other.getByRole("button", { name: "下一步", exact: true }).click();
     await expect(
       other.getByRole("heading", { name: "确认填写政治面貌" }),
     ).toBeVisible();
@@ -1465,7 +1465,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     expect(JSON.parse(originalBody)).toEqual({ affiliation: "04" });
 
     await other
-      .getByRole("button", { name: "刷新", exact: true })
+      .getByRole("button", { name: "查看当前记录", exact: true })
       .click();
     await expect(
       other.getByRole("heading", { name: "当前政治面貌" }),

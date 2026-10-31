@@ -15,7 +15,7 @@ import { Admission, type AdmissionState } from "../workforce/admission";
 
 export function meta() {
   return [
-    { title: "开通员工服务 · 司籍处" },
+    { title: "为同事开通员工服务 · 司籍处" },
     { name: "robots", content: "noindex" },
   ];
 }
@@ -76,52 +76,52 @@ function message(state: AdmissionState): string {
   if (state.kind === "current") {
     switch (state.current.kind) {
       case "anonymous":
-        return "请先登录，再检查是否可以办理。";
+        return "请先登录，再为同事办理开通。";
       case "expired":
-        return "当前登录已失效。请使用原办理账户重新登录，原结果仍需确认。";
+        return "当前登录已失效。请使用原办理账户登录，再返回本页。";
       case "reload":
-        return "请重新加载页面后继续检查。";
+        return "重新加载后，请按页面提示继续。";
       case "denied":
-        return "当前无法办理。此前已提交的开通不会因本次检查被取消。";
+        return "目前无法办理。可返回个人账户。";
       case "checking":
       case "changed":
-        return "正在检查当前登录，请稍候。";
+        return "正在检查登录状态…";
       default:
-        return "暂时无法检查当前登录，请稍后重新检查。";
+        return "登录状态暂时无法检查，请稍后重试。";
     }
   }
   if (state.kind === "permission") {
     switch (state.permission.kind) {
       case "denied":
-        return "当前账户没有开通员工服务的权限。此前办理结果仍需由原账户恢复权限后检查。";
+        return "当前账户没有开通员工服务的权限。可返回个人账户。";
       case "unavailable":
       case "limited":
-        return "暂时无法检查办理权限，请稍后重试。";
+        return "办理权限暂时无法检查，请稍后重试。";
       default:
-        return "正在检查办理权限，请稍候。";
+        return "正在检查办理权限…";
     }
   }
   const content = state.content;
   switch (content.kind) {
     case "lookup":
-      return "为已注册的同事开通员工服务。请先用完整手机号查找。";
+      return "请先用手机号查找同事。";
     case "finding":
-      return "正在查找同事和可选角色，请稍候。";
+      return "正在查找同事…";
     case "confirm":
-      return "请核对同事资料与所选角色，再明确确认开通。";
+      return "请核对同事资料与角色，再继续。";
     case "submitting":
-      return "正在提交开通。离开页面或停止等待不会取消已提交的办理。";
+      return "正在办理开通，请稍候。";
     case "querying":
-      return "正在检查原开通结果，只核对此前办理。";
+      return "正在查看开通结果…";
     case "pending":
     case "rejected":
       return content.message;
     case "storage":
-      return content.message ?? "本页办理信息暂时无法使用，请重新检查。";
+      return content.message ?? "办理信息暂时无法使用，请重新检查。";
     case "missing":
-      return "原办理信息不完整，暂时无法确认开通结果。请联系管理人员，暂时不要重复办理。";
+      return "暂时无法确认此前的开通结果。可返回个人账户，暂时不要重复办理。";
     case "complete":
-      return "本次开通记录已确认。同事可刷新员工服务页面，查看当前服务状态。";
+      return "同事可刷新员工服务页面查看当前状态。工号和工牌需另行申请。";
   }
 }
 function Content({ controller }: { controller: Admission }) {
@@ -213,9 +213,9 @@ function Content({ controller }: { controller: Admission }) {
         ← 返回个人账户
       </a>
       <header className="termination-heading">
-        <p className="eyebrow">机构管理 · 同事办理</p>
+        <p className="eyebrow">员工服务 · 同事办理</p>
         <h1 ref={heading} tabIndex={-1}>
-          开通员工服务
+          为同事开通员工服务
         </h1>
         <p role="status">{message(state)}</p>
       </header>
@@ -260,8 +260,8 @@ function Content({ controller }: { controller: Admission }) {
               className={invalid ? "field-error" : "field-hint"}
             >
               {invalid
-                ? "请填写 11 位完整手机号。"
-                : "使用同事注册时的完整手机号。"}
+                ? "请输入 11 位中国大陆手机号。"
+                : "请填写同事注册时使用的手机号。"}
             </p>
             <Button type="submit" className="primary">
               查找同事
@@ -291,12 +291,12 @@ function Content({ controller }: { controller: Admission }) {
                 <dt>员工服务</dt>
                 <dd>
                   {!confirmation.candidate.grant
-                    ? "尚未开通"
+                    ? "尚未加入"
                     : confirmation.candidate.grant.status === "terminated"
                       ? "此前服务已结束"
                       : confirmation.candidate.grant.status === "suspended"
                         ? "已暂停"
-                        : "已开通"}
+                        : "已加入"}
                 </dd>
               </div>
             </dl>
@@ -311,7 +311,7 @@ function Content({ controller }: { controller: Admission }) {
               <fieldset className="admission-roles">
                 <legend>选择员工服务角色</legend>
                 <p className="field-hint">
-                  普通成员不含管理权限。其他角色请按实际职责明确选择。
+                  普通成员不含管理权限。其他角色请按实际职责选择。
                 </p>
                 {confirmation.defaultRole &&
                   !confirmation.candidate.roles.some(
@@ -342,16 +342,14 @@ function Content({ controller }: { controller: Admission }) {
                     />
                     <span>
                       {role.name}
-                      <small>
-                        {role.kind === "default"
-                          ? "普通成员 · 默认选择"
-                          : "包含角色所授予的职责，请谨慎选择"}
-                      </small>
+                      {role.kind === "default" && (
+                        <small>普通成员 · 默认选择</small>
+                      )}
                     </span>
                   </label>
                 ))}
                 {confirmation.candidate.roles.length === 0 && (
-                  <p>本页没有可选角色，请返回上一页。</p>
+                  <p>本页没有其他角色。</p>
                 )}
                 {confirmation.candidate.count > 100 && (
                   <nav className="admission-pagination" aria-label="角色分页">
@@ -386,17 +384,9 @@ function Content({ controller }: { controller: Admission }) {
                     </Button>
                   </nav>
                 )}
-                <p
-                  className={
-                    selected?.kind !== "default"
-                      ? "admission-notice"
-                      : "field-hint"
-                  }
-                >
-                  {selected
-                    ? `已选角色：${selected.name}${selected.kind !== "default" ? "。请确认确实需要授予该角色。" : ""}`
-                    : "请选择一个实际角色后再继续。"}
-                </p>
+                {!selected && (
+                  <p className="field-hint">请选择员工服务角色。</p>
+                )}
               </fieldset>
             )}
             <div className="termination-actions">
@@ -406,7 +396,7 @@ function Content({ controller }: { controller: Admission }) {
                 disabled={!eligible || !selected}
                 onClick={() => setConfirming(true)}
               >
-                确认开通
+                下一步
               </Button>
               <Button
                 className="quiet-link"
@@ -426,7 +416,11 @@ function Content({ controller }: { controller: Admission }) {
             disabled={content.blocked || seconds > 0}
             onClick={() => void controller.check()}
           >
-            {seconds > 0 ? `${seconds} 秒后可检查开通结果` : "检查开通结果"}
+            {content.blocked
+              ? "暂时无法查看结果"
+              : seconds > 0
+                ? `${seconds} 秒后可查看开通结果`
+                : "查看开通结果"}
           </Button>
         )}
         {content?.kind === "rejected" && (
@@ -449,9 +443,6 @@ function Content({ controller }: { controller: Admission }) {
               <p>角色：{content.receipt.assignment.role.name}</p>
               <p className="field-hint">开通时间：{stamp}</p>
             </div>
-            <p className="admission-notice">
-              这是本次开通的原记录。之后的暂停、结束或角色变化，以同事刷新后读到的当前状态为准。工号需另行办理。
-            </p>
             {content.canStart ? (
               <Button
                 className="primary"
@@ -460,10 +451,10 @@ function Content({ controller }: { controller: Admission }) {
                   setMobile("");
                 }}
               >
-                继续办理另一人
+                为其他同事开通
               </Button>
             ) : (
-              <p>浏览器尚未清理本次办理信息，请重新检查后再继续。</p>
+              <p>暂时无法继续办理其他同事。可先返回个人账户。</p>
             )}
           </>
         )}
@@ -498,26 +489,22 @@ function Content({ controller }: { controller: Admission }) {
               target="_blank"
               rel="noopener"
             >
-              手机号登录（新标签页）
+              手机号登录（在新标签页打开）
             </a>
           )}
         {state.kind === "current" && state.current.kind === "reload" && (
           <Button className="primary" onClick={() => location.reload()}>
-            重新加载页面
+            重新加载
           </Button>
         )}
         {pending && (
           <p className="field-hint admission-leave">
-            可返回个人账户；离开不会取消本次办理。请使用原办理账户回来检查结果。
+            {content?.kind === "pending" && content.blocked
+              ? "离开不会撤回已发出的开通。可返回个人账户。"
+              : "离开不会撤回已发出的开通。返回后，请使用原办理账户查看结果。"}
           </p>
         )}
       </section>
-      <aside className="admission-guide">
-        <h2>开通前请确认</h2>
-        <p>
-          同事已完成实名注册，且属于你可以办理的范围。开通员工服务不代表人事入职，也不会自动取得工号或工牌。
-        </p>
-      </aside>
       <dialog
         ref={dialog}
         className="termination-dialog"
@@ -527,7 +514,7 @@ function Content({ controller }: { controller: Admission }) {
           closeDialog();
         }}
       >
-        <h2 id="admission-confirm-title">为这位同事开通员工服务？</h2>
+        <h2 id="admission-confirm-title">确认开通员工服务？</h2>
         {confirming && confirmation && selected && (
           <>
             <p>
@@ -539,14 +526,12 @@ function Content({ controller }: { controller: Admission }) {
             >
               将授予角色：<strong>{selected.name}</strong>
             </p>
-            <p>
-              开通后，同事可刷新员工服务页面继续办理。工号和工牌需另行申请。
-            </p>
+            <p>开通后，同事可进入员工服务。工号和工牌需另行申请。</p>
           </>
         )}
         <div className="termination-actions">
           <Button ref={cancel} className="secondary" onClick={closeDialog}>
-            取消
+            返回修改
           </Button>
           <Button
             className="primary"
@@ -555,7 +540,7 @@ function Content({ controller }: { controller: Admission }) {
               void controller.submit();
             }}
           >
-            开通员工服务
+            确认开通
           </Button>
         </div>
       </dialog>
@@ -572,7 +557,7 @@ export default function AdmissionPage() {
           <Content controller={controller} />
         ) : (
           <div className="loading-shell">
-            <p>正在打开开通员工服务…</p>
+            <p>正在打开开通页面…</p>
           </div>
         )}
       </main>

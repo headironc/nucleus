@@ -34,7 +34,7 @@ test.beforeEach(async ({ page }) => {
   await page.waitForFunction(() => !!window.applicationPhoto);
 });
 
-async function choose(page: Page, width = 800, height = 600) {
+async function photoFile(page: Page, width = 800, height = 600) {
   // Actual browser-encoded pixels: a circle reveals any stretching in the crop.
   const base64 = await page.evaluate(({ width, height }) => {
     const canvas = document.createElement("canvas"); canvas.width = width; canvas.height = height;
@@ -44,7 +44,10 @@ async function choose(page: Page, width = 800, height = 600) {
     context.fillStyle = "#9b4239"; context.fillRect(0, 0, width / 8, height);
     return canvas.toDataURL("image/png").split(",")[1];
   }, { width, height });
-  await page.locator('input[type="file"]').setInputFiles({ name: "本人明确裁剪的照片.png", mimeType: "image/png", buffer: Buffer.from(base64, "base64") });
+  return { name: "本人明确裁剪的照片.png", mimeType: "image/png", buffer: Buffer.from(base64, "base64") };
+}
+async function choose(page: Page, width = 800, height = 600) {
+  await page.locator('input[type="file"]').setInputFiles(await photoFile(page, width, height));
   await expect(page.getByRole("img", { name: "工牌照片裁剪预览" })).toBeVisible();
 }
 
@@ -81,11 +84,193 @@ test("removal returns focus to the file field and destroys the previous canvas",
   expect(await node!.evaluate((canvas: HTMLCanvasElement) => [canvas.width, canvas.height])).toEqual([0, 0]);
 });
 
+test("the native photo picker keeps a visible keyboard target through confirmation, same-file reselection and removal", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  const file = await photoFile(page, 600, 800);
+  const input = page.locator('input[type="file"]');
+  const picker = page.locator(".application-photo-picker");
+  await expect(input).toHaveAccessibleName("选择照片");
+  await page.keyboard.press("Tab");
+  await expect(input).toBeFocused();
+  await expect(picker).toHaveCSS("outline-style", "solid");
+  await page.screenshot({
+    path: test.info().outputPath("photo-picker-keyboard-320-dark.png"),
+    fullPage: true,
+  });
+  const first = page.waitForEvent("filechooser");
+  await page.keyboard.press("Enter");
+  await (await first).setFiles(file);
+  await expect(input).toHaveAccessibleName("重新选择照片");
+  await expect(
+    page.getByRole("img", { name: "工牌照片裁剪预览" }),
+  ).toBeVisible();
+  expect(await input.inputValue()).toBe("");
+
+  await page.evaluate(() => {
+    const original = HTMLCanvasElement.prototype.toBlob;
+    HTMLCanvasElement.prototype.toBlob = function (
+      this: HTMLCanvasElement,
+      callback,
+      type,
+      quality,
+    ) {
+      original.call(
+        this,
+        (blob) => {
+          (
+            window as Window & { finishPhotoEncoding?: () => void }
+          ).finishPhotoEncoding = () => {
+            HTMLCanvasElement.prototype.toBlob = original;
+            delete (window as Window & { finishPhotoEncoding?: () => void })
+              .finishPhotoEncoding;
+            callback(blob);
+          };
+        },
+        type,
+        quality,
+      );
+    };
+  });
+  await page.getByRole("button", { name: "确认裁剪效果", exact: true }).click();
+  await expect(input).toBeDisabled();
+  await expect(picker).toHaveAttribute("aria-disabled", "true");
+  await page.waitForFunction(
+    () =>
+      !!(window as Window & { finishPhotoEncoding?: () => void })
+        .finishPhotoEncoding,
+  );
+  await page.evaluate(() =>
+    (window as Window & { finishPhotoEncoding?: () => void })
+      .finishPhotoEncoding!(),
+  );
+  await expect(
+    page.getByRole("button", { name: "已确认裁剪效果" }),
+  ).toBeDisabled();
+  await expect(input).toBeEnabled();
+  await expect(picker).toHaveAttribute("aria-disabled", "false");
+  await page.screenshot({
+    path: test.info().outputPath("photo-picker-confirmed-320-dark.png"),
+    fullPage: true,
+  });
+
+  await input.focus();
+  const repeated = page.waitForEvent("filechooser");
+  await page.keyboard.press("Enter");
+  await (await repeated).setFiles(file);
+  await expect(
+    page.getByRole("button", { name: "确认裁剪效果", exact: true }),
+  ).toBeEnabled();
+  expect(await input.inputValue()).toBe("");
+  await page.getByRole("button", { name: "移除照片", exact: true }).click();
+  await expect(input).toBeFocused();
+  await expect(input).toHaveAccessibleName("选择照片");
+  await expect(picker).toHaveCSS("outline-style", "solid");
+  await expect(page.getByRole("img", { name: "工牌照片裁剪预览" })).toHaveCount(
+    0,
+  );
+  expect(await page.evaluate(() => window.applicationPhoto.snapshot())).toEqual(
+    { kind: "empty" },
+  );
+  await page.screenshot({
+    path: test.info().outputPath("photo-picker-removed-focus-320-dark.png"),
+    fullPage: true,
+  });
+});
+
 test("rejects a subpixel crop rather than stretching a 3:4 image into a square", async ({ page }) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.emulateMedia({ colorScheme: "dark" });
   await choose(page, 3, 4);
   await page.getByLabel("放大", { exact: true }).fill("4");
-  await expect(page.getByRole("alert")).toContainText("无法保持照片比例");
+  await expect(page.getByRole("alert")).toContainText("裁剪区域过小");
   expect(await page.evaluate(() => window.applicationPhoto.snapshot())).toEqual({ kind: "error", error: "crop" });
+  await page.screenshot({ path: test.info().outputPath("application-photo-crop-320-dark.png"), fullPage: true });
+});
+
+test("photo failures explain the actual input or processing limit without retaining a confirmation", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  const wide = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 4097;
+    canvas.height = 1;
+    return canvas.toDataURL("image/png").split(",")[1];
+  });
+  // Two complete one-pixel APNG frames, with valid chunk checksums.
+  const animation =
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAACGFjVEwAAAACAAAAAPONk3AAAAAaZmNUTAAAAAAAAAABAAAAAQAAAAAAAAAAAAEACgAAWn8w0AAAAA1JREFUeJxj+M/A8B8ABQAB/4mZPR0AAAAaZmNUTAAAAAEAAAABAAAAAQAAAAAAAAAAAAEACgAAwQzaBAAAABFmZEFUAAAAAnicY2D4z/AfAAQBAf9i5+mcAAAAAElFTkSuQmCC";
+  const cases = [
+    {
+      error: "size",
+      type: "image/png",
+      bytes: Buffer.alloc(8 * 1024 * 1024 + 1),
+      copy: "照片超过 8 MiB，请选择较小的照片后重新裁剪。",
+    },
+    {
+      error: "format",
+      type: "image/svg+xml",
+      bytes: Buffer.from("<svg/>"),
+      copy: "请选择静态 JPEG、PNG 或 WebP 照片。",
+    },
+    {
+      error: "animation",
+      type: "image/png",
+      bytes: Buffer.from(animation, "base64"),
+      copy: "不支持动画图片，请选择静态 JPEG、PNG 或 WebP 照片。",
+    },
+    {
+      error: "dimensions",
+      type: "image/png",
+      bytes: Buffer.from(wide, "base64"),
+      copy: "照片每边最多 4096 像素，总像素最多 1600 万，请重新选择。",
+    },
+    {
+      error: "damaged",
+      type: "image/png",
+      bytes: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+      copy: "暂时无法读取这张照片，请重新选择。",
+    },
+  ];
+  for (const item of cases) {
+    await page
+      .locator('input[type="file"]')
+      .setInputFiles({
+        name: "test-photo",
+        mimeType: item.type,
+        buffer: item.bytes,
+      });
+    await expect(page.getByRole("alert")).toHaveText(item.copy);
+    expect(
+      await page.evaluate(() => window.applicationPhoto.snapshot()),
+    ).toEqual({ kind: "error", error: item.error });
+    await expect(
+      page.getByRole("button", { name: "已确认裁剪效果" }),
+    ).toHaveCount(0);
+    await page.screenshot({
+      path: test
+        .info()
+        .outputPath(`application-photo-${item.error}-320-dark.png`),
+      fullPage: true,
+    });
+  }
+  await choose(page);
+  // The real paint-failure entry point releases the previously displayed image.
+  await page.evaluate(() => window.applicationPhoto.previewFailed());
+  await expect(page.getByRole("alert")).toHaveText(
+    "照片暂时无法处理，请重新选择，或换用支持图片处理的浏览器。",
+  );
+  await expect(page.getByRole("img", { name: "工牌照片裁剪预览" })).toHaveCount(
+    0,
+  );
+  await page.screenshot({
+    path: test.info().outputPath("application-photo-unavailable-320-dark.png"),
+    fullPage: true,
+  });
 });
 
 test("a micrometers slot accepts a normal photo while keeping the circle square in confirmed pixels", async ({ page }) => {
@@ -195,10 +380,13 @@ test.describe("application choices from the implemented member directory", () =>
   test.beforeEach(async ({ page }) => { await page.goto(origin + "/fields"); });
 
   test("requires explicit department confirmation and clears the selected position when department changes", async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 900 });
     await expect(page.getByRole("checkbox")).not.toBeChecked();
     await page.getByLabel("职务（选填）", { exact: true }).selectOption({ label: "临床诊疗及患者全程照护协调负责人" });
+    await expect(page.locator(".application-selected").filter({ hasText: "已选职务：" })).toContainText("临床诊疗及患者全程照护协调负责人");
+    await page.screenshot({ path: test.info().outputPath("application-long-position-320-light.png"), fullPage: true });
     await page.getByRole("checkbox").check();
-    await page.getByLabel("实际科室", { exact: true }).selectOption({ label: "综合临床医学诊疗与长期健康照护协作中心 / 复杂慢性疾病多学科协作及康复随访门诊" });
+    await page.getByLabel("科室", { exact: true }).selectOption({ label: "综合临床医学诊疗与长期健康照护协作中心 / 复杂慢性疾病多学科协作及康复随访门诊" });
     await expect(page.getByRole("checkbox")).not.toBeChecked();
     await expect(page.getByLabel("职务（选填）", { exact: true })).toHaveValue("");
     expect(await page.evaluate(() => window.applicationChoices.rosterId)).toBe("");
@@ -226,7 +414,7 @@ test.describe("application choices from the implemented member directory", () =>
   for (const width of [320, 390, 768, 1440]) for (const colorScheme of ["light", "dark"] as const) {
     test(`complete preparation fields ${width} ${colorScheme}`, async ({ page }) => {
       await page.setViewportSize({ width, height: 1000 }); await page.emulateMedia({ colorScheme });
-      await page.getByLabel("实际科室", { exact: true }).selectOption({ label: "综合临床医学诊疗与长期健康照护协作中心 / 复杂慢性疾病多学科协作及康复随访门诊" });
+      await page.getByLabel("科室", { exact: true }).selectOption({ label: "综合临床医学诊疗与长期健康照护协作中心 / 复杂慢性疾病多学科协作及康复随访门诊" });
       await page.getByRole("checkbox").check();
       await page.getByLabel("职称（选填）", { exact: true }).selectOption({ label: "全科医学主任医师" });
       await page.getByLabel("领取地点", { exact: true }).selectOption({ label: "主院区综合服务大厅一层工牌办理窗口" });

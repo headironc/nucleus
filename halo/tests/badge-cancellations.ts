@@ -345,7 +345,7 @@ export async function cancelBadgeApplications(page: Page, context: Context) {
     );
     expect(hidden.code).toBe("target_unavailable");
     await expect(
-      page.getByText("无法使用这项内容，请刷新后重新准备。", { exact: true }),
+      page.getByText("目前无法查看这份申请。", { exact: true }),
     ).toBeVisible();
     await expect(
       page.locator(
