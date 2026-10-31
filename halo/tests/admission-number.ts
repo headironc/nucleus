@@ -369,24 +369,24 @@ export async function admissionAndFirstNumber(
     // The admission observer compares all number facts. Finish it before allocating.
     await page.getByRole("link", { name: "申请工号", exact: true }).click();
     await expect(
-      page.getByRole("heading", { name: "领取我的工号", exact: true }),
+      page.getByRole("heading", { name: "申请工号", exact: true }),
     ).toBeVisible();
     await expect(page.getByLabel("人员类别", { exact: true })).toHaveValue("");
     await expect(
-      page.getByRole("button", { name: "领取工号", exact: true }),
+      page.getByRole("button", { name: "下一步", exact: true }),
     ).toBeDisabled();
     await page.route("**/api/v1/workforce/numbers", captureAllocation);
     await page
       .getByLabel("人员类别", { exact: true })
       .selectOption(String(allocationInput.subtype));
-    await page.getByRole("button", { name: "领取工号", exact: true }).click();
+    await page.getByRole("button", { name: "下一步", exact: true }).click();
     await expect(
-      page.getByRole("button", { name: "暂不领取", exact: true }),
+      page.getByRole("button", { name: "返回修改", exact: true }),
     ).toBeFocused();
     await picture(page, "allocation-confirm", true);
-    await page.getByRole("button", { name: "确认领取", exact: true }).click();
+    await page.getByRole("button", { name: "确认申请", exact: true }).click();
     await expect(
-      page.getByRole("heading", { name: "领取结果待确认", exact: true }),
+      page.getByRole("heading", { name: "申请结果尚不确定", exact: true }),
     ).toBeVisible();
     expect(allocationCalls).toHaveLength(1);
     await picture(page, "allocation-unknown");
@@ -403,14 +403,14 @@ export async function admissionAndFirstNumber(
     });
     await page.reload();
     await expect(
-      page.getByRole("button", { name: "查看本次领取结果", exact: true }),
+      page.getByRole("button", { name: "查看申请结果", exact: true }),
     ).toBeEnabled({ timeout: 10_000 });
     expect(allocationCalls).toHaveLength(1);
     await page
-      .getByRole("button", { name: "查看本次领取结果", exact: true })
+      .getByRole("button", { name: "查看申请结果", exact: true })
       .click();
     await expect(
-      page.getByRole("heading", { name: "工号已领取", exact: true }),
+      page.getByRole("heading", { name: "工号已分配", exact: true }),
     ).toBeVisible();
     expect(allocationCalls).toHaveLength(2);
     expect(allocationCalls[1]).toEqual(allocationCalls[0]);
