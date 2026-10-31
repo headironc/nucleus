@@ -1,6 +1,19 @@
-import { expect, test, type Page, type Route } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Page,
+  type Request,
+  type Response,
+  type Route,
+} from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import {
+  appendFile,
+  mkdir,
+  readFile,
+  rename,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import type { components } from "../app/protocol/generated/types";
@@ -70,6 +83,15 @@ export async function reviewBadgeApplications(page: Page, context: Context) {
   const material = process.env.HALO_TEST_MATERIAL;
   if (!material)
     throw new Error("Badge reviews require supervised observation material");
+  const evidence = join(
+    process.env.HALO_TEST_EVIDENCE_DIR ?? material,
+    "badge-review-reads.jsonl",
+  );
+  const record = (stage: string, facts: Record<string, unknown> = {}) =>
+    appendFile(
+      evidence,
+      `${JSON.stringify({ stage, at: new Date().toISOString(), ...facts })}\n`,
+    );
   const viewport = page.viewportSize();
   const theme = await page.evaluate(() =>
     matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light",
@@ -122,13 +144,48 @@ export async function reviewBadgeApplications(page: Page, context: Context) {
       "X-Halo-Fixture-Source": source(session),
     });
     const target = new URL(path, page.url());
+    const events: Record<string, unknown>[] = [];
+    const note = (stage: string, facts: Record<string, unknown> = {}) =>
+      events.push({ stage, at: new Date().toISOString(), ...facts });
+    const relevant = (request: Request) =>
+      new URL(request.url()).pathname === target.pathname &&
+      new URL(request.url()).search === target.search &&
+      request.method() === method;
+    const matches = (request: Request) => ({
+      sessionMatches: request.headers()["session-id"] === session,
+      operationMatches: request.headers()["operation-id"] === operation,
+    });
+    const requested = (request: Request) => {
+      if (relevant(request)) note("request", matches(request));
+    };
+    const responded = (response: Response) => {
+      if (relevant(response.request()))
+        note("response", {
+          status: response.status(),
+          ...matches(response.request()),
+        });
+    };
+    const failed = (request: Request) => {
+      if (relevant(request))
+        note("request-failed", {
+          ...matches(request),
+          failure: request.failure()?.errorText ?? null,
+        });
+    };
+    page.on("request", requested);
+    page.on("response", responded);
+    page.on("requestfailed", failed);
+    await record("raw-start", { method, path, operation });
     const response = page.waitForResponse(
-      (value) =>
-        new URL(value.url()).pathname === target.pathname &&
-        new URL(value.url()).search === target.search &&
-        value.request().method() === method &&
-        value.request().headers()["session-id"] === session &&
-        value.request().headers()["operation-id"] === operation,
+      (value) => {
+        const request = value.request();
+        const matched = matches(request);
+        return (
+          relevant(request) &&
+          matched.sessionMatches &&
+          matched.operationMatches
+        );
+      },
       { timeout: 35_000 },
     );
     const consumed = page.evaluate(
@@ -152,8 +209,40 @@ export async function reviewBadgeApplications(page: Page, context: Context) {
       },
       { session, path, method, input, operation },
     );
-    const [received] = await Promise.all([response, consumed]);
-    return received;
+    let responseMatched = false,
+      bodyConsumed = false;
+    try {
+      const [received] = await Promise.all([
+        response.then((value) => {
+          responseMatched = true;
+          note("response-matched", { status: value.status() });
+          return value;
+        }),
+        consumed.then(() => {
+          bodyConsumed = true;
+          note("browser-body-consumed");
+        }),
+      ]);
+      return received;
+    } finally {
+      page.off("request", requested);
+      page.off("response", responded);
+      page.off("requestfailed", failed);
+      note("wait-finished", { responseMatched, bodyConsumed });
+      await appendFile(
+        evidence,
+        events
+          .map((event) => JSON.stringify({ method, path, operation, ...event }))
+          .join("\n") + "\n",
+      );
+      await record("raw-finished", {
+        method,
+        path,
+        operation,
+        responseMatched,
+        bodyConsumed,
+      });
+    }
   };
   const setup = async (
     session: string,
@@ -350,17 +439,19 @@ export async function reviewBadgeApplications(page: Page, context: Context) {
     return { operation, input, status };
   };
   const resourceDenied = async (session: string, target: Application) => {
-    const result = await trusted<{ code: string }>(
-      await wire(
-        await raw(
-          session,
-          `/api/v1/workforce/application-resources/${target.photo.resourceId}`,
-        ),
+    const response = await wire(
+      await raw(
+        session,
+        `/api/v1/workforce/application-resources/${target.photo.resourceId}`,
       ),
+    );
+    const result = await trusted<{ code: string }>(
+      response,
       "GET /api/v1/workforce/application-resources/{id}",
       404,
     );
     expect(result.code).toBe("target_unavailable");
+    return response.status;
   };
   const readPhoto = async (target: Application) => {
     const response = await raw(
@@ -384,16 +475,17 @@ export async function reviewBadgeApplications(page: Page, context: Context) {
     await expect(
       page.getByText("目前无法查看工牌审核。", { exact: true }),
     ).toBeVisible();
-    await trusted(
-      await wire(
-        await raw(reviewer.session.id, "/api/v1/workforce/applications"),
-      ),
-      "GET /api/v1/workforce/applications",
-      403,
+    await record("denied-ui-visible");
+    const denied = await wire(
+      await raw(reviewer.session.id, "/api/v1/workforce/applications"),
     );
-    await resourceDenied(reviewer.session.id, rejected);
+    await trusted(denied, "GET /api/v1/workforce/applications", 403);
+    await record("denied-management-verified", { status: denied.status });
+    const resourceStatus = await resourceDenied(reviewer.session.id, rejected);
+    await record("denied-resource-verified", { status: resourceStatus });
     await picture("denied-management");
     await observe("denied", "after", rejected);
+    await record("denied-after-observed");
 
     await configureApproval(true);
     await open(rejected);
