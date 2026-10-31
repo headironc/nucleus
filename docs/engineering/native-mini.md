@@ -10,7 +10,7 @@
 
 头像链接使用任务 HTTPS origin 和正式签名路径。自证适配器把这个 origin 映射至回环 HTTP，实际读取头像字节。自证不访问示例公网地址。
 
-真实应用报告 ready 后开始固定 15 分钟业务窗口。私有控制须在 120 秒内连接。Rust 排空上限另为 150 秒，控制连接收尾有 5 秒上限。监督器最多再等待进程 150 秒。超时后分别给予 SIGTERM 10 秒、SIGKILL 5 秒。强制终止、未知身份或未确认清理都会使运行失败。
+真实应用报告 ready 后开始固定 15 分钟业务窗口。私有控制须在 120 秒内连接。Rust 排空上限另为 150 秒，控制连接收尾有 5 秒上限。控制握手后，监督器另以独立的 15 分钟计时限制外部交互及信号、截止用例的退出等待。子进程停止调度时，这个计时仍然生效。失败收尾的内部 abort 最多等 5 秒回执。监督器随后最多等待进程 150 秒。此后分别给予 SIGTERM 10 秒和 SIGKILL 5 秒。强制终止、未知身份或未确认清理都会使运行失败。
 
 每次运行创建一个 `0700` 私有目录。`owner.json` 绑定任务、用途和 run，`input.json` 绑定后端来源、OpenAPI 摘要及正式客户端输入。`ready.json` 提供实际地址和 Unix socket。各 `checkpoint-<case>.json` 保存阶段绑定、执行前投影及独立事实原件。`evidence.json` 保存最终业务事实与 Rust 收尾结果，`runner.json` 保存实际进程退出和独立 PG 读回，`supervisor.log` 保存脱敏诊断。
 
@@ -31,6 +31,7 @@ node orbit/tools/protocol.ts
 node node_modules/typescript/bin/tsc -p tests/http/native/tsconfig.json --noEmit
 bun --no-env-file tests/http/native/runner.ts --owner "$TASK_OWNER" --client-revision "$CLIENT_COMMIT" --mode full
 NATIVE_SELFTEST_CLIENT_REVISION="$CLIENT_COMMIT" bun --no-env-file test tests/http/native/lifecycle.test.ts
+bun --no-env-file test tests/http/native/supervision.test.ts
 ```
 
 运行器从正式 Git 修订导出只读客户端输入，在该输入中运行原协议生成器。运行器核对客户端依赖锁与已准备依赖一致。随后加载该修订的真实 Controller 和 Storage。导出目录中的依赖链接指向现有缓存，不修改原客户端。源码修订、生成结果和运行材料分别记录。
@@ -38,6 +39,8 @@ NATIVE_SELFTEST_CLIENT_REVISION="$CLIENT_COMMIT" bun --no-env-file test tests/ht
 `full` 使用最小平台适配器发送真实 HTTP，并通过正常 Storage 保存材料。场景覆盖 R2、Other、Current、All 各一次已提交成功响应丢失。Current 和 All 通过后续有效登录读取正式原结果。读取 `503` 的组合从真实退出留下的有效恢复材料开始，核对恢复入口与材料保留。列表字段、排序、当前项、来源、跨账户隔离、签名头像及供应商调用次数也在该场景核对。
 
 生命周期回归覆盖正常停止、EOF、启动失败、两种信号、截止与未确认 PG 停止。短截止和清理中断使用专用 Rust 测试入口；原生入口始终使用 15 分钟窗口。清理中断会实际保留 PG。监督器只对身份已核实的自有实例执行有界兜底，并保持原运行失败。
+
+控制模式复用外部交互循环，向真实 Rust 控制通道提交错误的终止命令。拒绝之后继续读取快照，最后提交有效停止。监督回归另暂停一个真实子进程。随后核对父进程独立截止、TERM/KILL 升级和进程组消失。该用例不启动原生窗口或数据库。
 
 非原生自证只证明夹具与实际客户端代码的组合。原生验收另核真实 `wx.request`、页面、Storage、平台资格和连接路径。真实微信供应商弹窗另有验收范围。
 
@@ -55,6 +58,8 @@ bun --no-env-file tests/http/native/runner.ts \
 ```
 
 监督器自动完成 `hello`。随后通过同一前台进程的 stdin 逐行提交 JSON。每行上限为 64 KiB；未知字段、其他 run 和乱序命令均被拒绝。所有命令的 `run` 使用本次 ready 中的 UUID。关闭 stdin 会走 EOF 收尾。
+
+被拒绝的 `finish` 或 `abort` 保持控制通道开放。收到绑定当前 run 的终态回执后，外部交互循环才退出。
 
 | 命令         | 输入与作用                                                                                                      |
 | ------------ | --------------------------------------------------------------------------------------------------------------- |

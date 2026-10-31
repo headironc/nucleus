@@ -328,12 +328,12 @@ class LineSocket {
   }
 
   destroy() {
-    this.closed = true;
+    this.fail("private control socket closed");
     this.socket.destroy();
   }
 
   close() {
-    this.closed = true;
+    this.fail("private control socket closed");
     this.socket.end();
   }
 }
@@ -360,7 +360,7 @@ function delay(ms: number): Promise<void> {
   });
 }
 
-type Child = {
+export type Child = {
   process: ChildProcessWithoutNullStreams;
   ready: Promise<void>;
   exit: Promise<{ code: number | null; signal: NodeJS.Signals | null }>;
@@ -511,7 +511,7 @@ async function finish(
 
 async function abort(control: LineSocket, identity: Identity, reason: string) {
   try {
-    await control.send({ command: "abort", run: identity.run, reason });
+    await control.send({ command: "abort", run: identity.run, reason }, 5_000);
   } catch {
     /* The child still owns the disconnect and cleanup path. */
   }
@@ -587,7 +587,35 @@ async function controlExercise(
   );
   if (!snapshot?.ok || snapshot.code !== "snapshot")
     throw new Error("control snapshot was not accepted");
-  const report = await finish(control, identity, {});
+  const replies: any[] = [];
+  const commands = async function* () {
+    for (const command of [
+      { command: "finish", run: randomUUID() },
+      {
+        command: "abort",
+        run: identity.run,
+        reason: "operator_stop",
+        unexpected: true,
+      },
+      { command: "snapshot", run: identity.run },
+      { command: "finish", run: identity.run },
+    ])
+      yield JSON.stringify(command) + "\n";
+  };
+  await externalCommands(commands(), control, identity.run, (reply) =>
+    replies.push(reply),
+  );
+  if (
+    replies.length !== 4 ||
+    replies[0]?.code !== "invalid_run" ||
+    replies[1]?.code !== "invalid_control" ||
+    replies[2]?.code !== "snapshot"
+  ) {
+    throw new Error(
+      "rejected terminal command ended the external control interaction",
+    );
+  }
+  const report = replies[3];
   if (report.status !== "stopped")
     throw new Error(`control scenario status ${String(report.status)}`);
   const evidence = readFileSync(join(runDir, "evidence.json"), "utf8");
@@ -666,11 +694,65 @@ async function waitExit(
   return Promise.race([child.exit, delay(ms).then(() => undefined)]);
 }
 
-async function stopChild(child: Child): Promise<{
+/** A parent timer remains live even when the harness cannot schedule its own deadline. */
+export async function bounded<T>(
+  work: Promise<T>,
+  milliseconds: number,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("independent supervisor deadline expired")),
+          milliseconds,
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+async function externalCommands(
+  input: AsyncIterable<string>,
+  control: LineSocket,
+  run: string,
+  output: (reply: any) => void,
+): Promise<void> {
+  let buffer = "";
+  for await (const chunk of input) {
+    buffer += chunk;
+    if (Buffer.byteLength(buffer) > 64 * 1024)
+      throw new Error("native control input exceeded its limit");
+    for (;;) {
+      const end = buffer.indexOf("\n");
+      if (end < 0) break;
+      const line = buffer.slice(0, end);
+      buffer = buffer.slice(end + 1);
+      const command = JSON.parse(line);
+      const reply = await control.send(command);
+      output(reply);
+      if (
+        ["finish", "abort"].includes(command.command) &&
+        reply?.run === run &&
+        ["passed", "stopped", "failed"].includes(reply.status)
+      )
+        return;
+    }
+  }
+  control.destroy();
+}
+
+export async function stopChild(
+  child: Child,
+  naturalWait = 150_000,
+): Promise<{
   forced: boolean;
   exit: { code: number | null; signal: NodeJS.Signals | null };
 }> {
-  const natural = await waitExit(child, 150_000);
+  const natural = await waitExit(child, naturalWait);
   if (natural) return { forced: false, exit: natural };
   if (child.process.pid) process.kill(-child.process.pid, "SIGTERM");
   const terminated = await waitExit(child, 10_000);
@@ -840,28 +922,17 @@ async function main() {
       process.stdout.write(
         `native control ready: ${identity.run}; input one closed-schema JSON command per line\n`,
       );
-      const interaction = (async () => {
-        process.stdin.setEncoding("utf8");
-        let buffer = "";
-        for await (const chunk of process.stdin) {
-          buffer += chunk;
-          if (Buffer.byteLength(buffer) > 64 * 1024)
-            throw new Error("native control input exceeded its limit");
-          for (;;) {
-            const end = buffer.indexOf("\n");
-            if (end < 0) break;
-            const line = buffer.slice(0, end);
-            buffer = buffer.slice(end + 1);
-            const command = JSON.parse(line);
-            const reply = await control!.send(command);
-            process.stdout.write(JSON.stringify(reply) + "\n");
-            if (["finish", "abort"].includes(command.command)) return;
-          }
-        }
-        control!.destroy();
-      })();
+      process.stdin.setEncoding("utf8");
+      const interaction = externalCommands(
+        process.stdin,
+        control,
+        identity.run,
+        (reply) => {
+          process.stdout.write(JSON.stringify(reply) + "\n");
+        },
+      );
       try {
-        await Promise.race([interaction, child.exit]);
+        await bounded(Promise.race([interaction, child.exit]), 900_000);
       } finally {
         process.stdin.destroy();
       }
@@ -875,7 +946,7 @@ async function main() {
           -child.process.pid,
           options.mode === "sigterm" ? "SIGTERM" : "SIGINT",
         );
-      await child.exit;
+      await bounded(child.exit, 900_000);
     } else {
       control.destroy();
       control = undefined;
@@ -972,10 +1043,12 @@ async function main() {
   return 0;
 }
 
-const code = await main().catch((error) => {
-  process.stderr.write(
-    `${redact(error instanceof Error ? error.message : String(error))}\n`,
-  );
-  return 1;
-});
-process.exitCode = code;
+if (import.meta.main) {
+  const code = await main().catch((error) => {
+    process.stderr.write(
+      `${redact(error instanceof Error ? error.message : String(error))}\n`,
+    );
+    return 1;
+  });
+  process.exitCode = code;
+}
