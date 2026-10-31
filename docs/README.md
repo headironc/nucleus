@@ -97,6 +97,7 @@
 | [模型选择与协作](engineering/models.md)                 | 模型默认值与升级、运行限制、委派接纳和上下文接续                                        |
 | [模型行为场景](engineering/model-scenarios.md)          | 模型与交付流程的验收输入、可观察预期与失败条件                                          |
 | [Claude Code 调用](engineering/claude-code.md)          | 经官方 DeepSeek 或 OpenCode 的只读、有界执行调用、工具审批、输出与失败恢复边界          |
+| [小程序集成夹具](engineering/native-mini.md)            | 临时 HTTP/PG、有限私有控制、响应故障、自证与原生验收边界                                |
 | [项目标识](identifiers.md)                              | UUIDv4 服务端生成、客户端值解析、披露及非时间语义                                       |
 | [数据库](database.md)                                   | 连接、TLS、登录身份、运行权限和现有连接库                                               |
 | [部署设置](settings.md)                                 | 环境键、输入规则、默认值与消费所有者                                                    |
