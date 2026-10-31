@@ -238,6 +238,9 @@ test("normal supplier acceptance, terminal reload and real quota refusal", async
     page.getByRole("heading", { name: "验证码已提交发送" }),
   ).toBeFocused();
   await expect(page.getByText("请查看手机短信。")).toBeVisible();
+  await expect(
+    page.getByText("提交发送不代表已送达。请勿向他人透露验证码。", { exact: true }),
+  ).toBeVisible();
   expect(
     await page.evaluate(() => sessionStorage.getItem("halo.c1")),
   ).not.toContain("token");
@@ -268,7 +271,7 @@ test("normal supplier acceptance, terminal reload and real quota refusal", async
           .getAttribute("aria-hidden"),
         notice: result.querySelector(".notice")!.textContent,
         actions: result.querySelector(".result-actions")!.textContent,
-        footer: result.querySelector(".scope-note")!.textContent,
+        copy: result.querySelector(".result-copy")!.textContent,
         focused: document.activeElement!.textContent,
       })),
     );
