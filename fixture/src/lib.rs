@@ -9,6 +9,9 @@ use std::{
     collections::HashMap,
     fs,
     io::{self, Read, Seek, SeekFrom},
+    mem::ManuallyDrop,
+    net::{SocketAddr, TcpStream},
+    ops::Deref,
     os::unix::fs::{MetadataExt as _, PermissionsExt},
     path::{Path, PathBuf},
     process::Command,
@@ -51,6 +54,90 @@ pub struct Server {
     postgres: PostgreSQL,
     certificate: CertificateDer<'static>,
     directory: TempDir,
+}
+
+/// A server whose foreground supervisor must explicitly confirm stop.
+/// Unwinding preserves the cluster for that supervisor's identity-checked recovery.
+pub struct Supervised {
+    server: ManuallyDrop<Server>,
+}
+
+impl Supervised {
+    pub fn start() -> Self {
+        let mut owner = Self {
+            server: ManuallyDrop::new(Server::prepare()),
+        };
+        if owner.server.postgres.start().is_err() {
+            panic!(
+                "supervised PostgreSQL startup failed; retained {}",
+                owner.server.directory.path().display()
+            );
+        }
+        owner
+    }
+
+    pub fn stop(self) -> Result<(), String> {
+        ManuallyDrop::into_inner(self.server).stop()
+    }
+
+    /// Keep the cluster when protected work has not confirmed termination.
+    pub fn retain(self) -> PathBuf {
+        self.server.directory.path().to_path_buf()
+    }
+}
+
+impl Deref for Supervised {
+    type Target = Server;
+    fn deref(&self) -> &Self::Target {
+        &self.server
+    }
+}
+
+fn owned_postgres(directory: &Path, executable: &Path) -> io::Result<bool> {
+    let owner = directory.metadata()?.uid();
+    for entry in fs::read_dir("/proc")? {
+        let entry = entry?;
+        if !entry
+            .file_name()
+            .as_encoded_bytes()
+            .iter()
+            .all(u8::is_ascii_digit)
+        {
+            continue;
+        }
+        let metadata = match entry.metadata() {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        if metadata.uid() != owner {
+            continue;
+        }
+        let actual = match fs::read_link(entry.path().join("exe")) {
+            Ok(actual) => actual,
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    io::ErrorKind::NotFound | io::ErrorKind::PermissionDenied
+                ) =>
+            {
+                continue;
+            }
+            Err(error) => return Err(error),
+        };
+        if actual != executable {
+            continue;
+        }
+        let cwd = match fs::read_link(entry.path().join("cwd")) {
+            Ok(cwd) => cwd,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error),
+        };
+        if cwd.starts_with(directory) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 impl Server {
@@ -168,6 +255,72 @@ impl Server {
 
     pub fn authority(&self) -> PathBuf {
         self.directory.path().join("server.crt")
+    }
+
+    /// Stop this fixture's owned server and verify that its listener and directory ended.
+    ///
+    /// `Drop` keeps the existing convenience for shared tests, but it cannot report a failed
+    /// stop or prove that a listener was left behind. External supervisors use this readback.
+    pub fn stop(self) -> Result<(), String> {
+        let Self {
+            postgres,
+            certificate: _certificate,
+            directory,
+        } = self;
+        let path = directory.path().to_path_buf();
+        let address = SocketAddr::from(([127, 0, 0, 1], postgres.settings().port));
+        let result = (|| {
+            let executable = postgres
+                .settings()
+                .installation_dir
+                .join("bin/postgres")
+                .canonicalize()
+                .map_err(|_| "PostgreSQL executable identity failed")?;
+            let pid = fs::read_to_string(postgres.settings().data_dir.join("postmaster.pid"))
+                .map_err(|_| "PostgreSQL PID identity failed")?;
+            let pid: u32 = pid
+                .lines()
+                .next()
+                .ok_or("PostgreSQL PID missing")?
+                .parse()
+                .map_err(|_| "PostgreSQL PID invalid")?;
+            let process = PathBuf::from(format!("/proc/{pid}"));
+            if fs::read_link(process.join("exe"))
+                .map_err(|_| "PostgreSQL process identity failed")?
+                != executable
+                || fs::read_link(process.join("cwd"))
+                    .map_err(|_| "PostgreSQL data identity failed")?
+                    != postgres.settings().data_dir
+            {
+                return Err("PostgreSQL owner identity changed");
+            }
+            postgres.stop().map_err(|_| "PostgreSQL stop failed")?;
+            if postgres.status() != postgresql_embedded::Status::Stopped {
+                return Err("PostgreSQL retained a running status");
+            }
+            if process.exists()
+                || owned_postgres(&path, &executable)
+                    .map_err(|_| "PostgreSQL process readback failed")?
+            {
+                return Err("PostgreSQL processes remain in the owned directory");
+            }
+            match TcpStream::connect_timeout(&address, Duration::from_millis(250)) {
+                Err(error) if error.kind() == io::ErrorKind::ConnectionRefused => Ok(()),
+                _ => Err("PostgreSQL listener termination is unconfirmed"),
+            }
+        })();
+        if let Err(error) = result {
+            // The library's destructor retries stop and deletes data without reporting errors.
+            // Unknown termination must preserve both the live owner and recovery material.
+            std::mem::forget(postgres);
+            let retained = directory.keep();
+            return Err(format!("{error}; retained {}", retained.display()));
+        }
+        drop(postgres);
+        directory
+            .close()
+            .map_err(|_| format!("PostgreSQL directory cleanup failed: {}", path.display()))?;
+        Ok(())
     }
 
     fn key(&self) -> Vec<u8> {

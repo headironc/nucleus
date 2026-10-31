@@ -162,39 +162,77 @@ async function start(page: Page, context: BrowserContext, state = control()) {
   await page.goto(origin + "/workforce/number");
   return state;
 }
-async function confirm(page: Page) {
-  await expect(
-    page.getByRole("heading", { name: "领取我的工号" }),
-  ).toBeVisible();
+async function capture(page: Page, prefix: string) {
+  for (const colorScheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme });
+    for (const width of [320, 1440]) {
+      await page.setViewportSize({ width, height: 1000 });
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: test.info().outputPath(`${prefix}-${width}-${colorScheme}.png`),
+        fullPage: true,
+      });
+    }
+  }
+}
+async function confirm(page: Page, beforeSubmit?: () => Promise<void>) {
+  await expect(page.getByRole("heading", { name: "申请工号" })).toBeVisible();
   await page.getByLabel("人员类别", { exact: true }).selectOption("902");
-  await page.getByRole("button", { name: "领取工号", exact: true }).click();
+  await page.getByRole("button", { name: "下一步", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(page.getByRole("button", { name: "暂不领取" })).toBeFocused();
-  await page.getByRole("button", { name: "确认领取", exact: true }).click();
+  await expect(page.getByRole("button", { name: "返回修改" })).toBeFocused();
+  await beforeSubmit?.();
+  await page.getByRole("button", { name: "确认申请", exact: true }).click();
 }
 test("no preselection, explicit confirmation and complete fixed number", async ({
   page,
   context,
 }) => {
-  const state = await start(page, context);
-  await expect(
-    page.getByRole("heading", { name: "领取我的工号" }),
-  ).toBeVisible();
+  const state = control();
+  let release!: () => void;
+  const waiting = new Promise<void>((done) => {
+    release = done;
+  });
+  state.post = async () => {
+    await waiting;
+    return { status: 201, body: { code: "ok", number } };
+  };
+  await start(page, context, state);
+  await expect(page.getByRole("heading", { name: "申请工号" })).toBeVisible();
   await expect(page.getByLabel("人员类别", { exact: true })).toHaveValue("");
   await expect(page.getByRole("option")).toHaveCount(17);
   await expect(
-    page.getByRole("button", { name: "领取工号", exact: true }),
+    page.getByRole("button", { name: "下一步", exact: true }),
   ).toBeDisabled();
-  await confirm(page);
+  await confirm(page, async () => {
+    expect(state.posts).toHaveLength(0);
+    await expect(page.getByRole("dialog")).toContainText(
+      "工号分配后，不能自行更改人员类别。",
+    );
+    await capture(page, "confirmation");
+  });
+  try {
+    await expect(
+      page.getByRole("heading", { name: "正在办理工号申请", exact: true }),
+    ).toBeVisible();
+    await capture(page, "busy");
+  } finally {
+    release();
+  }
   await expect(
-    page.getByRole("heading", { name: "工号已领取", exact: true }),
+    page.getByRole("heading", { name: "工号已分配", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("92605", { exact: true })).toBeVisible();
   expect(state.posts).toHaveLength(1);
   expect(state.posts[0].input).toEqual({ subtype: 902 });
+  await capture(page, "complete");
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "工号已领取", exact: true }),
+    page.getByRole("heading", { name: "工号已分配", exact: true }),
   ).toBeVisible();
   expect(state.posts).toHaveLength(1);
 });
@@ -216,16 +254,17 @@ test("confirmed receipt is shown immediately when persistence fails", async ({
   const state = await start(page, context);
   await confirm(page);
   await expect(
-    page.getByRole("heading", { name: "工号已领取", exact: true }),
+    page.getByRole("heading", { name: "工号已分配", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("92605", { exact: true })).toBeVisible();
   await expect(page.getByRole("alert")).toHaveText(
-    "领取结果已确认，但浏览器未能保存。请记下工号，或返回员工服务查看。",
+    "本页未能保存申请结果。请记下工号，或返回员工服务查看。",
   );
   await expect(
-    page.getByRole("button", { name: "查看本次领取结果", exact: true }),
+    page.getByRole("button", { name: "查看申请结果", exact: true }),
   ).toHaveCount(0);
   expect(state.posts).toHaveLength(1);
+  await capture(page, "complete-unsaved");
 });
 
 test("unsaved pending material is never described as a confirmed allocation", async ({
@@ -243,16 +282,15 @@ test("unsaved pending material is never described as a confirmed allocation", as
   const state = await start(page, context);
   await confirm(page);
   await expect(
-    page.getByRole("heading", { name: "暂时无法保存申请信息", exact: true }),
+    page.getByRole("heading", { name: "申请信息暂时无法使用", exact: true }),
   ).toBeVisible();
   expect(state.posts).toHaveLength(0);
+  await capture(page, "storage");
   await page.getByRole("button", { name: "重新检查", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "领取结果待确认", exact: true }),
+    page.getByRole("heading", { name: "申请结果尚不确定", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("领取结果已确认", { exact: false })).toHaveCount(
-    0,
-  );
+  await expect(page.getByText("工号已分配", { exact: false })).toHaveCount(0);
   await expect(page.getByText("92605", { exact: true })).toHaveCount(0);
   expect(state.posts).toHaveLength(0);
 });
@@ -289,15 +327,16 @@ test("untrusted response requires reload even if its storage readback fails", as
   await start(page, context, state);
   await confirm(page);
   await expect(
-    page.getByRole("heading", { name: "请重新加载页面", exact: true }),
+    page.getByRole("heading", { name: "请重新加载", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "重新检查", exact: true }),
   ).toHaveCount(0);
   await expect(
-    page.getByRole("button", { name: "查看本次领取结果", exact: true }),
+    page.getByRole("button", { name: "查看申请结果", exact: true }),
   ).toHaveCount(0);
   expect(state.posts).toHaveLength(1);
+  await capture(page, "reload");
 });
 
 test("lost response reload replays only the same explicit original", async ({
@@ -317,22 +356,28 @@ test("lost response reload replays only the same explicit original", async ({
   await start(page, context, state);
   await confirm(page);
   await expect(
-    page.getByRole("heading", { name: "领取结果待确认" }),
+    page.getByRole("heading", { name: "申请结果尚不确定" }),
   ).toBeVisible();
+  await capture(page, "unknown");
+  state.currentNumber = { ...number, serial: 6 };
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "领取结果待确认" }),
+    page.getByRole("heading", { name: "申请结果尚不确定" }),
   ).toBeVisible();
   expect(state.posts).toHaveLength(1);
   await page.clock.setFixedTime(
     (await page.evaluate(() => Date.now())) + 6_000,
   );
-  await page.getByRole("button", { name: "查看本次领取结果" }).click();
+  await page.getByRole("button", { name: "查看申请结果" }).click();
   await expect(
-    page.getByRole("heading", { name: "工号已领取", exact: true }),
+    page.getByRole("heading", { name: "工号已分配", exact: true }),
   ).toBeVisible();
   expect(state.posts).toHaveLength(2);
   expect(state.posts[1]).toEqual(state.posts[0]);
+  await expect(
+    page.getByRole("region", { name: "本次分配的工号" }),
+  ).toContainText("92605");
+  await expect(page.getByText("92606", { exact: true })).toHaveCount(0);
 });
 test("mismatch remains closed after reload", async ({ page, context }) => {
   const state = control();
@@ -349,10 +394,11 @@ test("mismatch remains closed after reload", async ({ page, context }) => {
   await expect(
     page.getByRole("heading", { name: "无法继续提交本次申请" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "查看本次领取结果" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "查看申请结果" })).toHaveCount(
+    0,
+  );
   expect(state.posts).toHaveLength(1);
+  await capture(page, "mismatch");
 });
 test("account switch conceals original category and result", async ({
   page,
@@ -363,7 +409,7 @@ test("account switch conceals original category and result", async ({
   await start(page, context, state);
   await confirm(page);
   await expect(
-    page.getByRole("heading", { name: "领取结果待确认" }),
+    page.getByRole("heading", { name: "申请结果尚不确定" }),
   ).toBeVisible();
   await choose(page, other);
   await page.reload();
@@ -371,10 +417,11 @@ test("account switch conceals original category and result", async ({
     page.getByRole("heading", { name: "当前账户已变化" }),
   ).toBeVisible();
   await expect(page.getByText("测试同事", { exact: true })).toHaveCount(0);
-  await expect(
-    page.getByRole("button", { name: "查看本次领取结果" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "查看申请结果" })).toHaveCount(
+    0,
+  );
   expect(state.posts).toHaveLength(1);
+  await capture(page, "other-account");
 });
 test("paused service cannot open a first allocation form", async ({
   page,
@@ -384,11 +431,186 @@ test("paused service cannot open a first allocation form", async ({
   state.status = "suspended";
   await start(page, context, state);
   await expect(
-    page.getByRole("heading", { name: "暂时不能领取工号" }),
+    page.getByRole("heading", { name: "暂时无法申请工号" }),
   ).toBeVisible();
   await expect(page.getByLabel("人员类别", { exact: true })).toHaveCount(0);
   expect(state.posts).toHaveLength(0);
+  await capture(page, "ineligible");
 });
+
+test("current number closes the application form without an allocation", async ({
+  page,
+  context,
+}) => {
+  const state = control();
+  state.currentNumber = number;
+  await start(page, context, state);
+  await expect(
+    page.getByRole("heading", { name: "当前已有工号", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("人员类别", { exact: true })).toHaveCount(0);
+  expect(state.posts).toHaveLength(0);
+  await capture(page, "present");
+});
+
+test("a previous allocation refusal does not claim a current number exists", async ({
+  page,
+  context,
+}) => {
+  const state = control();
+  state.post = async () => ({ status: 409, body: { code: "number_present" } });
+  await start(page, context, state);
+  await confirm(page);
+  await expect(
+    page.getByRole("heading", { name: "本次申请未完成", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "你已取得过工号，不能再次申请。可返回员工服务查看当前工号。",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "当前已有工号", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "查看申请结果", exact: true }),
+  ).toHaveCount(0);
+  expect(state.posts).toHaveLength(1);
+  await capture(page, "previous-allocation");
+});
+
+test("pool exhaustion remains an original refusal and reselecting needs a new confirmation", async ({
+  page,
+  context,
+}) => {
+  const state = control();
+  state.post = async () =>
+    state.posts.length === 1
+      ? { status: 409, body: { code: "number_pool_exhausted" } }
+      : {
+          status: 201,
+          body: { code: "ok", number: { ...number, subtype: 901 } },
+        };
+  await start(page, context, state);
+  await confirm(page);
+  await expect(
+    page.getByRole("heading", { name: "本次申请未完成", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText(
+      "本次申请时，所选类别没有可分配的工号。只有人员类别选错时，才重新选择。",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  expect(state.posts).toHaveLength(1);
+  await capture(page, "pool-exhausted");
+  await page.getByRole("button", { name: "重新选择类别", exact: true }).click();
+  await expect(page.getByLabel("人员类别", { exact: true })).toHaveValue("");
+  expect(state.posts).toHaveLength(1);
+  await page.getByLabel("人员类别", { exact: true }).selectOption("901");
+  await page.getByRole("button", { name: "下一步", exact: true }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  expect(state.posts).toHaveLength(1);
+  await page.getByRole("button", { name: "确认申请", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "工号已分配", exact: true }),
+  ).toBeVisible();
+  expect(state.posts).toHaveLength(2);
+  expect(state.posts[1].operation).not.toBe(state.posts[0].operation);
+  expect(state.posts[1].input).toEqual({ subtype: 901 });
+  await expect(page.getByText("见习", { exact: true })).toBeVisible();
+});
+
+for (const [status, code] of [
+  [403, "permission_denied"],
+  [429, "rate_limited"],
+  [503, "dependency_unavailable"],
+] as const)
+  test(`allocation ${status} preserves the uncertain original instead of reopening the form`, async ({
+    page,
+    context,
+  }) => {
+    await page.clock.setFixedTime(Date.now());
+    const state = control();
+    state.post = async () => ({
+      status,
+      body: { code },
+      headers: { "Retry-After": "60" },
+    });
+    await start(page, context, state);
+    await confirm(page);
+    const title = status === 403 ? "暂时无法确认申请结果" : "申请结果尚不确定";
+    await expect(
+      page.getByRole("heading", { name: title, exact: true }),
+    ).toBeVisible();
+    await expect(page.getByLabel("人员类别", { exact: true })).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: /秒后可查看结果/ }),
+    ).toBeDisabled();
+    await capture(page, `pending-${status}`);
+    await page.reload();
+    await expect(
+      page.getByRole("heading", { name: title, exact: true }),
+    ).toBeVisible();
+    expect(state.posts).toHaveLength(1);
+  });
+
+test("missing original material never starts a replacement allocation", async ({
+  page,
+  context,
+}) => {
+  const state = control();
+  state.post = async () => null;
+  await start(page, context, state);
+  await confirm(page);
+  await expect(
+    page.getByRole("heading", { name: "申请结果尚不确定", exact: true }),
+  ).toBeVisible();
+  await page.evaluate(() =>
+    sessionStorage.removeItem("halo.number-allocation"),
+  );
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "无法查看申请结果", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("人员类别", { exact: true })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "查看申请结果", exact: true }),
+  ).toHaveCount(0);
+  expect(state.posts).toHaveLength(1);
+  await capture(page, "missing");
+});
+
+test("initial service read failure remains retryable without an allocation", async ({
+  page,
+  context,
+}) => {
+  await page.clock.setFixedTime(Date.now());
+  await page.route("**/api/v1/workforce/current/grant", (route) =>
+    route.fulfill({ status: 503, json: { code: "dependency_unavailable" } }),
+  );
+  const state = await start(page, context);
+  await expect(
+    page.getByRole("heading", { name: "工号信息暂时无法加载", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("人员类别", { exact: true })).toHaveCount(0);
+  expect(state.posts).toHaveLength(0);
+  await capture(page, "initial-unavailable");
+  await page.unroute("**/api/v1/workforce/current/grant");
+  await page.clock.setFixedTime(
+    (await page.evaluate(() => Date.now())) + 6_000,
+  );
+  await expect(
+    page.getByRole("button", { name: "重新加载", exact: true }),
+  ).toBeEnabled();
+  await page.getByRole("button", { name: "重新加载", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "申请工号", exact: true }),
+  ).toBeVisible();
+  expect(state.posts).toHaveLength(0);
+});
+
 for (const width of [320, 390, 768, 1440])
   for (const colorScheme of ["light", "dark"] as const) {
     test(`layout ${width} ${colorScheme}`, async ({ page, context }) => {
@@ -396,7 +618,7 @@ for (const width of [320, 390, 768, 1440])
       await page.emulateMedia({ colorScheme });
       await start(page, context);
       await expect(
-        page.getByRole("heading", { name: "领取我的工号" }),
+        page.getByRole("heading", { name: "申请工号" }),
       ).toBeVisible();
       expect(
         await page.evaluate(
@@ -404,14 +626,16 @@ for (const width of [320, 390, 768, 1440])
         ),
       ).toBe(true);
       await page.screenshot({
-        path: `test-results/number-${width}-${colorScheme}.png`,
+        path: test.info().outputPath(`number-${width}-${colorScheme}.png`),
         fullPage: true,
       });
       await page.getByLabel("人员类别", { exact: true }).selectOption("902");
-      await page.getByRole("button", { name: "领取工号", exact: true }).click();
+      await page.getByRole("button", { name: "下一步", exact: true }).click();
       await expect(page.getByRole("dialog")).toBeVisible();
       await page.screenshot({
-        path: `test-results/number-dialog-${width}-${colorScheme}.png`,
+        path: test
+          .info()
+          .outputPath(`number-dialog-${width}-${colorScheme}.png`),
       });
     });
   }
