@@ -8,6 +8,7 @@ import {
   prepareApplicationPhoto,
   previewApplication,
   submitApplication,
+  cancelApplication,
   application,
   applications,
   applicationResource,
@@ -59,6 +60,8 @@ export type ApplicationState =
       artwork: ApplicationArtwork;
     }
   | { kind: "unknown" }
+  | { kind: "cancellation-unknown"; retryAt: number; message: string }
+  | { kind: "cancelled" }
   | {
       kind: "created";
       application: Pick<Application, "id" | "kind" | "status" | "submittedAt">;
@@ -70,6 +73,9 @@ export type ApplicationState =
       artwork?: ApplicationArtwork;
       media?: "loading" | "failed";
       retryAt?: number;
+      cancellation?: boolean;
+      pending?: boolean;
+      notice?: string;
     };
 
 const READ_ERROR = "暂时无法加载，请刷新后重试。";
@@ -92,6 +98,7 @@ const DEFAULT_API = {
   photo: prepareApplicationPhoto,
   preview: previewApplication,
   submit: submitApplication,
+  cancellation: cancelApplication,
   list: applications,
   detail: application,
   resource: applicationResource,
@@ -121,6 +128,8 @@ export class Applications {
   private timer?: ReturnType<typeof setTimeout>;
   private uncertainAccount?: string;
   private submittingAccount?: string;
+  private cancellingAccount?: string;
+  private uncertainCancellation?: string;
   private page = 1;
   private retryAt = 0;
   private waitingSelection?: string;
@@ -157,6 +166,9 @@ export class Applications {
     return state.kind === "ready" ? state.account.id : undefined;
   }
   private cancel() {
+    if (this.cancellingAccount)
+      this.uncertainCancellation = this.cancellingAccount;
+    this.cancellingAccount = undefined;
     if (this.submittingAccount) this.uncertainAccount = this.submittingAccount;
     this.submittingAccount = undefined;
     this.generation++;
@@ -199,7 +211,8 @@ export class Applications {
       this.show({ kind: "unknown" });
       return;
     }
-    if (service.kind === "ready") void this.load(this.page);
+    if (this.mode.kind !== "new" || service.kind === "ready")
+      void this.load(this.page);
     else if (service.kind === "unavailable" || service.kind === "limited")
       this.show({
         kind: "error",
@@ -244,15 +257,44 @@ export class Applications {
     this.timer = setTimeout(() => {
       if (!active()) return;
       const unknown = !!this.submittingAccount;
+      const cancelling = !!this.cancellingAccount;
+      const state = this.state;
       this.cancel();
       this.clear();
+      const retryAt = this.dependencies.now() + 5000;
+      if (this.mode.kind !== "new") {
+        this.retryAt = retryAt;
+        this.waitingSelection = `${binding.selection.id}/${binding.selection.revision}`;
+      }
+      if (cancelling || this.uncertainCancellation === this.account()) {
+        this.show({
+          kind: "cancellation-unknown",
+          retryAt,
+          message: "暂时无法确认取消结果。请刷新详情查看，暂时不要重复提交。",
+        });
+        return;
+      }
+      if (
+        !unknown &&
+        state.kind === "detail" &&
+        state.result.access === "full" &&
+        state.media === "loading"
+      ) {
+        this.show({
+          kind: "detail",
+          result: state.result,
+          media: "failed",
+          retryAt,
+        });
+        return;
+      }
       this.show(
         unknown
           ? { kind: "unknown" }
           : {
               kind: "error",
               message: READ_ERROR,
-              retryAt: this.dependencies.now() + 5000,
+              retryAt,
             },
       );
     }, 35000);
@@ -311,10 +353,21 @@ export class Applications {
       this.show({ kind: "edit", context: this.context, message, retryAt });
     else {
       this.clear();
-      this.show({ kind: "error", message, retryAt });
+      this.show(
+        this.uncertainCancellation === this.account()
+          ? {
+              kind: "cancellation-unknown",
+              retryAt,
+              message:
+                result.status === 404
+                  ? "目前无法查看这份申请，仍无法确认刚才的取消是否成功。可返回列表查看当前允许访问的记录。"
+                  : "暂时无法确认取消结果。请刷新详情查看，暂时不要重复提交。",
+            }
+          : { kind: "error", message, retryAt },
+      );
     }
   }
-  async load(page = 1): Promise<void> {
+  async load(page = 1, notice?: string): Promise<void> {
     if (this.dependencies.now() < this.retryAt) {
       this.show({ kind: "error", message: READ_ERROR, retryAt: this.retryAt });
       return;
@@ -422,12 +475,23 @@ export class Applications {
         );
         if (!(await scope.guard())) return;
         if (result.kind !== "ok") return this.failure(result, scope.binding);
+        this.retryAt = 0;
+        const uncertain = this.uncertainCancellation === this.account();
+        this.uncertainCancellation = undefined;
+        notice ??= uncertain
+          ? "已读取当前状态。请核对申请后再决定是否取消。"
+          : undefined;
         if (result.value.access === "restricted") {
-          this.show({ kind: "detail", result: result.value });
+          this.show({ kind: "detail", result: result.value, notice });
           return;
         }
         const item = result.value.application;
-        this.show({ kind: "detail", result: result.value, media: "loading" });
+        this.show({
+          kind: "detail",
+          result: result.value,
+          media: "loading",
+          notice,
+        });
         const resources = await this.api.artwork(
           session,
           item.snapshot.template,
@@ -473,9 +537,11 @@ export class Applications {
           return this.detailMediaFailure(artwork, scope.binding, result.value);
         this.previewArtwork = artwork.value;
         this.show({
+          ...(this.state.kind === "detail" ? this.state : {}),
           kind: "detail",
           result: result.value,
           artwork: artwork.value,
+          media: undefined,
         });
       }
     } catch {
@@ -487,6 +553,73 @@ export class Applications {
             this.state.result,
           );
         else await this.failure({ kind: "disconnected" }, scope.binding);
+      }
+    } finally {
+      scope.finish();
+    }
+  }
+  confirmCancellation() {
+    const state = this.state;
+    if (
+      state.kind !== "detail" ||
+      state.pending ||
+      !["submitted", "approved"].includes(state.result.application.status)
+    )
+      return;
+    this.show({ ...state, cancellation: true });
+  }
+  dismissCancellation() {
+    if (this.state.kind === "detail" && !this.state.pending)
+      this.show({ ...this.state, cancellation: false });
+  }
+  async cancelApplication() {
+    const state = this.state;
+    if (state.kind !== "detail" || !state.cancellation || state.pending) return;
+    const expectedStatus = state.result.application.status;
+    if (expectedStatus !== "submitted" && expectedStatus !== "approved") return;
+    const scope = this.scope();
+    if (!scope) return;
+    this.show({ ...state, pending: true });
+    try {
+      if (!(await scope.guard())) return;
+      this.cancellingAccount = this.account();
+      const result = await this.api.cancellation(
+        scope.binding.selection.id,
+        state.result.application.id,
+        { mode: "self", expectedStatus },
+        scope.signal,
+      );
+      if (!(await scope.guard())) return;
+      this.cancellingAccount = undefined;
+      if (result.kind === "ok") {
+        this.uncertainCancellation = undefined;
+        this.clear();
+        this.show({ kind: "cancelled" });
+      } else if (result.kind !== "failure" || result.status >= 500) {
+        this.uncertainCancellation = this.account();
+        this.clear();
+        this.retryAt =
+          result.kind === "failure"
+            ? this.dependencies.now() + result.retryAfter
+            : 0;
+        this.waitingSelection = `${scope.binding.selection.id}/${scope.binding.selection.revision}`;
+        this.show({
+          kind: "cancellation-unknown",
+          retryAt: this.retryAt,
+          message: "暂时无法确认取消结果。请刷新详情查看，暂时不要重复提交。",
+        });
+      } else if (result.code === "state_changed") {
+        await this.load(1, "申请状态已更新。请核对当前状态后重新确认取消。");
+      } else await this.failure(result, scope.binding);
+    } catch {
+      if (scope.active()) {
+        this.cancel();
+        this.clear();
+        this.show({
+          kind: "cancellation-unknown",
+          retryAt: 0,
+          message: "暂时无法确认取消结果。请刷新详情查看，暂时不要重复提交。",
+        });
       }
     } finally {
       scope.finish();
@@ -684,6 +817,7 @@ export class Applications {
     }
   }
   previewFailed() {
+    if (this.state.kind === "detail" && this.state.pending) return;
     if (this.state.kind === "detail") {
       const result = this.state.result;
       this.cancel();

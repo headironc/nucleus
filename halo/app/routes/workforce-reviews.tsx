@@ -14,6 +14,7 @@ import {
   type ReviewDetail,
 } from "../workforce/reviews";
 import { ReviewDialog } from "../workforce/review-dialog";
+import { CancellationDialog } from "../workforce/cancellation-dialog";
 import {
   APPLICATION_KINDS as KINDS,
   APPLICATION_STATUSES as STATUSES,
@@ -173,7 +174,8 @@ function Detail({
   now: number;
 }) {
   const approveTrigger = useRef<HTMLButtonElement>(null),
-    rejectTrigger = useRef<HTMLButtonElement>(null);
+    rejectTrigger = useRef<HTMLButtonElement>(null),
+    cancelTrigger = useRef<HTMLButtonElement>(null);
   const item = state.result.application;
   const eligible =
     state.result.current.accountActive &&
@@ -273,7 +275,9 @@ function Detail({
                 <p>
                   {item.status === "approved"
                     ? "审核通过，工牌制作和发放另行办理。"
-                    : "审核未通过，申请人可修改资料后重新申请。"}
+                    : item.status === "cancelled"
+                      ? "申请已取消。需要办理时须重新申请。"
+                      : "审核未通过，申请人可修改资料后重新申请。"}
                 </p>
                 <ReviewFacts application={item} />
               </>
@@ -282,6 +286,16 @@ function Detail({
         </aside>
       </div>
       <div className="review-actions">
+        {(item.status === "submitted" || item.status === "approved") && (
+          <Button
+            ref={cancelTrigger}
+            className="review-danger"
+            disabled={state.pending}
+            onClick={() => controller.confirm("cancel")}
+          >
+            取消申请
+          </Button>
+        )}
         <Button
           className="secondary"
           disabled={state.pending || mediaWait > 0}
@@ -291,7 +305,17 @@ function Detail({
         </Button>
         <a href="/workforce/reviews">返回审核列表</a>
       </div>
-      {state.confirmation && (
+      {state.confirmation === "cancel" && (
+        <CancellationDialog
+          application={item}
+          mode="manager"
+          pending={state.pending}
+          trigger={cancelTrigger}
+          close={() => controller.dismiss()}
+          submit={(reason) => void controller.submit(reason)}
+        />
+      )}
+      {state.confirmation && state.confirmation !== "cancel" && (
         <ReviewDialog
           application={item}
           decision={state.confirmation}
@@ -402,7 +426,9 @@ export function ReviewsPanel({ controllers }: { controllers: Controllers }) {
             <section className="review-panel review-message">
               <h2>
                 {state.kind === "unknown"
-                  ? "暂时无法确认审核结果"
+                  ? state.message.includes("取消")
+                    ? "暂时无法确认取消结果"
+                    : "暂时无法确认审核结果"
                   : state.kind === "missing"
                     ? "目前无法查看这份申请"
                     : "工牌申请暂时无法加载"}
@@ -419,6 +445,18 @@ export function ReviewsPanel({ controllers }: { controllers: Controllers }) {
                     : controller.mode.kind === "detail"
                       ? "刷新详情"
                       : "重新加载"}
+                </Button>
+                <a href="/workforce/reviews">返回审核列表</a>
+              </div>
+            </section>
+          )}
+          {state.kind === "cancelled" && (
+            <section className="review-panel review-message">
+              <h2>申请已取消</h2>
+              <p role="status">取消已确认，原申请内容和已有审核记录仍保留。</p>
+              <div className="review-actions">
+                <Button onClick={() => void controller.load()}>
+                  查看申请记录
                 </Button>
                 <a href="/workforce/reviews">返回审核列表</a>
               </div>

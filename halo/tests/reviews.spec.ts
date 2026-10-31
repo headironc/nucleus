@@ -8,6 +8,7 @@ import type {
   Application,
   ManagedApplicationDetail,
   ReviewInput,
+  CancellationInput,
 } from "../app/protocol/applications";
 import {
   accountId,
@@ -90,18 +91,28 @@ function control() {
     denied: false,
     expired: false,
     restricted: false,
+    grantFailure: false,
     mediaFailed: false,
     mediaLimited: false,
     readFailure: false,
     limited: false,
     loseResponse: false,
     stateChanged: false,
+    cancellationLost: false,
+    cancellationRace: false,
+    cancellationInvalid: false,
+    cancellationStatus: 0,
+    cancellationWrongId: false,
+    cancellationGate: undefined as Promise<void> | undefined,
+    cancellations: [] as CancellationInput[],
     gate: undefined as Promise<void> | undefined,
+    ownGate: undefined as Promise<void> | undefined,
     decisionGate: undefined as Promise<void> | undefined,
     mediaGate: undefined as Promise<void> | undefined,
     photo: Buffer.alloc(0),
     background: Buffer.alloc(0),
     listQueries: [] as string[],
+    ownReads: 0,
     detailReads: 0,
     resourceReads: [] as string[],
     decisions: [] as ReviewInput[],
@@ -143,7 +154,12 @@ async function install(page: Page, state: Control) {
           ? { status: 401, json: { code: "authentication_invalid" } }
           : { json: accountMaterial(session) },
       );
-    if (path === "/api/v1/workforce/current/grant")
+    if (path === "/api/v1/workforce/current/grant") {
+      if (state.grantFailure)
+        return route.fulfill({
+          status: 503,
+          json: { code: "dependency_unavailable" },
+        });
       return route.fulfill({
         json: {
           code: "ok",
@@ -158,8 +174,11 @@ async function install(page: Page, state: Control) {
           },
         },
       });
+    }
     if (path.endsWith("/reviews") && request.method() === "POST")
       state.decisions.push(request.postDataJSON() as ReviewInput);
+    if (path.endsWith("/cancellations") && request.method() === "POST")
+      state.cancellations.push(request.postDataJSON() as CancellationInput);
     if (path.startsWith("/api/")) {
       if (state.expired)
         return route.fulfill({
@@ -182,6 +201,50 @@ async function install(page: Page, state: Control) {
           status: 503,
           json: { code: "dependency_unavailable" },
         });
+    }
+    if (path.endsWith("/cancellations") && request.method() === "POST") {
+      const item = state.records.find((item) =>
+        path.endsWith(`/${item.id}/cancellations`),
+      );
+      if (!item)
+        return route.fulfill({
+          status: 404,
+          json: { code: "target_unavailable" },
+        });
+      if (state.cancellationGate) await state.cancellationGate;
+      if (state.cancellationRace) {
+        state.cancellationRace = false;
+        state.records[state.records.indexOf(item)] = reviewed(
+          item,
+          "approve",
+          "",
+        );
+        return route.fulfill({ status: 409, json: { code: "state_changed" } });
+      }
+      if (state.cancellationInvalid)
+        return route.fulfill({ status: 422, json: { code: "invalid_input" } });
+      if (state.cancellationStatus)
+        return route.fulfill({
+          status: state.cancellationStatus,
+          headers: { "Retry-After": "9" },
+          json: {
+            code:
+              state.cancellationStatus === 429
+                ? "rate_limited"
+                : "outcome_unknown",
+          },
+        });
+      item.status = "cancelled";
+      if (state.cancellationLost) return route.abort("connectionfailed");
+      return route.fulfill({
+        json: {
+          code: "ok",
+          application: {
+            id: state.cancellationWrongId ? id(99) : item.id,
+            status: "cancelled",
+          },
+        },
+      });
     }
     if (path.endsWith("/reviews") && request.method() === "POST") {
       const index = state.records.findIndex((item) =>
@@ -300,6 +363,7 @@ async function install(page: Page, state: Control) {
       path === "/api/v1/workforce/current/applications" ||
       path.startsWith("/api/v1/workforce/current/applications/")
     ) {
+      state.ownReads++;
       const matching = state.records.filter(
         (item) =>
           !state.restricted ||
@@ -317,13 +381,13 @@ async function install(page: Page, state: Control) {
         path === "/api/v1/workforce/current/applications"
           ? { count: matching.length, applications: matching }
           : { application: selected };
-      return route.fulfill({
-        json: {
-          code: "ok",
-          access: state.restricted ? "restricted" : "full",
-          ...body,
-        },
+      const value = structuredClone({
+        code: "ok",
+        access: state.restricted ? "restricted" : "full",
+        ...body,
       });
+      if (state.ownGate) await state.ownGate;
+      return route.fulfill({ json: value });
     }
     const resource = resources.get(path);
     if (resource) return route.fulfill(resource);
@@ -368,6 +432,379 @@ async function chooseSession(page: Page, account: string) {
       throw new Error("Selection changed");
     window.dispatchEvent(new Event("focus"));
   }, account);
+}
+
+for (const restricted of [false, true]) {
+  for (const status of ["submitted", "approved"] as const) {
+    test(`cancellation self ${status}, restricted=${restricted}: explicit confirmation and history projection`, async ({
+      page,
+    }, info) => {
+      const state = control();
+      state.restricted = restricted;
+      state.grantFailure = restricted;
+      if (status === "approved")
+        state.records[0] = reviewed(state.records[0], "approve", "");
+      const original = structuredClone(state.records[0]);
+      await install(page, state);
+      await page.goto(origin + "/workforce/applications/" + original.id);
+      await page.getByRole("button", { name: "取消申请", exact: true }).click();
+      const dialog = page.getByRole("dialog");
+      await expect(dialog.getByRole("textbox")).toHaveCount(0);
+      await expect(
+        dialog.getByRole("button", { name: "保留申请" }),
+      ).toBeFocused();
+      if (restricted) {
+        await expect(dialog.locator("dt")).toHaveText([
+          "申请编号",
+          "申请类型",
+          "申请状态",
+          "提交时间",
+        ]);
+        await expect(dialog).not.toContainText(original.snapshot.name);
+        expect(state.resourceReads).toHaveLength(0);
+      }
+      await dialog
+        .getByRole("button", { name: "取消申请", exact: true })
+        .click();
+      await expect(
+        page.getByRole("heading", { name: "申请已取消", exact: true }),
+      ).toBeVisible();
+      expect(state.cancellations).toEqual([
+        { mode: "self", expectedStatus: status },
+      ]);
+      await page.screenshot({
+        path: info.outputPath(
+          `self-${status}-${restricted ? "restricted" : "full"}-cancelled.png`,
+        ),
+      });
+      await page.goto(origin + "/workforce/applications");
+      if (restricted) {
+        await expect(page.getByText("暂无可查看的工牌申请。")).toBeVisible();
+        await expect(page.getByText("共 0 项 · 第 1 页")).toBeVisible();
+      } else {
+        await expect(page.locator(".application-list")).toContainText("已取消");
+        await page.getByRole("link", { name: "查看详情" }).click();
+        await expect(
+          page.getByText(original.snapshot.name, { exact: true }),
+        ).toBeVisible();
+        await expect(
+          page.getByRole("button", { name: "取消申请", exact: true }),
+        ).toHaveCount(0);
+        if (status === "approved")
+          await expect(page.getByText("林*", { exact: true })).toBeVisible();
+        else await expect(page.getByText("申请在审核前已取消。")).toBeVisible();
+      }
+    });
+  }
+}
+
+for (const status of ["submitted", "approved"] as const) {
+  test(`cancellation manager ${status}: inactive applicant, private reason and retained approval`, async ({
+    page,
+  }, info) => {
+    const state = control();
+    state.current.accountActive = false;
+    state.current.participationActive = false;
+    if (status === "approved")
+      state.records[0] = reviewed(state.records[0], "approve", "");
+    const original = structuredClone(state.records[0]);
+    await install(page, state);
+    await page.goto(origin + "/workforce/reviews/" + original.id);
+    await page.getByRole("button", { name: "取消申请", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("button", { name: "取消申请", exact: true }).click();
+    await expect(dialog.getByRole("alert")).toHaveText("请填写取消说明。");
+    expect(state.cancellations).toHaveLength(0);
+    await dialog
+      .getByRole("textbox", { name: "取消说明" })
+      .fill("重复申请，仅用于内部核对。");
+    await dialog.getByRole("button", { name: "取消申请", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "申请已取消", exact: true }),
+    ).toBeVisible();
+    expect(state.cancellations).toEqual([
+      {
+        mode: "manager",
+        expectedStatus: status,
+        reason: "重复申请，仅用于内部核对。",
+      },
+    ]);
+    await page.getByRole("button", { name: "查看申请记录" }).click();
+    await expect(
+      page.getByText(original.snapshot.name, { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("重复申请，仅用于内部核对。", { exact: true }),
+    ).toHaveCount(0);
+    if (status === "approved")
+      await expect(page.getByText("林*", { exact: true })).toBeVisible();
+    else await expect(page.getByText("申请在审核前已取消。")).toBeVisible();
+    await page.screenshot({
+      path: info.outputPath(`manager-${status}-history.png`),
+    });
+    await page.goto(origin + "/workforce/reviews");
+    await page.getByRole("button", { name: "已取消", exact: true }).click();
+    await expect(page.getByRole("table")).toContainText(original.snapshot.name);
+    expect(state.listQueries.at(-1)).toBe("?page=1&size=20&status=cancelled");
+  });
+}
+
+for (const mode of ["self", "manager"] as const) {
+  test(`cancellation ${mode}: a canvas failure cannot reopen a pending write`, async ({
+    page,
+  }) => {
+    const state = control();
+    await install(page, state);
+    await page.goto(
+      origin +
+        `/workforce/${mode === "self" ? "applications" : "reviews"}/` +
+        state.records[0].id,
+    );
+    await expect(page.getByRole("img", { name: "工牌预览" })).toBeVisible();
+    let release!: () => void;
+    state.cancellationGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await page.getByRole("button", { name: "取消申请", exact: true }).click();
+    if (mode === "manager")
+      await page.getByRole("textbox", { name: "取消说明" }).fill("重复申请");
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "取消申请", exact: true })
+      .click();
+    await expect.poll(() => state.cancellations.length).toBe(1);
+    await page.evaluate(async () => {
+      const canvas = document.querySelector<HTMLCanvasElement>("canvas")!;
+      canvas.getContext = () => {
+        throw new Error("Controlled canvas failure");
+      };
+      canvas.style.width = "100px";
+      await new Promise<void>((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+      );
+    });
+    await expect(
+      page.getByRole("dialog").getByRole("button", { name: "保留申请" }),
+    ).toBeDisabled();
+    expect(state.cancellations).toHaveLength(1);
+    release();
+    await expect(
+      page.getByRole("heading", { name: "申请已取消", exact: true }),
+    ).toBeVisible();
+    expect(state.cancellations).toHaveLength(1);
+  });
+  for (const status of [422, 429, 503]) {
+    test(`cancellation ${mode}: HTTP ${status} preserves the outcome and retry boundary`, async ({
+      page,
+    }) => {
+      const state = control();
+      state.cancellationInvalid = status === 422;
+      state.cancellationStatus = status === 422 ? 0 : status;
+      await install(page, state);
+      await page.clock.install();
+      await page.goto(
+        origin +
+          `/workforce/${mode === "self" ? "applications" : "reviews"}/` +
+          state.records[0].id,
+      );
+      await page.getByRole("button", { name: "取消申请", exact: true }).click();
+      if (mode === "manager")
+        await page.getByRole("textbox", { name: "取消说明" }).fill("重复申请");
+      await page
+        .getByRole("dialog")
+        .getByRole("button", { name: "取消申请", exact: true })
+        .click();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      if (status === 503)
+        await expect(
+          page.getByRole("heading", { name: "暂时无法确认取消结果" }),
+        ).toBeVisible();
+      else
+        await expect(
+          page.getByRole("heading", { name: "暂时无法确认取消结果" }),
+        ).toHaveCount(0);
+      await expect(
+        page.getByRole("button", {
+          name: status === 422 ? /秒后可刷新/ : /9 秒后可刷新/,
+        }),
+      ).toBeDisabled();
+      expect(state.cancellations).toHaveLength(1);
+      await expect(
+        page.getByRole("button", { name: "取消申请", exact: true }),
+      ).toHaveCount(0);
+    });
+  }
+  for (const outcome of ["wrong-id", "timeout", "account-change"] as const) {
+    test(`cancellation ${mode}: ${outcome} never accepts a late or wrong acknowledgement`, async ({
+      page,
+    }, info) => {
+      const state = control();
+      await install(page, state);
+      await page.clock.install();
+      await page.goto(
+        origin +
+          `/workforce/${mode === "self" ? "applications" : "reviews"}/` +
+          state.records[0].id,
+      );
+      await page.getByRole("button", { name: "取消申请", exact: true }).click();
+      if (mode === "manager")
+        await page.getByRole("textbox", { name: "取消说明" }).fill("重复申请");
+      let release!: () => void;
+      if (outcome === "wrong-id") state.cancellationWrongId = true;
+      else
+        state.cancellationGate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      await page
+        .getByRole("dialog")
+        .getByRole("button", { name: "取消申请", exact: true })
+        .click();
+      await expect.poll(() => state.cancellations.length).toBe(1);
+      if (outcome !== "wrong-id") {
+        await expect(
+          page.getByRole("dialog").getByRole("button", { name: "保留申请" }),
+        ).toBeDisabled();
+        await page.keyboard.press("Escape");
+        await expect(page.getByRole("dialog")).toBeVisible();
+        if (outcome === "account-change")
+          await chooseSession(page, otherAccountId);
+        else await page.clock.fastForward(35_100);
+        release();
+      }
+      if (outcome !== "account-change")
+        await expect(
+          page.getByRole("heading", { name: "暂时无法确认取消结果" }),
+        ).toBeVisible();
+      else
+        await expect(
+          page.getByText(state.records[0].snapshot.name, { exact: true }),
+        ).toHaveCount(0);
+      await expect(
+        page.getByRole("heading", { name: "申请已取消", exact: true }),
+      ).toHaveCount(0);
+      expect(state.cancellations).toHaveLength(1);
+      await page.screenshot({
+        path: info.outputPath(`${mode}-${outcome}.png`),
+      });
+    });
+  }
+
+  test(`cancellation ${mode}: approval wins and a new explicit confirmation binds approved`, async ({
+    page,
+  }, info) => {
+    const state = control();
+    state.cancellationRace = true;
+    await install(page, state);
+    await page.goto(
+      origin +
+        `/workforce/${mode === "self" ? "applications" : "reviews"}/` +
+        state.records[0].id,
+    );
+    await page.getByRole("button", { name: "取消申请", exact: true }).click();
+    if (mode === "manager")
+      await page.getByRole("textbox", { name: "取消说明" }).fill("重复申请");
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "取消申请", exact: true })
+      .click();
+    await expect(
+      page.getByText("申请状态已更新。请核对当前状态后重新确认取消。"),
+    ).toBeVisible();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(state.cancellations).toHaveLength(1);
+    expect(state.cancellations[0].expectedStatus).toBe("submitted");
+    await page.screenshot({
+      path: info.outputPath(`${mode}-state-changed.png`),
+    });
+    await page.getByRole("button", { name: "取消申请", exact: true }).click();
+    await expect(page.getByRole("dialog")).toContainText("审核通过");
+    if (mode === "manager") {
+      await expect(page.getByRole("textbox", { name: "取消说明" })).toHaveValue(
+        "",
+      );
+      await page.getByRole("textbox", { name: "取消说明" }).fill("核对后取消");
+    }
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "取消申请", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "申请已取消", exact: true }),
+    ).toBeVisible();
+    expect(state.cancellations).toHaveLength(2);
+    expect(state.cancellations[1].expectedStatus).toBe("approved");
+  });
+
+  test(`cancellation ${mode}: lost response only refreshes and never repeats POST`, async ({
+    page,
+  }, info) => {
+    const state = control();
+    state.cancellationLost = true;
+    state.restricted = mode === "self";
+    await install(page, state);
+    await page.goto(
+      origin +
+        `/workforce/${mode === "self" ? "applications" : "reviews"}/` +
+        state.records[0].id,
+    );
+    await page.getByRole("button", { name: "取消申请", exact: true }).click();
+    if (mode === "manager")
+      await page.getByRole("textbox", { name: "取消说明" }).fill("重复申请");
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "取消申请", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "暂时无法确认取消结果" }),
+    ).toBeVisible();
+    expect(state.cancellations).toHaveLength(1);
+    await page.getByRole("button", { name: "刷新详情", exact: true }).click();
+    if (mode === "self") {
+      await expect(
+        page.getByText(
+          "目前无法查看这份申请，仍无法确认刚才的取消是否成功。可返回列表查看当前允许访问的记录。",
+        ),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("heading", { name: "申请已取消", exact: true }),
+      ).toHaveCount(0);
+    } else {
+      await expect(page.locator(".review-meta")).toContainText("已取消");
+      await expect(
+        page.getByRole("button", { name: "取消申请", exact: true }),
+      ).toHaveCount(0);
+    }
+    expect(state.cancellations).toHaveLength(1);
+    await page.screenshot({
+      path: info.outputPath(`${mode}-unknown-refreshed.png`),
+    });
+  });
+
+  test(`cancellation ${mode}: permission loss never falls back or keeps private material`, async ({
+    page,
+  }) => {
+    const state = control();
+    await install(page, state);
+    await page.goto(
+      origin +
+        `/workforce/${mode === "self" ? "applications" : "reviews"}/` +
+        state.records[0].id,
+    );
+    await page.getByRole("button", { name: "取消申请", exact: true }).click();
+    if (mode === "manager")
+      await page.getByRole("textbox", { name: "取消说明" }).fill("重复申请");
+    state.denied = true;
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "取消申请", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await expect(
+      page.getByText(state.records[0].snapshot.name, { exact: true }),
+    ).toHaveCount(0);
+    expect(state.cancellations).toHaveLength(1);
+    expect(state.cancellations[0].mode).toBe(mode);
+  });
 }
 
 test("management uses service status filters and real pagination; empty and failed reads stay distinct", async ({
@@ -652,6 +1089,102 @@ test("a media deadline keeps trusted details readable and rejection available", 
   release();
   await expect(page.locator(".application-snapshot")).toContainText("测试同事");
   expect(state.decisions).toHaveLength(0);
+});
+
+test("own restricted reads remain available when the unrelated Grant read fails", async ({
+  page,
+}, info) => {
+  const state = control();
+  state.grantFailure = true;
+  state.restricted = true;
+  await install(page, state);
+  await page.goto(origin + "/workforce/applications");
+  await expect(
+    page.getByText("当前仅可查看未发放申请的类型、状态和提交时间。", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: "查看详情", exact: true }).click();
+  await expect(
+    page.getByText("当前仅可查看申请类型、状态和提交时间。", { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".application-snapshot")).toHaveCount(0);
+  await expect(page.getByRole("img", { name: "工牌预览" })).toHaveCount(0);
+  expect(state.resourceReads).toHaveLength(0);
+  await page.screenshot({
+    path: info.outputPath("own-restricted-grant-failed.png"),
+    fullPage: true,
+  });
+});
+
+for (const change of ["qualification", "account"] as const) {
+  test(`own history conceals a late full response after ${change} changes`, async ({
+    page,
+  }) => {
+    const state = control();
+    let release!: () => void;
+    state.ownGate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await install(page, state);
+    await page.goto(origin + "/workforce/applications/" + state.records[0].id);
+    await expect.poll(() => state.ownReads).toBeGreaterThan(0);
+    state.ownGate = undefined;
+    if (change === "qualification") {
+      state.restricted = true;
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      await expect(
+        page.getByText("当前仅可查看申请类型、状态和提交时间。", {
+          exact: true,
+        }),
+      ).toBeVisible();
+    } else {
+      await chooseSession(page, otherAccountId);
+      await expect(
+        page.getByText("无法查看这项内容，请返回个人账户。", { exact: true }),
+      ).toBeVisible();
+    }
+    release();
+    await expect(page.locator(".application-snapshot")).toHaveCount(0);
+    await expect(page.getByText("测试同事", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("img", { name: "工牌预览" })).toHaveCount(0);
+    expect(state.resourceReads).toHaveLength(0);
+  });
+}
+
+test("an own media deadline retains fixed facts and trusted review results", async ({
+  page,
+}, info) => {
+  const state = control();
+  state.records[0] = reviewed(state.records[0], "approve");
+  let release!: () => void;
+  state.mediaGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.clock.install();
+  await install(page, state);
+  await page.goto(origin + "/workforce/applications/" + state.records[0].id);
+  await expect(page.locator(".application-snapshot").first()).toContainText(
+    "测试同事",
+  );
+  await expect(page.locator(".review-facts")).toContainText("林*");
+  await page.clock.fastForward(35001);
+  await expect(
+    page.getByText("工牌预览暂时无法显示，请重新加载。", { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".application-snapshot").first()).toContainText(
+    "测试同事",
+  );
+  await expect(page.locator(".review-facts")).toContainText("林*");
+  await expect(
+    page.getByRole("button", { name: /秒后可刷新详情$/ }),
+  ).toBeDisabled();
+  await page.screenshot({
+    path: info.outputPath("own-media-deadline-trusted-review.png"),
+    fullPage: true,
+  });
+  release();
+  await expect(page.locator(".review-facts")).toContainText("林*");
 });
 
 test("own history shows all actual states and full reasons, while restricted history exposes only cancellable summaries", async ({

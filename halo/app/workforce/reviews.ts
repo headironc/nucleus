@@ -3,6 +3,7 @@ import {
   managedApplications,
   managedApplication,
   reviewApplication,
+  cancelApplication,
   applicationResource,
   sameApplicationContent,
   type ApplicationStatus,
@@ -25,13 +26,14 @@ export type ReviewDetail = {
   kind: "detail";
   result: ManagedApplicationDetail;
   media: Media;
-  confirmation?: ReviewInput["decision"];
+  confirmation?: ReviewInput["decision"] | "cancel";
   pending: boolean;
   notice?: string;
 };
 export type ReviewsState =
   | { kind: "hidden" | "loading" }
   | { kind: "error" | "missing" | "unknown"; message: string; retryAt: number }
+  | { kind: "cancelled" }
   | {
       kind: "list";
       page: number;
@@ -43,6 +45,7 @@ const API = {
   list: managedApplications,
   detail: managedApplication,
   review: reviewApplication,
+  cancellation: cancelApplication,
   resource: applicationResource,
   artwork: loadTemplateArtwork,
 };
@@ -65,6 +68,7 @@ export class Reviews {
   private waitingSelection?: string;
   private uncertainAccount?: string;
   private writingAccount?: string;
+  private cancellationUnknown = false;
   private page = 1;
   private filter: ApplicationStatus = "submitted";
   constructor(
@@ -177,7 +181,9 @@ export class Reviews {
         writing || this.uncertainAccount === this.account()
           ? {
               kind: "unknown",
-              message: UNKNOWN_COPY,
+              message: this.cancellationUnknown
+                ? "暂时无法确认取消结果。请刷新详情查看，暂时不要重复提交。"
+                : UNKNOWN_COPY,
               retryAt: this.retryAt,
             }
           : { kind: "error", message: READ_ERROR, retryAt: this.retryAt },
@@ -220,11 +226,13 @@ export class Reviews {
     const uncertain =
       this.mode.kind === "detail" &&
       this.uncertainAccount === this.account() &&
-      result.status !== 404;
+      (result.status !== 404 || this.cancellationUnknown);
     this.show({
       kind: uncertain ? "unknown" : result.status === 404 ? "missing" : "error",
       message: uncertain
-        ? UNKNOWN_COPY
+        ? result.status === 404
+          ? "目前无法查看这份申请，仍无法确认刚才的取消是否成功。"
+          : UNKNOWN_COPY
         : result.status === 404
           ? "目前无法查看这份申请。"
           : result.status === 429
@@ -282,6 +290,7 @@ export class Reviews {
         if (result.kind !== "ok") return this.failure(result, scope.binding);
         const uncertain = this.uncertainAccount === this.account();
         this.uncertainAccount = undefined;
+        this.cancellationUnknown = false;
         this.retryAt = 0;
         this.show({
           kind: "detail",
@@ -383,12 +392,14 @@ export class Reviews {
       media: { kind: "failed", retryAt: this.retryAt },
     });
   }
-  confirm(decision: ReviewInput["decision"]) {
+  confirm(decision: ReviewInput["decision"] | "cancel") {
     const state = this.state;
     if (
       state.kind !== "detail" ||
       state.pending ||
-      state.result.application.status !== "submitted"
+      (decision === "cancel"
+        ? !["submitted", "approved"].includes(state.result.application.status)
+        : state.result.application.status !== "submitted")
     )
       return;
     if (
@@ -406,6 +417,8 @@ export class Reviews {
   }
   async submit(reason: string) {
     const state = this.state;
+    if (state.kind === "detail" && state.confirmation === "cancel")
+      return this.submitCancellation(reason);
     if (
       state.kind !== "detail" ||
       state.pending ||
@@ -511,6 +524,78 @@ export class Reviews {
         this.show({
           kind: "unknown",
           message: UNKNOWN_COPY,
+          retryAt: 0,
+        });
+      }
+    } finally {
+      scope.finish();
+    }
+  }
+  private async submitCancellation(reason: string) {
+    const state = this.state;
+    if (
+      state.kind !== "detail" ||
+      state.pending ||
+      state.confirmation !== "cancel" ||
+      !reason.trim() ||
+      reason.includes("\0")
+    )
+      return;
+    const expectedStatus = state.result.application.status;
+    if (expectedStatus !== "submitted" && expectedStatus !== "approved") return;
+    const input = { mode: "manager", expectedStatus, reason } as const;
+    if (new TextEncoder().encode(JSON.stringify(input)).byteLength > 8192)
+      return;
+    const scope = this.scope();
+    if (!scope) return;
+    this.show({ ...state, pending: true });
+    try {
+      if (!(await scope.guard())) return;
+      this.writingAccount = this.account();
+      this.cancellationUnknown = true;
+      const result = await this.api.cancellation(
+        scope.binding.selection.id,
+        state.result.application.id,
+        input,
+        scope.signal,
+      );
+      if (!(await scope.guard())) return;
+      this.writingAccount = undefined;
+      if (result.kind === "ok") {
+        this.uncertainAccount = undefined;
+        this.cancellationUnknown = false;
+        this.clearMedia();
+        this.show({ kind: "cancelled" });
+      } else if (result.kind !== "failure" || result.status >= 500) {
+        this.uncertainAccount = this.account();
+        this.clearMedia();
+        this.retryAt =
+          result.kind === "failure"
+            ? this.dependencies.now() + result.retryAfter
+            : 0;
+        this.waitingSelection = `${scope.binding.selection.id}/${scope.binding.selection.revision}`;
+        this.show({
+          kind: "unknown",
+          message: "暂时无法确认取消结果。请刷新详情查看，暂时不要重复提交。",
+          retryAt: this.retryAt,
+        });
+      } else {
+        this.cancellationUnknown = false;
+        if (result.code === "state_changed")
+          await this.load(
+            this.page,
+            this.filter,
+            "申请状态已更新。请核对当前状态后重新确认取消。",
+          );
+        else await this.failure(result, scope.binding);
+      }
+    } catch {
+      if (scope.active()) {
+        this.cancel();
+        this.clearMedia();
+        this.show({
+          kind: "unknown",
+          message: "暂时无法确认取消结果。请刷新详情查看，暂时不要重复提交。",
           retryAt: 0,
         });
       }

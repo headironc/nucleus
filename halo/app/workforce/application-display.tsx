@@ -14,6 +14,7 @@ export const APPLICATION_STATUSES = {
   submitted: "待审核",
   approved: "审核通过",
   rejected: "审核未通过",
+  cancelled: "已取消",
 };
 const dateFormat = new Intl.DateTimeFormat("zh-CN", {
   timeZone: "Asia/Shanghai",
@@ -30,6 +31,7 @@ export function applicationDate(value: string) {
 export function ReviewFacts({ application }: { application: Application }) {
   if (application.status === "submitted")
     return <p>申请已提交，请等待审核。</p>;
+  if (!application.reviewedAt) return <p>申请在审核前已取消。</p>;
   return (
     <>
       <dl className="application-snapshot review-facts">
