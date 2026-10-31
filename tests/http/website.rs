@@ -15,6 +15,7 @@ mod admission;
 mod allocation;
 mod badge;
 mod cancellation;
+mod cancellations;
 mod mobile;
 mod reviews;
 mod termination;
@@ -285,6 +286,9 @@ fn browser_c1_preserves_original_send() {
             let review_observer = connections(&server, &name, "clerk").recover().await.expect("badge review observer");
             let mut review_tick = tokio::time::interval(Duration::from_millis(100));
             let mut reviews = reviews::Observer::default();
+            let badge_cancellation_observer = connections(&server, &name, "clerk").recover().await.expect("badge cancellation observer");
+            let mut badge_cancellation_tick = tokio::time::interval(Duration::from_millis(100));
+            let mut badge_cancellations = cancellations::Observer::default();
             let termination_observer = connections(&server, &name, "clerk").recover().await.expect("termination read observer");
             let mut termination_tick = tokio::time::interval(Duration::from_millis(100));
             let mut termination = termination::Observer::default();
@@ -329,6 +333,11 @@ fn browser_c1_preserves_original_send() {
                     _ = review_tick.tick(), if badge.complete() && !reviews.complete() => {
                         if Box::pin(reviews.observe(review_observer.client(), &badge, material.path())).await {
                             logs.record("badge_review_observation", reviews.evidence());
+                        }
+                    }
+                    _ = badge_cancellation_tick.tick(), if reviews.complete() && !badge_cancellations.complete() => {
+                        if Box::pin(badge_cancellations.observe(badge_cancellation_observer.client(), &badge, &reviews, material.path())).await {
+                            logs.record("badge_cancellation_observation", badge_cancellations.evidence());
                         }
                     }
                     _ = mobile_tick.tick(), if !mobile_change.complete() => {
@@ -731,6 +740,8 @@ fn browser_c1_preserves_original_send() {
             badge_observer.terminate().await.expect("end badge observer");
             assert!(reviews.complete(), "all sixteen review decision, recovery and authority observations completed");
             review_observer.terminate().await.expect("end badge review observer");
+            assert!(badge_cancellations.complete(), "all six cancellation, retained-history and read-only recovery observations completed");
+            badge_cancellation_observer.terminate().await.expect("end badge cancellation observer");
             assert!(termination.complete(), "original termination and new-Session replay have independent durable evidence");
             termination_observer.terminate().await.expect("end termination observer");
             assert!(mobile_change.complete(), "mobile completion and original-result reads have independent durable evidence");
