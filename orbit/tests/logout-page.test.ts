@@ -3,14 +3,15 @@ import { readFile } from "node:fs/promises";
 import { runInNewContext } from "node:vm";
 import { account, epoch, FakePlatform, ids, session } from "./fixture";
 import { storageKey } from "../src/storage";
+import { packageFile } from "./package-files";
 
 const applications: { onHide(): void }[] = [];
 afterEach(() => { for (const app of applications.splice(0)) app.onHide(); });
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 type NativePage = { data: Record<string, any>; onShow(): void; onHide(): void; recover(): void;
-  authorize(event: { detail: { code: string } }): void; logoutCurrent(): void; logoutAll(): void };
+  authorize(event: { detail: { code: string } }): void; logoutCurrent(): void; logoutAll(): void; check(): void };
 
-async function native(scope: "current" | "all", later = false, readFailure?: { path: "current" | "list"; status: 401 | 403 | 503 }) {
+async function native(scope: "current" | "all", later = false, readFailure?: { path: "current" | "list"; status: 401 | 403 | 503 }, freshSuccess = false) {
   const platform = new FakePlatform();
   platform.setStorageSync(storageKey, { version: 1, session: { ...session(later ? ids.later : ids.session), accountId: ids.account },
     ...(later ? { logouts: [{ operation: ids.registration, accountId: ids.account, sessionId: ids.session, scope, createdAt: epoch, deadline: epoch + 600000 }] } : {}) });
@@ -18,12 +19,12 @@ async function native(scope: "current" | "all", later = false, readFailure?: { p
   const context = { wx: Object.assign(platform, { showModal(value: unknown) { modal = value; } }),
     App(value: unknown) { application = value; }, getApp() { return application; }, Page(value: unknown) { definition = value; },
     setTimeout() { return 1; }, clearTimeout() {}, Date: class extends Date { static now() { return now; } }, ArrayBuffer, Uint8Array };
-  runInNewContext(await readFile(new URL("../build/app.js", import.meta.url), "utf8"), context);
+  runInNewContext(await readFile(packageFile("app.js"), "utf8"), context);
   application.onLaunch(); applications.push(application);
   async function load(name: "account" | "sessions") {
-    runInNewContext(await readFile(new URL(`../build/pages/${name}/index.js`, import.meta.url), "utf8"), context);
+    runInNewContext(await readFile(packageFile(`pages/${name}/index.js`), "utf8"), context);
     const page = { ...definition, data: { ...definition.data }, setData(value: unknown) { Object.assign(this.data, value); } } as NativePage;
-    const source = await readFile(new URL(`../build/pages/${name}/index.wxml`, import.meta.url), "utf8");
+    const source = await readFile(packageFile(`pages/${name}/index.wxml`), "utf8");
     return { page, source };
   }
   const showing = await load(scope === "current" ? "account" : "sessions");
@@ -42,13 +43,30 @@ async function native(scope: "current" | "all", later = false, readFailure?: { p
     modal.success({ confirm: true }); await platform.next(index);
   }
   const original = platform.records().logouts![0];
-  if (!later) { platform.disconnect(index); await tick(); }
+  if (!later) {
+    if (freshSuccess) platform.reply(index, { code: "ok", completion: { id: platform.requests[index].header["Operation-Id"], count: 1, revokedAt: "2026-10-30T08:01:00Z" } });
+    else platform.disconnect(index);
+    await tick();
+  }
   return { ...showing, platform, application, original, load, setNow(value: number) { now = value; } };
 }
 
+test.each(["current", "all"] as const)("native fresh %s completion states its actual scope and returns home", async scope => {
+  const h = await native(scope, false, undefined, true);
+  expect(h.page.data.heading).toBe(scope === "current" ? "已退出登录" : "已退出全部登录");
+  expect(h.page.data.message).toBe("");
+  expect(h.page.data.homeAction).toBe(true);
+  const home = [...h.source.matchAll(/<navigator\b([^>]*)>返回首页<\/navigator>/g)]
+    .find(match => match[1].includes('wx:if="{{homeAction}}"'))!;
+  expect(runInNewContext(home[1].match(/wx:if="\{\{(.*?)\}\}"/)![1], h.page.data)).toBe(true);
+  expect(home[1]).toContain('url="/pages/home/index"');
+  expect(home[1]).toContain('open-type="reLaunch"');
+  expect(h.platform.records().session).toBeUndefined();
+});
+
 // These two actual WXML controls own the recovery choice; inspect their real bindings and conditions.
 function actions(source: string, page: NativePage) {
-  return [...source.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)].flatMap(match => {
+  const buttons = [...source.matchAll(/<button\b([^>]*)>([\s\S]*?)<\/button>/g)].flatMap(match => {
     const binding = match[1].match(/bindtap="([^"]+)"/)?.[1];
     if (binding !== "recover" && binding !== "refresh" && binding !== "check") return [];
     if (binding === "check" && match[2] === "刷新个人资料") {
@@ -61,11 +79,20 @@ function actions(source: string, page: NativePage) {
     const text = match[2].replace(/\{\{(.*?)\}\}/g, (_, expression) => String(runInNewContext(expression, page.data)));
     return [{ binding, text }];
   });
+  return buttons.concat([...source.matchAll(/<navigator\b([^>]*)>返回个人账户<\/navigator>/g)].flatMap(match => {
+    if (!match[1].includes("primary")) return [];
+    const condition = match[1].match(/wx:if="\{\{(.*?)\}\}"/)?.[1];
+    if (!condition || !runInNewContext(condition, page.data)) return [];
+    expect(match[1]).toContain('url="/pages/account/index"');
+    expect(match[1]).toContain('open-type="redirect"');
+    return [{ binding: "account", text: "返回个人账户" }];
+  }));
 }
 
 test.each(["current", "all"] as const)("native %s unknown exposes only the original-result action across page reopening", async scope => {
   const h = await native(scope);
   expect(actions(h.source, h.page)).toEqual([{ binding: "recover", text: "查看退出结果" }]);
+  expect(h.page.data.message).toBe("请查看退出结果。");
   const count = h.platform.requests.length;
   h.page.onHide(); h.page.onShow(); await tick();
   expect(h.platform.requests).toHaveLength(count);
@@ -74,6 +101,7 @@ test.each(["current", "all"] as const)("native %s unknown exposes only the origi
   expect(request.method).toBe("GET"); expect(request.url).toEndWith(`/revocations?operation_id=${h.original.operation}`);
   h.platform.reply(count, { code: "ok", original: null, count: 0, revocations: [] }); await tick();
   expect(actions(h.source, h.page)).toEqual([{ binding: "recover", text: "查看退出结果" }]);
+  expect(h.page.data.message).toBe("请查看退出结果。");
 });
 
 test.each(["current", "all"] as const)("native %s offers current-login checking only when original recovery expires or cannot be read", async scope => {
@@ -81,7 +109,7 @@ test.each(["current", "all"] as const)("native %s offers current-login checking 
     const h = await native(scope); const count = h.platform.requests.length;
     if (reason === "expired") { h.setNow(epoch + 600001); h.application.onShow(); }
     else { h.platform.storageReadFails = true; h.page.recover(); await tick(); }
-    expect(actions(h.source, h.page)).toEqual([{ binding: scope === "current" ? "check" : "refresh", text: "检查登录状态" }]);
+    expect(actions(h.source, h.page)).toEqual([{ binding: scope === "current" ? "check" : "refresh", text: "重新检查" }]);
     expect(h.platform.requests).toHaveLength(count);
     expect(h.page.data.canLogin).toBe(false);
     h.platform.storageReadFails = false;
@@ -107,6 +135,7 @@ test.each([
   const h = await native(scope, true, { path, status });
   expect(actions(h.source, h.page)).toEqual([{ binding: "recover", text: "查看退出结果" }]);
   expect(h.page.data.sessionsReady ?? false).toBe(false);
+  expect(h.page.data.message).toBe(scope === "all" ? "登录列表暂时无法加载，可先查看退出结果。" : "请查看退出结果。");
   const index = h.platform.requests.length;
   h.page.recover(); const request = await h.platform.next(index);
   expect(request.url).toEndWith(`/revocations?operation_id=${h.original.operation}`);
@@ -148,7 +177,34 @@ test.each(["current", "all"] as const)("native %s requires login only after 401 
   index = h.platform.requests.length; originalPage.page.recover(); await h.platform.next(index);
   h.platform.reply(index, { code: "ok", original: { scope, initiatorId: ids.session }, count: 1,
     revocations: [{ id: ids.session, revokedAt: "2026-10-30T08:01:00Z" }] }); await tick();
-  expect(actions(originalPage.source, originalPage.page)).toEqual([{ binding: scope === "current" ? "check" : "refresh", text: "检查登录状态" }]);
+  expect(originalPage.page.data.heading).toBe(scope === "current" ? "此前的登录已退出" : "此前的登录已全部退出");
+  expect(actions(originalPage.source, originalPage.page)).toEqual([{ binding: scope === "current" ? "check" : "account", text: "返回个人账户" }]);
   expect(h.platform.records().session?.id).toBe(ids.later); expect(originalPage.page.data.canLogin).toBe(false);
+  index = h.platform.requests.length;
+  if (scope === "current") originalPage.page.check();
+  else { originalPage.page.onHide(); originalPage = await h.load("account"); originalPage.page.onShow(); }
+  const returning = await h.platform.next(index);
+  expect(returning.method).toBe("GET"); expect(returning.url).toEndWith("/accounts/current");
+  h.platform.reply(index, { code: "ok", account: account() }); await tick();
+  expect(originalPage.page.data.phase).toBe("account");
+  expect(h.platform.records().session?.id).toBe(ids.later);
   expect(h.platform.requests.filter(item => item.method === "DELETE")).toHaveLength(1);
+});
+
+test.each(["current", "all"] as const)("native previous %s completion without a later session offers phone login, not current-account access", async scope => {
+  const h = await native(scope);
+  const index = h.platform.requests.length;
+  h.page.recover(); await h.platform.next(index);
+  h.platform.reply(index, { code: "ok", original: { scope, initiatorId: ids.session }, count: 1,
+    revocations: [{ id: ids.session, revokedAt: "2026-10-30T08:01:00Z" }] }); await tick();
+  expect(h.page.data.heading).toBe(scope === "current" ? "此前的登录已退出" : "此前的登录已全部退出");
+  expect(h.platform.records().session).toBeUndefined();
+  expect(h.page.data.canLogin).toBe(true); expect(h.page.data.canCheck).toBe(false);
+  expect(h.page.data.message).not.toContain("当前登录可继续");
+  const phone = [...h.source.matchAll(/<(?:button|navigator)\b([^>]*)>使用手机号登录<\/(?:button|navigator)>/g)]
+    .find(match => match[1].includes("primary"))!;
+  expect(runInNewContext(phone[1].match(/wx:if="\{\{(.*?)\}\}"/)![1], h.page.data)).toBe(true);
+  if (scope === "current") h.page.check();
+  else { h.page.onHide(); const entry = await h.load("account"); entry.page.onShow(); }
+  await tick(); expect(h.platform.requests).toHaveLength(index + 1);
 });

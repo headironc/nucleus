@@ -96,26 +96,23 @@ function useCurrent() {
 function status(state: CurrentState): [string, string] {
   switch (state.kind) {
     case "checking":
-      return ["正在检查登录状态", "请稍候。"];
+      return ["正在打开个人账户…", "请稍候。"];
     case "anonymous":
       return ["请使用手机号登录", "请验证手机号后继续。"];
     case "expired":
-      return ["请重新登录", "当前登录已失效。"];
+      return ["请重新登录", "当前登录已失效，请重新登录后继续。"];
     case "changed":
-      return ["正在检查登录状态", "请稍候。"];
+      return ["正在打开个人账户…", "请稍候。"];
     case "storage":
-      return [
-        "暂时无法检查登录状态",
-        "浏览器无法读取登录信息。请先重试，仍无法确认时可在新标签页重新登录。",
-      ];
+      return ["登录信息暂时无法使用", "请重新检查。"];
     case "reload":
-      return ["请重新加载页面", "暂时无法检查登录状态，请重新加载页面。"];
+      return ["请重新加载", "页面暂时无法继续，请重新加载后再试。"];
     case "denied":
-      return ["暂时无法完成检查", "本次检查未能完成，你可以返回首页。"];
+      return ["目前无法查看个人账户", "可以返回首页。"];
     case "limited":
-      return ["请稍后再检查", "暂时无法检查登录状态，请稍后重试。"];
+      return ["请稍后再试", "个人资料暂时无法加载，请稍后重新检查。"];
     default:
-      return ["暂时无法检查登录状态", "请稍后重试，或先浏览首页。"];
+      return ["个人资料暂时无法加载", "请重新检查。"];
   }
 }
 
@@ -173,7 +170,7 @@ function AvatarView({
         className="avatar-slot"
         data-state={state.kind}
         {...(state.kind === "failed"
-          ? { role: "img", "aria-label": "头像暂时无法加载" }
+          ? { role: "img", "aria-label": "头像暂时无法显示" }
           : {})}
       >
         {!showing && <UserRound aria-hidden="true" />}
@@ -194,14 +191,14 @@ function AvatarView({
       </div>
       {state.kind === "loading" && (
         <span className="visually-hidden" role="status">
-          正在加载头像
+          正在加载头像…
         </span>
       )}
       {state.kind === "failed" && (
         <p className="avatar-message" role="status">
           {state.retry ? (
             <>
-              图片暂时无法加载。
+              头像暂时无法显示。
               <button
                 type="button"
                 className="text-action"
@@ -211,7 +208,7 @@ function AvatarView({
               </button>
             </>
           ) : (
-            "头像仍暂时无法加载，其他资料可继续查看。"
+            "头像暂时无法显示。"
           )}
         </p>
       )}
@@ -265,24 +262,22 @@ function Account({
         {account ? (
           <div className="current-content">
             <AvatarView controller={avatar} name={account.name} />
-            <p className="eyebrow">个人账户</p>
             <h1 ref={heading} tabIndex={-1}>
-              当前已登录
+              个人账户
             </h1>
-            <p className="card-intro">以下是当前登录的账户。</p>
             <dl className="current-summary">
               <div>
                 <dt>姓名</dt>
                 <dd>{account.name}</dd>
               </div>
               <div>
-                <dt>身份证号</dt>
+                <dt>居民身份证号</dt>
                 <dd>
                   尾号 <span className="suffix">{account.idNumber.suffix}</span>
                 </dd>
               </div>
               <div>
-                <dt>微信</dt>
+                <dt>微信关联</dt>
                 <dd>
                   <span
                     className={
@@ -291,32 +286,29 @@ function Account({
                         : "binding-state unbound"
                     }
                   >
-                    {account.binding ? "已绑定" : "未绑定"}
+                    {account.binding ? "已关联" : "未关联"}
                   </span>
                 </dd>
               </div>
             </dl>
-            <p className="current-help">你可以继续浏览公开内容。</p>
             <div className="account-affiliation">
               <a className="quiet-link" href="/account/affiliation">
                 政治面貌
               </a>
-              <p className="field-hint">
-                进入本人政治面貌页面。未填写时可自愿首次填写；已有值只读。
-              </p>
+              <p className="field-hint">自愿填写或查看当前记录。</p>
             </div>
             <div className="account-actions">
               <a className="quiet-link" href="/workforce">
-                查看员工服务
+                员工服务
               </a>
               <a className="quiet-link" href="/account/mobile">
                 更换手机号
               </a>
               <a className="quiet-link" href="/sessions/logout-all">
-                退出全部设备
+                退出全部登录
               </a>
               <a className="quiet-link" href="/sessions/logout">
-                退出本次登录
+                退出登录
               </a>
               <a className="quiet-link danger-link" href="/account/cancellation">
                 注销账户
@@ -326,17 +318,20 @@ function Account({
               <section className="account-affiliation" aria-label="机构管理">
                 <h2>机构管理</h2>
                 <a className="quiet-link" href="/workforce/grants/new">
-                  开通员工服务
+                  为同事开通员工服务
                 </a>
-                <p className="field-hint">
-                  为已注册的同事办理，进入后核对同事及角色。
-                </p>
+                <p className="field-hint">查找已注册的同事，确认角色后开通。</p>
               </section>
+            )}
+            {permission.kind === "loading" && (
+              <p className="field-hint" role="status">
+                正在检查管理权限…
+              </p>
             )}
             {(permission.kind === "unavailable" ||
               permission.kind === "limited") && (
               <section className="account-affiliation">
-                <p className="field-hint">暂时无法检查机构管理入口。</p>
+                <p className="field-hint">暂时无法检查管理权限。</p>
                 <Button
                   className="quiet-link"
                   disabled={permission.retryAt > now}
@@ -362,7 +357,7 @@ function Account({
             <div className="result-actions">
               {state.kind === "reload" && (
                 <Button className="primary" onClick={() => location.reload()}>
-                  重新加载页面
+                  重新加载
                 </Button>
               )}
               {["unavailable", "limited", "storage"].includes(state.kind) && (

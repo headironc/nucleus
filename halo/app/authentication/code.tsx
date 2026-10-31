@@ -24,18 +24,16 @@ export function CodeInput({
   const message =
     error ||
     (incomplete
-      ? "请输入完整的 6 位验证码。"
+      ? "请输入 6 位短信验证码。"
       : invalid
-        ? "验证码不正确，请核对最新短信后重新输入。"
+        ? "请检查本次短信中的验证码。"
         : "");
 
   const insert = (raw: string, index: number) => {
     if (disabled) return false;
     const start = raw.length === 6 ? 0 : index;
     if (!/^[0-9]+$/.test(raw) || raw.length > 6 - start) {
-      setError(
-        "请输入完整的数字验证码，不能包含空格或其他字符，也不能超过 6 位。",
-      );
+      setError("验证码由 6 位数字组成，请检查后重新输入。");
       return false;
     }
     setError("");
@@ -58,7 +56,7 @@ export function CodeInput({
         onValueInvalid={() => {
           if (disabled) return;
           reject.current = true;
-          setError("验证码只能包含 6 位数字，请核对后重新输入。");
+          setError("验证码由 6 位数字组成，请检查后重新输入。");
           queueMicrotask(() => {
             reject.current = false;
           });
@@ -74,7 +72,7 @@ export function CodeInput({
             (!/^[0-9]*$/.test(target.value) || target.value.length > 6)
           ) {
             details.cancel();
-            setError("请输入完整的 6 位数字验证码，不能包含空格或其他字符。");
+            setError("验证码由 6 位数字组成，请检查后重新输入。");
             return;
           }
           setError("");
@@ -132,7 +130,7 @@ export function CodeInput({
         ))}
       </OTPField.Root>
       <p id="code-hint" className="field-hint">
-        请输入最新短信中的 6 位数字验证码，保留开头的 0。
+        请输入本次短信中的 6 位验证码。
       </p>
       <p id="code-error" className="field-error" role="alert">
         {message}

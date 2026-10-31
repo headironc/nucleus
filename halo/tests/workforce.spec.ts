@@ -107,6 +107,25 @@ async function choose(page: Page, selected = id) {
       throw Error("selection changed");
   }, selected);
 }
+
+async function capture(page: Page, prefix: string) {
+  for (const colorScheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme });
+    for (const width of [320, 1440]) {
+      await page.setViewportSize({ width, height: 1000 });
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: test.info().outputPath(`${prefix}-${width}-${colorScheme}.png`),
+        fullPage: true,
+      });
+    }
+  }
+}
+
 test.beforeEach(async ({ page }) => {
   await page.route(origin + "/**", async (route) => {
     const path = new URL(route.request().url()).pathname;
@@ -157,14 +176,14 @@ test("account entry, four states, keyboard, responsive long name and read-only m
   });
   await page.route("https://fixture.invalid/**", (route) => route.abort());
   await page.goto(origin + "/account");
-  await page.getByRole("link", { name: "查看员工服务" }).click();
+  await page.getByRole("link", { name: "员工服务" }).click();
   await expect(
-    page.getByRole("heading", { name: "员工服务已开通" }),
+    page.getByRole("heading", { name: "已加入员工服务" }),
   ).toBeVisible();
   await expect(page.getByText(name, { exact: true })).toBeVisible();
   for (const [status, title] of [
-    ["absent", "员工服务未开通"],
-    ["active", "员工服务已开通"],
+    ["absent", "尚未加入员工服务"],
+    ["active", "已加入员工服务"],
     ["suspended", "员工服务已暂停"],
     ["terminated", "员工服务已结束"],
   ]) {
@@ -177,6 +196,25 @@ test("account entry, four states, keyboard, responsive long name and read-only m
     );
     await page.getByRole("button", { name: "刷新服务状态" }).click();
     await expect(page.getByRole("heading", { name: title })).toBeFocused();
+    await expect(
+      page.getByRole("link", { name: "结束员工服务", exact: true }),
+    ).toHaveCount(status === "active" || status === "suspended" ? 1 : 0);
+    if (status !== "active") {
+      await expect(page.getByRole("region", { name: "我的工号" })).toHaveCount(
+        0,
+      );
+      await expect(
+        page.getByRole("link", { name: "申请工号", exact: true }),
+      ).toHaveCount(0);
+      await capture(page, status);
+    }
+    if (status === "suspended")
+      await expect(
+        page.getByText(
+          "暂停期间不能申请工号或提交新的工牌申请，个人账户可继续使用。",
+          { exact: true },
+        ),
+      ).toBeVisible();
     if (status === "active") {
       await expect(page.getByText("92605", { exact: true })).toBeVisible();
       for (const width of [1440, 768, 390, 320])
@@ -206,6 +244,10 @@ test("account entry, four states, keyboard, responsive long name and read-only m
   await expect(applications).toBeFocused();
   await expect(applications).toHaveAttribute("href", "/workforce/applications");
   await page.keyboard.press("Tab");
+  const reviews = page.getByRole("link", { name: "工牌审核", exact: true });
+  await expect(reviews).toBeFocused();
+  await expect(reviews).toHaveAttribute("href", "/workforce/reviews");
+  await page.keyboard.press("Tab");
   await expect(
     page.getByRole("button", { name: "刷新服务状态" }),
   ).toBeFocused();
@@ -221,7 +263,7 @@ test("account entry, four states, keyboard, responsive long name and read-only m
   expect(stored).not.toContain("terminated");
   expect(stored).not.toContain("92605");
   await page.getByRole("link", { name: "返回个人账户" }).click();
-  await expect(page.getByRole("heading", { name: "当前已登录" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "个人账户" })).toBeVisible();
   await page.goBack();
   await expect(
     page.getByRole("heading", { name: "员工服务已结束" }),
@@ -243,27 +285,29 @@ test("ordinary failure and rate limit preserve independent Current, never absenc
   );
   await page.goto(origin + "/workforce");
   await expect(
-    page.getByRole("heading", { name: "暂时无法处理，请稍后再试" }),
+    page.getByRole("heading", { name: "暂时无法加载服务状态" }),
   ).toBeVisible();
   await expect(page.getByText(name, { exact: true })).toBeVisible();
+  await capture(page, "service-limited");
   await expect(
-    page.getByRole("button", { name: /秒后可重新加载/ }),
+    page.getByRole("button", { name: /秒后可刷新服务状态/ }),
   ).toBeDisabled();
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(
-    page.getByRole("heading", { name: "暂时无法处理，请稍后再试" }),
+    page.getByRole("heading", { name: "暂时无法加载服务状态" }),
   ).toBeVisible();
   await page.route("**/api/v1/workforce/current/grant", (route) =>
     route.fulfill({ status: 503, json: { code: "dependency_unavailable" } }),
   );
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "暂时无法加载员工服务" }),
+    page.getByRole("heading", { name: "员工服务状态暂时无法加载" }),
   ).toBeVisible();
   await expect(page.getByText(name, { exact: true })).toBeVisible();
-  await expect(page.getByText("员工服务未开通", { exact: true })).toHaveCount(
+  await expect(page.getByText("尚未加入员工服务", { exact: true })).toHaveCount(
     0,
   );
+  await capture(page, "service-unavailable");
 });
 for (const status of [401, 403])
   test(`trusted ${status} conceals all restricted content`, async ({
@@ -280,10 +324,14 @@ for (const status of [401, 403])
     await page.goto(origin + "/workforce");
     await expect(
       page.getByRole("heading", {
-        name: status === 401 ? "请重新登录" : "无法查看这项内容",
+        name: status === 401 ? "请重新登录" : "目前无法查看员工服务",
       }),
     ).toBeVisible();
     await expect(page.getByText(name, { exact: true })).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "尚未加入员工服务", exact: true }),
+    ).toHaveCount(0);
+    await capture(page, `service-${status}`);
     expect(
       await page.evaluate(
         async () =>
@@ -298,9 +346,7 @@ test("untrusted response requires reload and conceals Current", async ({
     route.fulfill({ status: 404, json: { code: "target_unavailable" } }),
   );
   await page.goto(origin + "/workforce");
-  await expect(
-    page.getByRole("heading", { name: "请重新加载页面" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "请重新加载" })).toBeVisible();
   await expect(page.getByText(name, { exact: true })).toHaveCount(0);
 });
 test("lifecycle hides synchronously and another tab supersedes old status", async ({
@@ -309,7 +355,7 @@ test("lifecycle hides synchronously and another tab supersedes old status", asyn
 }) => {
   await page.goto(origin + "/workforce");
   await expect(
-    page.getByRole("heading", { name: "员工服务已开通" }),
+    page.getByRole("heading", { name: "已加入员工服务" }),
   ).toBeVisible();
   let release!: () => void;
   const blocked = new Promise<void>((done) => {
@@ -351,7 +397,7 @@ test("lifecycle hides synchronously and another tab supersedes old status", asyn
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(page.getByText("另一位用户", { exact: true })).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "员工服务未开通" }),
+    page.getByRole("heading", { name: "尚未加入员工服务" }),
   ).toBeVisible();
   await expect(page.getByText(name, { exact: true })).toHaveCount(0);
   await tab.close();
@@ -373,14 +419,20 @@ test("number refresh is independent and null never guesses a reason", async ({
   reads.length = 0;
   await page.getByRole("button", { name: "刷新工号", exact: true }).focus();
   await page.keyboard.press("Enter");
-  await expect(page.getByText("当前没有工号。", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("当前没有可用工号", { exact: true }),
+  ).toBeVisible();
   await expect(page.getByText(name, { exact: true })).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "员工服务已开通" }),
+    page.getByRole("heading", { name: "已加入员工服务" }),
   ).toBeVisible();
   expect(
     await page.getByRole("region", { name: "我的工号" }).innerText(),
-  ).not.toMatch(/从未|已被撤销|申请工号|查看工号|工牌/);
+  ).not.toMatch(/从未|已被撤销|查看工号|工牌/);
+  await expect(
+    page.getByRole("link", { name: "申请工号", exact: true }),
+  ).toHaveAttribute("href", "/workforce/number");
+  await capture(page, "number-absent");
   const applications = page.getByRole("link", { name: "我的工牌申请" });
   await expect(applications).toBeVisible();
   await expect(applications).toHaveAttribute("href", "/workforce/applications");
@@ -415,18 +467,18 @@ for (const failure of ["503", "offline", "limited"])
     await expect(
       page.getByText(
         failure === "limited"
-          ? "暂时无法处理，请稍后再试。"
-          : "暂时无法读取工号，请稍后重试。",
+          ? "暂时无法加载工号，请稍后再试。"
+          : "工号暂时无法加载，请重试。",
         { exact: true },
       ),
     ).toBeVisible();
     await expect(page.getByText(name, { exact: true })).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "员工服务已开通" }),
+      page.getByRole("heading", { name: "已加入员工服务" }),
     ).toBeVisible();
-    await expect(page.getByText("当前没有工号。", { exact: true })).toHaveCount(
-      0,
-    );
+    await expect(
+      page.getByText("当前没有可用工号", { exact: true }),
+    ).toHaveCount(0);
     if (failure === "limited") {
       await expect(
         page.getByRole("button", { name: /秒后可刷新工号/ }),
@@ -441,6 +493,7 @@ for (const failure of ["503", "offline", "limited"])
         page.getByRole("button", { name: "刷新工号", exact: true }),
       ).toBeEnabled();
     }
+    await capture(page, `number-${failure}`);
   });
 
 for (const bad of [
@@ -457,7 +510,7 @@ for (const bad of [
     );
     await page.goto(origin + "/workforce");
     await expect(
-      page.getByRole("heading", { name: "请重新加载页面" }),
+      page.getByRole("heading", { name: "请重新加载" }),
     ).toBeVisible();
     await expect(page.getByText(name, { exact: true })).toHaveCount(0);
     await expect(page.getByRole("region", { name: "我的工号" })).toHaveCount(0);
@@ -478,7 +531,7 @@ for (const status of [401, 403])
     await page.goto(origin + "/workforce");
     await expect(
       page.getByRole("heading", {
-        name: status === 401 ? "请重新登录" : "无法查看这项内容",
+        name: status === 401 ? "请重新登录" : "目前无法查看员工服务",
       }),
     ).toBeVisible();
     await expect(page.getByText(name, { exact: true })).toHaveCount(0);
@@ -511,12 +564,10 @@ test("number timeout and late response cannot restore the card", async ({
   });
   await page.goto(origin + "/workforce");
   await waiting;
-  await expect(
-    page.getByText("正在读取工号，请稍候。", { exact: true }),
-  ).toBeVisible();
+  await expect(page.getByText("正在加载工号…", { exact: true })).toBeVisible();
   await page.clock.fastForward(35_001);
   await expect(
-    page.getByText("暂时无法读取工号，请稍后重试。", { exact: true }),
+    page.getByText("工号暂时无法加载，请重试。", { exact: true }),
   ).toBeVisible();
   release();
   await expect(page.getByText("92605", { exact: true })).toHaveCount(0);

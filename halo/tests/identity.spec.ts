@@ -160,10 +160,10 @@ async function expectSummary(
   page: Page,
   name: string,
   suffix: string,
-  binding = "未绑定",
+  binding = "未关联",
 ) {
   const facts = page.locator(".current-summary");
-  await expect(facts.locator("dt")).toHaveText(["姓名", "身份证号", "微信"]);
+  await expect(facts.locator("dt")).toHaveText(["姓名", "居民身份证号", "微信关联"]);
   await expect(facts.locator("dd")).toHaveText([
     name,
     `尾号 ${suffix}`,
@@ -187,7 +187,7 @@ async function expectAvatarReady(page: Page, href?: string) {
 async function expectNoSummary(page: Page, ...values: string[]) {
   await expect(page.locator(".current-summary")).toHaveCount(0);
   const text = await page.evaluate(() => document.body.textContent ?? "");
-  for (const value of [...values, "已绑定", "未绑定"])
+  for (const value of [...values, "已关联", "未关联"])
     expect(text).not.toContain(value);
 }
 
@@ -274,8 +274,8 @@ test("renders the trusted 微信 binding fact for explicit unbound and bound acc
 }) => {
   const revision = randomUUID();
   const states = [
-    { key: "unbound", label: "未绑定", binding: null },
-    { key: "bound", label: "已绑定", binding: { revision } },
+    { key: "unbound", label: "未关联", binding: null },
+    { key: "bound", label: "已关联", binding: { revision } },
   ] as const;
   let binding: AccountPayload["binding"] = null;
   let reads = 0;
@@ -297,17 +297,17 @@ test("renders the trusted 微信 binding fact for explicit unbound and bound acc
     await expect.poll(() => reads).toBe(before + 1);
     await expectSummary(page, "绑定姓名", "007X", state.label);
     const summary = page.locator(".current-summary");
-    const term = summary.locator("dt").filter({ hasText: "微信" });
+    const term = summary.locator("dt").filter({ hasText: "微信关联" });
     await expect(term).toHaveCount(1);
     await expect(term).toHaveRole("term");
     const definition = summary.locator("dd").filter({ hasText: state.label });
     await expect(definition).toHaveCount(1);
     await expect(definition).toHaveRole("definition");
     const snapshot = await summary.ariaSnapshot();
-    expect(snapshot).toContain("微信");
+    expect(snapshot).toContain("微信关联");
     expect(snapshot).toContain(state.label);
     await writeFile(
-      `test-results/account-binding-${state.key}.aria.txt`,
+      test.info().outputPath(`account-binding-${state.key}.aria.txt`),
       snapshot,
     );
     const text = await page.evaluate(() => document.body.textContent ?? "");
@@ -351,12 +351,12 @@ test("renders the complete name, suffix and binding together, hides them while r
   await firstRead.entered;
   await expectNoSummary(page, longName, "012X", boundRevision);
   firstRead.release();
-  await expectSummary(page, longName, "012X", "未绑定");
+  await expectSummary(page, longName, "012X", "未关联");
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await secondRead.entered;
-  await expectNoSummary(page, longName, "012X", "已绑定", boundRevision);
+  await expectNoSummary(page, longName, "012X", "已关联", boundRevision);
   secondRead.release();
-  await expectSummary(page, "王小明", "0000", "已绑定");
+  await expectSummary(page, "王小明", "0000", "已关联");
   const text = await page.evaluate(() => document.body.textContent ?? "");
   expect(text).not.toContain(longName);
   expect(text).not.toContain("012X");
@@ -531,7 +531,7 @@ for (const value of malformed) {
     untrusted = true;
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await expect(
-      page.getByRole("heading", { name: "请重新加载页面", exact: true }),
+      page.getByRole("heading", { name: "请重新加载", exact: true }),
     ).toBeVisible();
     await expectNoSummary(page, "可信姓名", "002X");
     expect((await selection(page))?.session?.id).toBe(first);
@@ -601,7 +601,7 @@ test("an image failure preserves trusted facts and stops after one explicit reco
     for (const colorScheme of ["light", "dark"] as const) {
       await page.emulateMedia({ colorScheme });
       await page.screenshot({
-        path: `test-results/avatar-${state}-${colorScheme}-320.png`,
+        path: test.info().outputPath(`avatar-${state}-${colorScheme}-320.png`),
         fullPage: true,
       });
     }
@@ -621,11 +621,11 @@ test("an image failure preserves trusted facts and stops after one explicit reco
   await expectSummary(page, "图片姓名", "0042");
   await expect.poll(() => images, { message: "initial image attempt" }).toBe(1);
   await expect(
-    page.getByRole("img", { name: "头像暂时无法加载" }),
+    page.getByRole("img", { name: "头像暂时无法显示" }),
   ).toBeVisible();
   await expect(page.locator(".avatar-image")).toHaveCount(0);
   await expect(page.locator(".avatar-message")).toContainText(
-    "图片暂时无法加载",
+    "头像暂时无法显示",
   );
   await expectSummary(page, "图片姓名", "0042");
 
@@ -641,7 +641,7 @@ test("an image failure preserves trusted facts and stops after one explicit reco
   await expect.poll(() => reads).toBe(3);
   await expect.poll(() => images).toBe(2);
   await expect(page.locator(".avatar-message")).toContainText(
-    "头像仍暂时无法加载，其他资料可继续查看。",
+    "头像暂时无法显示。",
   );
   await expect(page.getByRole("button", { name: "重新加载头像" })).toHaveCount(
     0,
@@ -657,7 +657,7 @@ test("an image failure preserves trusted facts and stops after one explicit reco
     await expect.poll(() => reads).toBe(before + 1);
     await expectSummary(page, "图片姓名", "0042");
     await expect(page.locator(".avatar-message")).toContainText(
-      "头像仍暂时无法加载，其他资料可继续查看。",
+      "头像暂时无法显示。",
     );
     await expect(page.locator(".avatar-image")).toHaveCount(0);
     expect(images).toBe(2);
@@ -680,11 +680,11 @@ test("malformed image bytes fail locally without concealing the summary", async 
   await page.goto(`${origin}/account`);
   await expectSummary(page, "坏图姓名", "0053");
   await expect(
-    page.getByRole("img", { name: "头像暂时无法加载" }),
+    page.getByRole("img", { name: "头像暂时无法显示" }),
   ).toBeVisible();
   await expect(page.locator(".avatar-image")).toHaveCount(0);
   await expect(page.locator(".avatar-message")).toContainText(
-    "图片暂时无法加载",
+    "头像暂时无法显示",
   );
 });
 
@@ -808,7 +808,7 @@ test("a storage failure after a trusted read conceals the entire summary", async
     window.dispatchEvent(new Event("focus"));
   });
   await expect(
-    page.getByText("浏览器无法读取登录信息。", { exact: false }),
+    page.getByText("请重新检查。", { exact: false }),
   ).toBeVisible();
   await expectNoSummary(page, "示例用户", "012X");
   await page.evaluate(() => Reflect.get(window, "restoreAccountTransaction")());
@@ -863,14 +863,14 @@ const failures: Failure[] = [
     label: "403",
     status: 403,
     code: "permission_denied",
-    heading: "暂时无法完成检查",
+    heading: "目前无法查看个人账户",
     clears: false,
   },
   {
     label: "429",
     status: 429,
     code: "rate_limited",
-    heading: "请稍后再检查",
+    heading: "请稍后再试",
     clears: false,
     headers: { "Retry-After": "30" },
   },
@@ -878,13 +878,13 @@ const failures: Failure[] = [
     label: "503",
     status: 503,
     code: "dependency_unavailable",
-    heading: "暂时无法检查登录状态",
+    heading: "个人资料暂时无法加载",
     clears: false,
   },
   {
     label: "disconnect",
     abort: true,
-    heading: "暂时无法检查登录状态",
+    heading: "个人资料暂时无法加载",
     clears: false,
   },
 ];
@@ -953,12 +953,12 @@ test("a storage refusal hides both values and retains the original selection", a
   await page.goto(`${origin}/account`);
   await expect(
     page.getByRole("heading", {
-      name: "暂时无法检查登录状态",
+      name: "登录信息暂时无法使用",
       exact: true,
     }),
   ).toBeVisible();
   await expect(
-    page.getByText("浏览器无法读取登录信息。", { exact: false }),
+    page.getByText("请重新检查。", { exact: false }),
   ).toBeVisible();
   await expectNoSummary(page, "示例用户", "012X");
   await page.evaluate(() => Reflect.get(window, "restoreAccountStorage")());
@@ -984,7 +984,7 @@ test("a build mismatch conceals both values and prevents another account read", 
   broken = true;
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(
-    page.getByRole("heading", { name: "请重新加载页面", exact: true }),
+    page.getByRole("heading", { name: "请重新加载", exact: true }),
   ).toBeVisible();
   await expectNoSummary(page, "示例用户", "012X");
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
@@ -1076,7 +1076,7 @@ test("a delayed bound response cannot flash or overwrite a later unbound account
           record.target.textContent,
           ...Array.from(record.addedNodes, (node) => node.textContent),
         ];
-        if (values.some((text) => /旧绑定账户|已绑定/.test(text ?? "")))
+        if (values.some((text) => /旧绑定账户|已关联/.test(text ?? "")))
           result.exposed = true;
       }
     });
@@ -1095,15 +1095,15 @@ test("a delayed bound response cannot flash or overwrite a later unbound account
   });
   await choose(page, second);
   await aborted;
-  await expectSummary(page, "新未绑定账户", "0002", "未绑定");
+  await expectSummary(page, "新未绑定账户", "0002", "未关联");
   const before = await page.evaluate(() => document.body.textContent ?? "");
-  expect(before).not.toContain("已绑定");
+  expect(before).not.toContain("已关联");
   expect(before).not.toContain(boundRevision);
   oldRead.release();
   await oldFinished.entered;
-  await expectSummary(page, "新未绑定账户", "0002", "未绑定");
+  await expectSummary(page, "新未绑定账户", "0002", "未关联");
   const after = await page.evaluate(() => document.body.textContent ?? "");
-  expect(after).not.toContain("已绑定");
+  expect(after).not.toContain("已关联");
   expect(after).not.toContain(boundRevision);
   expect(await observed.evaluate(({ result }) => result.exposed)).toBe(false);
   await observed.evaluate(({ stop }) => stop());
@@ -1151,9 +1151,9 @@ test("a real revision notification discards the old summary and updates name, su
   });
   await newRead.entered;
   oldRead.release();
-  await expectNoSummary(page, "旧姓名", "012X", "已绑定", boundRevision);
+  await expectNoSummary(page, "旧姓名", "012X", "已关联", boundRevision);
   newRead.release();
-  await expectSummary(page, "新姓名", "0000", "已绑定");
+  await expectSummary(page, "新姓名", "0000", "已关联");
   expect((await selection(page))?.session?.id).toBe(first);
 });
 
@@ -1370,7 +1370,7 @@ test("lifecycle events conceal both values synchronously before any reread", asy
       window.dispatchEvent(new Event("halo:reload-required")),
     );
     await expect(
-      page.getByRole("heading", { name: "请重新加载页面", exact: true }),
+      page.getByRole("heading", { name: "请重新加载", exact: true }),
     ).toBeVisible();
     await expectNoSummary(page, "生命周期姓名", "012X");
     await page.evaluate(() => {
@@ -1502,7 +1502,7 @@ test("a detached image drops its source and late events cannot bind a newer atte
   expect(await detached()).toEqual({ connected: false, src: null });
   await late();
   await expect(
-    page.getByRole("heading", { name: "请重新加载页面", exact: true }),
+    page.getByRole("heading", { name: "请重新加载", exact: true }),
   ).toBeVisible();
   await expect(page.locator(".avatar-image")).toHaveCount(0);
 });
@@ -1514,8 +1514,8 @@ test("long names and both binding statuses fit every width and keep keyboard acc
   const revisionId = randomUUID();
   const bindingRevision = randomUUID();
   const states = [
-    { key: "unbound", label: "未绑定", binding: null },
-    { key: "bound", label: "已绑定", binding: { revision: bindingRevision } },
+    { key: "unbound", label: "未关联", binding: null },
+    { key: "bound", label: "已关联", binding: { revision: bindingRevision } },
   ] as const;
   let binding: AccountPayload["binding"] = null;
   let reads = 0;
@@ -1540,17 +1540,17 @@ test("long names and both binding statuses fit every width and keep keyboard acc
     await expectAvatarReady(page);
     await expect(page.locator(".correction-panel")).toBeVisible();
     await expect(
-      page.getByRole("link", { name: "退出全部设备", exact: true }),
+      page.getByRole("link", { name: "退出全部登录", exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("link", { name: "退出本次登录", exact: true }),
+      page.getByRole("link", { name: "退出登录", exact: true }),
     ).toBeVisible();
     const summary = page.locator(".current-summary");
     const snapshot = await summary.ariaSnapshot();
-    expect(snapshot).toContain("微信");
+    expect(snapshot).toContain("微信关联");
     expect(snapshot).toContain(state.label);
     await writeFile(
-      `test-results/account-binding-layout-${state.key}.aria.txt`,
+      test.info().outputPath(`account-binding-layout-${state.key}.aria.txt`),
       snapshot,
     );
     if (state.binding) {
@@ -1596,8 +1596,8 @@ test("long names and both binding statuses fit every width and keep keyboard acc
         expect(layout.overflow).toBe(false);
         expect(layout.rows.map((row) => row.dt)).toEqual([
           "姓名",
-          "身份证号",
-          "微信",
+          "居民身份证号",
+          "微信关联",
         ]);
         expect(layout.rows.map((row) => row.dd)).toEqual([
           longName,
@@ -1620,7 +1620,7 @@ test("long names and both binding statuses fit every width and keep keyboard acc
             layout.rows[index - 1].dtBox.top,
           );
         await writeFile(
-          `test-results/account-layout-${state.key}-${colorScheme}-${width}.json`,
+          test.info().outputPath(`account-layout-${state.key}-${colorScheme}-${width}.json`),
           JSON.stringify(layout, null, 2),
         );
         // Paint offscreen content before fullPage capture, matching the other fixtures.
@@ -1629,7 +1629,7 @@ test("long names and both binding statuses fit every width and keep keyboard acc
         );
         await expect(page.locator(".site-footer")).toBeInViewport();
         await page.screenshot({
-          path: `test-results/account-bottom-${state.key}-${colorScheme}-${width}.png`,
+          path: test.info().outputPath(`account-bottom-${state.key}-${colorScheme}-${width}.png`),
         });
         await page.evaluate(async () => {
           scrollTo(0, 0);
@@ -1639,7 +1639,7 @@ test("long names and both binding statuses fit every width and keep keyboard acc
           );
         });
         await page.screenshot({
-          path: `test-results/account-${state.key}-${colorScheme}-${width}.png`,
+          path: test.info().outputPath(`account-${state.key}-${colorScheme}-${width}.png`),
           fullPage: true,
         });
       }
@@ -1647,7 +1647,7 @@ test("long names and both binding statuses fit every width and keep keyboard acc
   }
   await page.setViewportSize({ width: 1440, height: 1000 });
   const heading = page.getByRole("heading", {
-    name: "当前已登录",
+    name: "个人账户",
     exact: true,
   });
   await heading.focus();
@@ -1657,7 +1657,7 @@ test("long names and both binding statuses fit every width and keep keyboard acc
   ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(
-    page.getByRole("link", { name: "查看员工服务", exact: true }),
+    page.getByRole("link", { name: "员工服务", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(
@@ -1665,11 +1665,11 @@ test("long names and both binding statuses fit every width and keep keyboard acc
   ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(
-    page.getByRole("link", { name: "退出全部设备", exact: true }),
+    page.getByRole("link", { name: "退出全部登录", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(
-    page.getByRole("link", { name: "退出本次登录", exact: true }),
+    page.getByRole("link", { name: "退出登录", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(
@@ -1806,7 +1806,7 @@ for (const cacheControl of ["no-store", "max-age=0"]) {
         heading: document.querySelector("h1")?.textContent,
       }));
       await writeFile(
-        "test-results/identity-restore-state.json",
+        test.info().outputPath("identity-restore-state.json"),
         JSON.stringify({ restoreState, cacheMisses }),
       );
       await expect
@@ -1840,7 +1840,7 @@ for (const cacheControl of ["no-store", "max-age=0"]) {
       hold = false;
       await expectSummary(page, "刷新后姓名", "002X");
       await writeFile(
-        `test-results/identity-navigation-${cacheControl === "no-store" ? "no-store" : "cacheable"}.json`,
+        test.info().outputPath(`identity-navigation-${cacheControl === "no-store" ? "no-store" : "cacheable"}.json`),
         JSON.stringify({
           historyRestoredFromCache: restored,
           reloadConcealed: true,

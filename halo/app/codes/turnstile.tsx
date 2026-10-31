@@ -150,7 +150,7 @@ export function Turnstile({
             : state === "expired"
               ? "安全验证已过期，请重新完成。"
               : state === "failed"
-                ? "安全验证暂时无法加载，请检查网络后重试。"
+                ? "安全验证暂时无法加载，请重试。"
                 : "请完成下方安全验证。"}
       </p>
       <div ref={element} className="widget" />

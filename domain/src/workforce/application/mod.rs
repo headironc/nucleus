@@ -919,7 +919,7 @@ mod tests {
             ));
             let approved = Box::pin(service.review(&reviewer, ids[1], ReviewInput::Approve {}))
                 .await
-                .expect("approve without PDF");
+                .expect("approve without generating an artifact");
             assert!(matches!(approved.decision, Decision::Approved { .. }));
             let rejected = Box::pin(
                 service.review(

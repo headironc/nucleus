@@ -1,7 +1,8 @@
-<view class="page sessions-page">
-  <view class="page-title">登录管理</view>
-  <view class="body-copy">查看网站和小程序的登录情况，按需退出。</view>
-  <view class="notice" wx:if="{{message}}" role="status">{{message}}</view>
+<view class="page sessions-page self-page {{sessionsReady ? '' : 'self-state'}}">
+  <view class="self-status-emblem {{busy ? 'self-spinner' : ''}}" wx:if="{{!sessionsReady}}" aria-hidden="true"><text wx:if="{{!busy}}">{{phase === 'complete' ? '✓' : '!'}}</text></view>
+  <view class="page-title">{{heading}}</view>
+  <view class="body-copy" wx:if="{{sessionsReady}}">查看网站和小程序的登录情况，按需退出。</view>
+  <view class="{{sessionsReady ? 'notice' : 'body-copy self-status-copy'}}" wx:if="{{message && !busy}}" role="status">{{message}}</view>
 
   <!-- snapshot:sessions:start -->
   <view class="session-list" wx:if="{{sessionsReady}}">
@@ -13,15 +14,17 @@
     </view>
   </view>
   <view class="session-all" wx:if="{{sessionsReady}}">
-    <view class="card-title">退出全部登录</view>
-    <view class="body-copy">退出网站和小程序的全部登录，包括本次登录。</view>
-    <button class="text-button danger" bindtap="logoutAll" disabled="{{busy || logoutPending}}">全部退出</button>
+    <view class="session-all-copy"><view class="card-title">退出全部登录</view><view class="body-copy">退出网站和小程序的全部登录，包括本次登录。</view></view>
+    <button class="session-exit danger" bindtap="logoutAll" disabled="{{busy || logoutPending}}">全部退出</button>
   </view>
   <!-- snapshot:sessions:end -->
 
-  <button class="secondary" wx:if="{{canCheck}}" bindtap="refresh" disabled="{{busy}}">{{phase === 'sessions' ? '刷新列表' : '检查登录状态'}}</button>
-  <button class="secondary" wx:if="{{canRecover}}" bindtap="recover" disabled="{{busy}}">查看退出结果</button>
-  <navigator class="home-link" wx:if="{{canLogin && !homeAction}}" url="/pages/account/index" open-type="redirect">使用手机号登录</navigator>
-  <navigator class="home-link primary" wx:if="{{homeAction}}" url="/pages/home/index" open-type="reLaunch">返回公开首页</navigator>
-  <navigator class="home-link" wx:else url="/pages/account/index" open-type="redirect">返回个人账户</navigator>
+  <button class="primary self-button" wx:if="{{canCheck && !sessionsReady && phase !== 'complete'}}" bindtap="refresh" disabled="{{busy}}">{{phase === 'sessions' ? '刷新列表' : phase === 'unavailable' ? '重新检查' : '检查登录状态'}}</button>
+  <button class="primary self-button" wx:if="{{canRecover}}" bindtap="recover" disabled="{{busy}}">{{recoveryLabel}}</button>
+  <view class="self-inline-actions" wx:if="{{sessionsReady}}"><button class="text-button self-text-action" wx:if="{{canCheck && sessionsReady}}" bindtap="refresh" disabled="{{busy}}">刷新列表</button><navigator class="home-link" url="/pages/account/index" open-type="redirect">返回个人账户</navigator></view>
+  <navigator class="home-link primary self-button" wx:if="{{phase === 'complete' && !homeAction && canCheck}}" url="/pages/account/index" open-type="redirect">返回个人账户</navigator>
+  <navigator class="home-link primary self-button" wx:if="{{canLogin && !homeAction}}" url="/pages/account/index" open-type="redirect">使用手机号登录</navigator>
+  <navigator class="home-link primary self-button" wx:if="{{homeAction}}" url="/pages/home/index" open-type="reLaunch">返回首页</navigator>
+  <navigator class="home-link" wx:if="{{!homeAction && !canLogin && !sessionsReady && phase !== 'complete' && !(phase === 'pending' && (recoveryKind === 'login' || recoveryKind === 'registration') && !canRecover)}}" url="/pages/account/index" open-type="redirect">返回个人账户</navigator>
+  <navigator class="home-link" wx:if="{{!homeAction && (canLogin || phase === 'complete' || (phase === 'pending' && (recoveryKind === 'login' || recoveryKind === 'registration') && !canRecover))}}" url="/pages/home/index" open-type="reLaunch">返回首页</navigator>
 </view>

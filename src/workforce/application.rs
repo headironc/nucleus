@@ -284,7 +284,7 @@ async fn managed_detail(
 #[utoipa::path(post, path = "/workforce/applications/{id}/reviews", operation_id = "workforceApplicationReview",
     params(("Operation-Id" = uuid::Uuid, Header, description = "Diagnostic only; refresh after an unknown outcome"), ("Session-Id" = uuid::Uuid, Header), ("Origin" = String, Header), ("id" = Id, Path)),
     request_body(content = application::ReviewInput, description = "At most 8 KiB; approve or reject with a nonempty reason"),
-    responses((status = 200, body = Created, description = "Decision and audit committed atomically; approval does not generate a PDF"),
+    responses((status = 200, body = Created, description = "Decision and audit committed atomically; approval does not generate a badge artifact"),
         (status = 400, body = Failure, description = "invalid_input"), (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"), (status = 404, body = Failure, description = "target_unavailable"),
         (status = 409, body = Failure, description = "state_changed or applicant_unavailable"), (status = 413, body = Failure, description = "invalid_input"), (status = 415, body = Failure, description = "invalid_input"),
         (status = 429, body = Failure, description = "rate_limited", headers(("Retry-After" = u64, description = "Wait seconds"))), (status = 500, body = Failure, description = "internal_error"), (status = 503, body = Failure, description = "dependency_unavailable or outcome_unknown; refresh management detail without automatically resending")))]

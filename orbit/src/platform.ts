@@ -34,10 +34,18 @@ export function random(platform: Platform, length: number): Promise<Uint8Array> 
     }
     platform.getRandomValues({
       length,
-      success({ randomValues }) {
-        if (!(randomValues instanceof ArrayBuffer) || randomValues.byteLength !== length) {
+      success(result) {
+        try {
+          const randomValues = result?.randomValues;
+          // The intrinsic checks the buffer's internal brand across native realms.
+          const byteLength = Object.getOwnPropertyDescriptor(ArrayBuffer.prototype, "byteLength")?.get;
+          if (!byteLength || byteLength.call(randomValues) !== length) throw new Error("Invalid random bytes");
+          const bytes = new Uint8Array(new Uint8Array(randomValues));
+          if (bytes.byteLength !== length) throw new Error("Invalid random bytes");
+          resolve(bytes);
+        } catch {
           reject(new Error("Invalid random bytes"));
-        } else resolve(new Uint8Array(randomValues));
+        }
       },
       fail() { reject(new Error("Secure random unavailable")); },
     });
