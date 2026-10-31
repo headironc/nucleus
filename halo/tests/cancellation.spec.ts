@@ -116,7 +116,7 @@ async function openEntry(page: Page) {
 
 async function confirm(page: Page) {
   await page.getByRole("button", { name: "注销账户", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "确认注销本人账户？" });
+  const dialog = page.getByRole("dialog", { name: "确认注销此账户？" });
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "确认注销" }).click();
 }
@@ -206,9 +206,11 @@ test("account entry leads to a trusted identity and explicit confirmation", asyn
     page.getByText("本人账户 · 身份证尾号", { exact: false }),
   ).toContainText("002X");
   await expect(
-    page.getByText("账户不能恢复，当前及所有设备的登录都会结束。"),
+    page.getByText("账户无法恢复，网站和小程序的全部登录与员工服务将结束。"),
   ).toBeVisible();
-  await expect(page.getByText("这不是退出登录", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("暂时离开可返回个人账户，选择退出登录。", { exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("link", { name: "返回个人账户", exact: true }),
   ).toHaveAttribute("href", "/account");
@@ -217,7 +219,9 @@ test("account entry leads to a trusted identity and explicit confirmation", asyn
   ).toHaveCount(0);
   await capture(page, (name) => info.outputPath(name), "entry");
   await page.getByRole("button", { name: "注销账户", exact: true }).click();
-  await expect(page.getByRole("button", { name: "暂不注销", exact: true })).toBeFocused();
+  await expect(
+    page.getByRole("button", { name: "暂不注销", exact: true }),
+  ).toBeFocused();
   await capture(page, (name) => info.outputPath(name), "confirmation");
 });
 
@@ -240,7 +244,9 @@ test("one exact request produces success, an own-clear refresh and durable priva
     page.getByRole("heading", { name: "账户已注销", level: 1 }),
   ).toBeVisible();
   await expect(
-    page.getByText("本次注销已经生效。", { exact: true }),
+    page.getByText("全部登录和员工服务已结束，原账户无法恢复。", {
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(page.locator(".cancellation-time time")).toHaveAttribute(
     "datetime",
@@ -338,6 +344,43 @@ test("one exact request produces success, an own-clear refresh and durable priva
   expect(sent).toHaveLength(1);
 });
 
+test("a trusted cancellation stays complete when saving its result fails", async ({
+  page,
+}, info) => {
+  await openEntry(page);
+  const sent = countPosts(page);
+  await page.evaluate(() => {
+    const set = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (
+        this === sessionStorage &&
+        key === "halo.account-cancellation" &&
+        JSON.parse(value).outcome === "complete"
+      )
+        throw new Error("Fixture completion storage unavailable");
+      return set.call(this, key, value);
+    };
+  });
+  await confirm(page);
+  await expect(
+    page.getByRole("heading", { name: "账户已注销", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("本页暂时无法保存结果，关闭后可能无法再次显示本次结果。", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.locator("main")).not.toContainText("请勿关闭");
+  await expect(
+    page.getByRole("heading", { name: "注销结果尚不确定", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "返回首页", exact: true }).last(),
+  ).toHaveAttribute("href", "/");
+  expect(sent).toHaveLength(1);
+  await capture(page, (name) => info.outputPath(name), "success-unsaved");
+});
+
 test("a lost response stays unknown across reload and checking login never resubmits", async ({
   page,
 }, info) => {
@@ -348,13 +391,10 @@ test("a lost response stays unknown across reload and checking login never resub
   );
   await confirm(page);
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认注销结果" }),
+    page.getByRole("heading", { name: "注销结果尚不确定" }),
   ).toBeVisible();
   await expect(
-    page.getByText("页面不会自动重复提交，也不提供注销结果查询。"),
-  ).toBeVisible();
-  await expect(
-    page.getByText("登录失效不代表注销成功", { exact: true }),
+    page.getByText("暂时不要重复提交，可先检查登录状态。"),
   ).toBeVisible();
   await capture(page, (name) => info.outputPath(name), "unknown");
   let hrefs = await page
@@ -367,7 +407,7 @@ test("a lost response stays unknown across reload and checking login never resub
 
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认注销结果" }),
+    page.getByRole("heading", { name: "注销结果尚不确定" }),
   ).toBeVisible();
   expect(sent).toHaveLength(1);
   await expect(
@@ -381,8 +421,12 @@ test("a lost response stays unknown across reload and checking login never resub
   ).toBeVisible();
   await expect(page.locator(".current-account")).toContainText(longName);
   await expect(
-    page.getByText("不能单独确认注销结果", { exact: true }),
+    page.getByText("此前的注销结果仍未确认。", { exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "打开个人账户", exact: true }),
+  ).toHaveAttribute("href", "/account");
+  await capture(page, (name) => info.outputPath(name), "unknown-current-ready");
   expect(sent).toHaveLength(1);
 
   await page.route(`${origin}/api/v1/accounts/current`, (route) =>
@@ -392,9 +436,15 @@ test("a lost response stays unknown across reload and checking login never resub
     }),
   );
   await page.getByRole("button", { name: "重新检查登录状态" }).click();
+  await expect(page.getByRole("heading", { name: "请重新登录" })).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "当前登录已无法使用" }),
+    page.getByText("此前的注销结果仍未确认。", { exact: true }),
   ).toBeVisible();
+  await capture(
+    page,
+    (name) => info.outputPath(name),
+    "unknown-current-expired",
+  );
   await expect(
     page.getByRole("link", { name: "手机号登录", exact: true }),
   ).toHaveAttribute("href", "/authentication/codes");
@@ -403,6 +453,68 @@ test("a lost response stays unknown across reload and checking login never resub
   );
   expect(sent).toHaveLength(1);
 });
+
+for (const failure of [
+  { status: 403, code: "permission_denied", heading: "目前无法查看个人账户" },
+  { status: 429, code: "rate_limited", heading: "请稍后重试" },
+  {
+    status: 503,
+    code: "dependency_unavailable",
+    heading: "暂时无法检查登录状态",
+  },
+]) {
+  test(`a ${failure.status} current read preserves cancellation uncertainty`, async ({
+    page,
+  }, info) => {
+    await openEntry(page);
+    const sent = countPosts(page);
+    await page.route(
+      `${origin}/api/v1/accounts/current/cancellations`,
+      (route) => route.abort("failed"),
+    );
+    await confirm(page);
+    await expect(
+      page.getByRole("heading", { name: "注销结果尚不确定", exact: true }),
+    ).toBeVisible();
+    let reads = 0;
+    await page.route(`${origin}/api/v1/accounts/current`, (route) => {
+      reads++;
+      return route.fulfill({
+        status: failure.status,
+        headers: failure.status === 429 ? { "Retry-After": "60" } : {},
+        json: { code: failure.code },
+      });
+    });
+    await page
+      .getByRole("button", { name: "检查登录状态", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: failure.heading, exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("此前的注销结果仍未确认。", { exact: true }),
+    ).toBeVisible();
+    await expect(page.locator("main")).not.toContainText(longName);
+    await expect(page.locator("main")).not.toContainText("002X");
+    await expect(
+      page.getByRole("heading", { name: "账户已注销", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("button", { name: "确认注销", exact: true }),
+    ).toHaveCount(0);
+    if (failure.status === 429)
+      await expect(
+        page.getByRole("button", { name: /秒后可检查登录状态/ }),
+      ).toBeDisabled();
+    expect(reads).toBe(1);
+    expect(sent).toHaveLength(1);
+    await capture(
+      page,
+      (name) => info.outputPath(name),
+      `unknown-current-${failure.status}`,
+    );
+  });
+}
 
 const unknownResponses: {
   name: string;
@@ -434,7 +546,7 @@ for (const { name, fulfill } of unknownResponses) {
     );
     await confirm(page);
     await expect(
-      page.getByRole("heading", { name: "暂时无法确认注销结果" }),
+      page.getByRole("heading", { name: "注销结果尚不确定" }),
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: "检查登录状态" }),
@@ -443,9 +555,7 @@ for (const { name, fulfill } of unknownResponses) {
     expect(sent).toHaveLength(1);
     if (name === "request mismatch")
       await expect(
-        page.getByText(
-          "本次提交与已保存的信息不一致，当前无法确认账户是否已注销。",
-        ),
+        page.getByText("暂时不要重复提交，可先检查登录状态。"),
       ).toBeVisible();
   });
 }
@@ -463,28 +573,28 @@ const refusals: {
     name: "rate limited",
     status: 429,
     code: "rate_limited",
-    heading: "本次注销尚未受理",
+    heading: "本次尚未注销",
     retry: true,
   },
   {
     name: "invalid input",
     status: 422,
     code: "invalid_input",
-    heading: "本次注销未能办理",
+    heading: "本次注销未完成",
     restart: "重新查看账户资料",
   },
   {
     name: "authentication",
     status: 401,
     code: "authentication_invalid",
-    heading: "当前登录已失效",
+    heading: "请重新登录",
     login: true,
   },
   {
     name: "forbidden",
     status: 403,
     code: "permission_denied",
-    heading: "本次注销未能办理",
+    heading: "本次尚未注销",
   },
   {
     name: "target changed",
@@ -497,7 +607,7 @@ const refusals: {
     name: "dependency",
     status: 503,
     code: "dependency_unavailable",
-    heading: "本次注销没有完成",
+    heading: "本次注销未完成",
     restart: "重新查看账户资料",
   },
 ];
@@ -572,10 +682,14 @@ test("a storage readback or history failure sends zero requests", async ({
   });
   await confirm(page);
   await expect(
-    page.getByRole("heading", { level: 1, name: "本次尚未提交注销", exact: true }),
+    page.getByRole("heading", {
+      level: 1,
+      name: "本次尚未提交注销",
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(
-    page.getByText("注销申请没有发出。", { exact: false }),
+    page.getByText("请返回确认页面，重新核对账户。", { exact: false }),
   ).toBeVisible();
   expect(sent).toEqual([]);
   await expect(page.getByRole("button", { name: "确认注销" })).toHaveCount(0);
@@ -591,7 +705,11 @@ test("a history marker failure sends zero requests", async ({ page }) => {
   });
   await confirm(page);
   await expect(
-    page.getByRole("heading", { level: 1, name: "本次尚未提交注销", exact: true }),
+    page.getByRole("heading", {
+      level: 1,
+      name: "本次尚未提交注销",
+      exact: true,
+    }),
   ).toBeVisible();
   expect(sent).toEqual([]);
 });
@@ -615,7 +733,7 @@ test("submitting disables duplicates and a bounded timeout becomes unknown", asy
   await confirm(page);
   await started.promise;
   await expect(
-    page.getByRole("heading", { name: "正在提交注销申请" }),
+    page.getByRole("heading", { name: "正在注销账户…" }),
   ).toBeVisible();
   const busy = page.getByRole("button", { name: "正在注销" });
   await expect(busy).toBeDisabled();
@@ -623,11 +741,11 @@ test("submitting disables duplicates and a bounded timeout becomes unknown", asy
   expect(sent).toHaveLength(1);
   await page.clock.fastForward(35_001);
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认注销结果" }),
+    page.getByRole("heading", { name: "注销结果尚不确定" }),
   ).toBeVisible();
   release.resolve();
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认注销结果" }),
+    page.getByRole("heading", { name: "注销结果尚不确定" }),
   ).toBeVisible();
   expect(sent).toHaveLength(1);
 });
@@ -637,7 +755,7 @@ test("a real pagehide closes private dialogs before any asynchronous check", asy
 }) => {
   await openEntry(page);
   await page.getByRole("button", { name: "注销账户", exact: true }).click();
-  const dialog = page.getByRole("dialog", { name: "确认注销本人账户？" });
+  const dialog = page.getByRole("dialog", { name: "确认注销此账户？" });
   await expect(dialog).toBeVisible();
   const concealed = await page.evaluate(() => {
     window.dispatchEvent(new Event("pagehide"));
@@ -678,7 +796,7 @@ test("a document mounted in the background performs no current read until visibl
   reads.length = 0;
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "正在检查当前账户" }),
+    page.getByRole("heading", { name: "正在检查账户…" }),
   ).toBeVisible();
   expect(reads).toEqual([]);
   await page.evaluate(() => Reflect.get(window, "showCancellationFixture")());
@@ -698,7 +816,7 @@ test("Escape, close and distinct leave warnings restore focus without submitting
   });
   await trigger.click();
   const confirmDialog = page.getByRole("dialog", {
-    name: "确认注销本人账户？",
+    name: "确认注销此账户？",
   });
   await expect(confirmDialog).toBeVisible();
   await expect(
@@ -726,17 +844,15 @@ test("Escape, close and distinct leave warnings restore focus without submitting
   );
   await confirm(page);
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认注销结果" }),
+    page.getByRole("heading", { name: "注销结果尚不确定" }),
   ).toBeVisible();
   const home = page.getByRole("link", { name: "返回首页", exact: true }).last();
   await home.click();
   const pending = page.getByRole("dialog", {
-    name: "离开前请留意注销结果",
+    name: "注销结果尚未确认",
   });
   await expect(pending).toBeVisible();
-  await expect(pending).toContainText(
-    "本次注销结果仍未确定。离开不会取消已经发出的申请。",
-  );
+  await expect(pending).toContainText("离开不会撤回已经发出的注销请求。");
   await pending.getByRole("button", { name: "留在此页" }).click();
   await expect(pending).toBeHidden();
   await expect(page).toHaveURL(origin + "/account/cancellation");
@@ -755,7 +871,7 @@ test("a new session or an empty selection permanently hides an unknown result", 
   );
   await confirm(page);
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认注销结果" }),
+    page.getByRole("heading", { name: "注销结果尚不确定" }),
   ).toBeVisible();
   await page.evaluate(async (session) => {
     const attempt = await window.cancellationSessions.begin(
@@ -767,14 +883,14 @@ test("a new session or an empty selection permanently hides an unknown result", 
     page.getByRole("heading", { name: "账户状态", level: 1 }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认注销结果" }),
+    page.getByRole("heading", { name: "注销结果尚不确定" }),
   ).toHaveCount(0);
   await page.reload();
   await expect(
     page.getByRole("heading", { name: "账户状态", level: 1 }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认注销结果" }),
+    page.getByRole("heading", { name: "注销结果尚不确定" }),
   ).toHaveCount(0);
   expect(sent).toHaveLength(1);
 });
@@ -797,7 +913,7 @@ test("a late success cannot clear or reveal another login", async ({
   await confirm(page);
   await started.promise;
   await expect(
-    page.getByRole("heading", { name: "正在提交注销申请" }),
+    page.getByRole("heading", { name: "正在注销账户…" }),
   ).toBeVisible();
   await page.evaluate(
     async (session) => {
@@ -813,13 +929,13 @@ test("a late success cannot clear or reveal another login", async ({
   ).toBeVisible();
   release.resolve();
   await expect(
-    page.getByRole("heading", { name: "正在提交注销申请" }),
+    page.getByRole("heading", { name: "正在注销账户…" }),
   ).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "账户已注销" })).toHaveCount(
     0,
   );
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认注销结果" }),
+    page.getByRole("heading", { name: "注销结果尚不确定" }),
   ).toHaveCount(0);
   const selected = await page.evaluate(() =>
     window.cancellationSessions.read(),
@@ -845,7 +961,7 @@ test("an external empty selection hides an unknown result without reviving it", 
   );
   await confirm(page);
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认注销结果" }),
+    page.getByRole("heading", { name: "注销结果尚不确定" }),
   ).toBeVisible();
   await page.evaluate(async () => {
     const selected = await window.cancellationSessions.read();
@@ -862,7 +978,7 @@ test("an external empty selection hides an unknown result without reviving it", 
     page.getByRole("heading", { name: "账户状态", level: 1 }),
   ).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认注销结果" }),
+    page.getByRole("heading", { name: "注销结果尚不确定" }),
   ).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "需要登录" })).toHaveCount(0);
   expect(sent).toHaveLength(1);
