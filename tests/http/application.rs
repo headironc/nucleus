@@ -100,6 +100,20 @@ pub(crate) async fn start_mini(
     supplier: &Supplier,
     mini: &crate::supplier::Mini,
 ) -> Application {
+    start_mini_at(server, name, supplier, mini, "https://avatars.example.com").await
+}
+
+/// Start the real mini capability with a caller-owned signed-avatar origin and storage.
+pub(crate) async fn start_mini_at(
+    server: &fixture::Server,
+    name: &str,
+    supplier: &Supplier,
+    mini: &crate::supplier::Mini,
+    avatar_origin: &str,
+) -> Application {
+    let (root, mount, device) = server.files();
+    let storage = domain::identity::avatar::StorageSettings::new(root, mount, device)
+        .expect("caller-owned avatar storage");
     let settings = Settings::new(
         8,
         domain::identity::message::Limits::default(),
@@ -107,10 +121,10 @@ pub(crate) async fn start_mini(
             .with_mini("mini-fixture".parse().expect("mini identity"), 2_592_000)
             .expect("mini lifetimes"),
         domain::registration::Limits::default(),
-        avatar_settings(),
+        avatar_settings_at(avatar_origin, Duration::from_secs(86400)),
     )
     .expect("work capacity")
-    .with_avatar_storage(Some(crate::database::avatar_storage()));
+    .with_avatar_storage(Some(storage));
     Application::start_with_mini(
         connections(server, name, "clerk"),
         keys(0),

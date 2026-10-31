@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { runInNewContext, Script } from "node:vm";
 import { createHash } from "node:crypto";
 import { account, epoch, FakePlatform, proof, session } from "./fixture";
+import { packageDirectory, packageFile } from "./package-files";
 
 test.each(["login", "registration"])("the exported native package handles %s without Node, DOM, fetch, URL or structuredClone globals", async flow => {
   const platform = new FakePlatform();
@@ -13,15 +14,16 @@ test.each(["login", "registration"])("the exported native package handles %s wit
     Page(value: unknown) { definition = value; },
     setTimeout() { return 1; }, clearTimeout() {},
     Date: class extends Date { static now() { return epoch; } },
-    ArrayBuffer, Uint8Array,
   };
-  runInNewContext(await readFile(new URL("../build/app.js", import.meta.url), "utf8"), context);
+  expect(new ArrayBuffer(32) instanceof runInNewContext("ArrayBuffer", context)).toBe(false);
+  runInNewContext(await readFile(packageFile("app.js"), "utf8"), context);
   application.onLaunch();
   expect(application.identity).toBeDefined();
-  runInNewContext(await readFile(new URL("../build/pages/account/index.js", import.meta.url), "utf8"), context);
+  runInNewContext(await readFile(packageFile("pages/account/index.js"), "utf8"), context);
   const page = { ...definition, data: { ...definition.data }, setData(value: unknown) { Object.assign(this.data, value); } };
   page.onShow();
-  let work = application.identity.authorize("phone-event-code"); await platform.next(0);
+  let work = application.identity.authorize("phone-event-code");
+  await Promise.race([platform.next(0), work.then(() => { throw new Error("Native authorization ended before its first HTTP request"); })]);
   let index = 0;
   if (flow === "registration") {
     platform.reply(0, { code: "ok", registration: proof() }); await work;
@@ -33,19 +35,54 @@ test.each(["login", "registration"])("the exported native package handles %s wit
   await platform.next(index + 1);
   platform.reply(index + 1, { code: "ok", account: account() }); await work;
   expect(page.data.name).toBe("张宁");
+  expect(page.data.avatar).toBe(account().avatar.href);
+  expect(page.data.avatarFailed).toBe(false);
   expect(page.data).not.toHaveProperty("token");
   expect(page.data).not.toHaveProperty("secret");
+  const requests = platform.requests.length;
+  page.avatarError();
+  expect(page.data.avatarFailed).toBe(true);
+  expect(platform.requests).toHaveLength(requests);
+  expect(platform.records().session?.id).toBe(session().id);
   page.onHide();
   expect(page.data.name).toBe("");
+  expect(page.data.avatar).toBe("");
+  expect(page.data.suffix).toBe("");
   expect(page.data.inputIdNumber).toBe("");
   application.onHide();
 });
 
+test.each([
+  ["spoofed ArrayBuffer tag", (length: number) => ({ [Symbol.toStringTag]: "ArrayBuffer", byteLength: length, length })],
+  ["matching byteLength object", (length: number) => ({ byteLength: length })],
+  ["wrong buffer length", (length: number) => new ArrayBuffer(length - 1)],
+  ["invalid UUID bytes after a valid secret", (length: number) => length === 32 ? new ArrayBuffer(32) : { byteLength: length }],
+] as const)("the actual native package rejects %s before persistence or HTTP", async (_name, value) => {
+  const platform = new FakePlatform();
+  platform.getRandomValues = ({ length, success }) => { queueMicrotask(() => success({ randomValues: value(length) as ArrayBuffer })); };
+  let application: any;
+  runInNewContext(await readFile(packageFile("app.js"), "utf8"), {
+    wx: platform, App(value: unknown) { application = value; },
+    setTimeout() { return 1; }, clearTimeout() {},
+    Date: class extends Date { static now() { return epoch; } },
+  });
+  application.onLaunch();
+  try {
+    await application.identity.show();
+    const writes = platform.writes;
+    await application.identity.authorize("explicit-invalid-random-phone-event");
+    expect(platform.requests).toHaveLength(0);
+    expect(platform.writes).toBe(writes);
+    expect(application.identity.snapshot()).toMatchObject({ phase: "unavailable", name: "", canLogin: false,
+      message: "本次尚未提交，请重新检查。" });
+  } finally { application.onHide(); }
+});
+
 test("the native build records the one actual shared OpenAPI snapshot", async () => {
   const snapshot = await readFile(new URL("../../halo/protocol/openapi.json", import.meta.url));
-  const source = JSON.parse(await readFile(new URL("../build/build-source.json", import.meta.url), "utf8"));
+  const source = JSON.parse(await readFile(packageFile("build-source.json"), "utf8"));
   expect(source).toMatchObject({ source: "export", snapshot: "halo/protocol/openapi.json",
-    sha256: createHash("sha256").update(snapshot).digest("hex"), platformAcceptance: false });
+    sha256: createHash("sha256").update(snapshot).digest("hex"), outputDirectory: packageDirectory, platformAcceptance: false });
 });
 
 test("all shipped WXML bindings preserve raw source bytes and pass a host expression syntax check", async () => {
@@ -53,7 +90,7 @@ test("all shipped WXML bindings preserve raw source bytes and pass a host expres
   let bindings = 0;
   for (const page of manifest.pages as string[]) {
     const source = await readFile(new URL(`../src/${page}.wxml`, import.meta.url), "utf8");
-    expect(await readFile(new URL(`../build/${page}.wxml`, import.meta.url), "utf8")).toBe(source);
+    expect(await readFile(packageFile(`${page}.wxml`), "utf8")).toBe(source);
     // WXML binding expressions are checked as written, without HTML entity decoding.
     // This catches source encoding failures; only the platform compiler proves WXML support.
     for (const match of source.matchAll(/\{\{([\s\S]*?)\}\}/g)) {
@@ -62,6 +99,17 @@ test("all shipped WXML bindings preserve raw source bytes and pass a host expres
     }
   }
   expect(bindings).toBeGreaterThan(0);
+});
+
+test("the shipped account avatar enables network WebP and retains its signed source and failure placeholder", async () => {
+  const source = await readFile(packageFile("pages/account/index.wxml"), "utf8");
+  const avatar = source.match(/<image\b[^>]*class="avatar"[^>]*>/)![0];
+  expect(avatar).toContain('webp="{{true}}"');
+  expect(avatar).toContain('src="{{avatar}}"');
+  expect(avatar).toContain('wx:if="{{avatar && !avatarFailed}}"');
+  expect(avatar).toContain('binderror="avatarError"');
+  expect(source).toContain('<view class="avatar avatar-placeholder" wx:else>');
+  expect(source).toContain('wx:if="{{avatarFailed}}" role="status">头像暂时无法显示。</view>');
 });
 
 test("native sessions page binds delayed modal confirmations and exposes only safe display fields", async () => {
@@ -74,8 +122,8 @@ test("native sessions page binds delayed modal confirmations and exposes only sa
   const context = { wx, App(value: unknown) { application = value; }, getApp() { return application; },
     Page(value: unknown) { definition = value; }, setTimeout() { return 1; }, clearTimeout() {},
     Date: class extends Date { static now() { return epoch; } }, ArrayBuffer, Uint8Array };
-  runInNewContext(await readFile(new URL("../build/app.js", import.meta.url), "utf8"), context); application.onLaunch();
-  runInNewContext(await readFile(new URL("../build/pages/sessions/index.js", import.meta.url), "utf8"), context);
+  runInNewContext(await readFile(packageFile("app.js"), "utf8"), context); application.onLaunch();
+  runInNewContext(await readFile(packageFile("pages/sessions/index.js"), "utf8"), context);
   const page = { ...definition, data: { ...definition.data }, setData(value: unknown) { Object.assign(this.data, value); } };
   page.onShow(); await platform.next(0); platform.reply(0, { code: "ok", account: account() });
   await platform.next(1); platform.reply(1, { code: "ok", sessions: [
@@ -93,13 +141,25 @@ test("native sessions page binds delayed modal confirmations and exposes only sa
   const all = modal; page.onHide(); old.success({ confirm: true }); all.success({ confirm: true });
   expect(platform.requests).toHaveLength(2);
   expect(page.data.sessions).toHaveLength(0);
-  runInNewContext(await readFile(new URL("../build/pages/account/index.js", import.meta.url), "utf8"), context);
+  runInNewContext(await readFile(packageFile("pages/account/index.js"), "utf8"), context);
   const accountPage = { ...definition, data: { ...definition.data }, setData(value: unknown) { Object.assign(this.data, value); } };
   accountPage.onShow(); await platform.next(2); platform.reply(2, { code: "ok", account: account() });
   await new Promise(resolve => setTimeout(resolve, 0));
   accountPage.sessions(); expect(navigation).toEqual({ url: "/pages/sessions/index" });
-  accountPage.logoutCurrent(); expect(modal.title).toBe("退出本次登录？"); expect(modal.content).toContain("其他登录不受影响");
+  accountPage.logoutCurrent(); expect(modal.title).toBe("退出登录？"); expect(modal.content).toContain("其他登录不受影响");
   const current = modal; accountPage.onHide(); current.success({ confirm: true });
   expect(platform.requests).toHaveLength(3);
   application.onHide();
+});
+
+test("the selected self package ships its accepted local garden and stylesheet", async () => {
+  const garden = await readFile(packageFile("assets/self-garden.jpg"));
+  expect(createHash("sha256").update(garden).digest("hex")).toBe("f28233f0f4ed7bf72b7272ed42f2cdc592b014628fab4393698b1b408f017586");
+  expect(await readFile(packageFile("self.wxss"), "utf8")).toBe(await readFile(new URL("../src/self.wxss", import.meta.url), "utf8"));
+  expect(await readFile(packageFile("app.wxss"), "utf8")).toContain('@import "./self.wxss";');
+  for (const page of ["account", "sessions"]) {
+    const source = await readFile(packageFile(`pages/${page}/index.wxml`), "utf8");
+    expect(source).toContain("self-page");
+    expect(source).not.toMatch(/orbit-services|affiliation|change-avatar|self-scenario|orbit-statusbar/);
+  }
 });

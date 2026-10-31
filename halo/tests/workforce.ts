@@ -154,19 +154,19 @@ export async function ownWorkforce(
       { action, institution, manager, reference },
     );
   };
-  await read("absent", "员工服务未开通", "absent");
+  await read("absent", "尚未加入员工服务", "absent");
   await command("manager");
   const first = await command("admit");
-  await read("active", "员工服务已开通", "active");
+  await read("active", "已加入员工服务", "active");
   await command("suspend");
   await read("suspended", "员工服务已暂停", "suspended");
   await command("resume");
-  await read("resumed", "员工服务已开通", "active");
+  await read("resumed", "已加入员工服务", "active");
   await command("exit", first);
   await read("terminated", "员工服务已结束", "terminated");
   const next = await command("admit");
   expect(next).not.toBe(first);
-  await read("rejoined", "员工服务已开通", "active");
+  await read("rejoined", "已加入员工服务", "active");
   await page.setExtraHTTPHeaders({ "X-Halo-Fixture-Source": "00" });
   await page.goto("/account");
 }

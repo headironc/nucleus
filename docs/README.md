@@ -53,7 +53,8 @@
 | 工牌模板读取、照片准备、本人提交与历史    | 已交付   | [模板与照片](workforce/media.md)、[申请](workforce/applications.md)                                                                                                        |
 | 工牌管理审批与附理由驳回                  | 已交付   | [申请](workforce/applications.md)；后端管理查询、审批及本人审核结果，网站兼容与页面组合验收由客户端集成覆盖                                                                |
 | Halo 网站工牌审核与本人审核结果           | 待验收   | [工牌审核页面](client/pages.md#网站工牌审核)、[网站检查](../halo/README.md#工牌审核)；客户端源码与受控检查随本片交付，真实后端组合另验                                     |
-| 工牌取消、成品与发放                      | 目标     | [申请](workforce/applications.md)、[成品与发放](workforce/fulfillment.md)                                                                                                  |
+| 工牌本人或管理者按确认状态取消            | 待验收   | [申请](workforce/applications.md)；后端取消、保留历史及审计，网站适配和真实组合由客户端集成覆盖                                                                            |
+| 工牌成品与发放                            | 目标     | [成品与发放](workforce/fulfillment.md)                                                                                                                                     |
 | 栏目创建领域组件                          | 已交付   | [栏目](content/columns.md)；含永久原结果、导航顺序与封印核验；尚未装配栏目 HTTP 入口                                                                                       |
 | 网站栏目管理与 HTTP 接入                  | 目标     | [栏目](content/columns.md)、[内容 HTTP](content/http.md)                                                                                                                   |
 | 网站内容管理与发布                        | 目标     | [草稿、版本与上线](content/publication.md)、[文章](content/articles.md)、[首页编排](content/home.md)、[内容图片](content/images.md)                                        |
@@ -74,7 +75,7 @@
 | Halo 网站本人首次领取工号                 | 目标     | [页面](client/pages.md#网站本人首次领取工号)、[网站检查](../halo/README.md#本人首次领取工号)；客户端候选已实现，真实组合验收待完成                                         |
 | Halo 网站本人固定工牌申请                 | 目标     | [页面](client/pages.md#网站本人固定工牌申请)、[网站检查](../halo/README.md#固定工牌申请)；客户端候选已实现，真实组合验收待完成                                             |
 | 公开设置与网站交付配置                    | 已交付   | [网站交付边界](http/site.md)、[部署设置](settings.md)                                                                                                                      |
-| Orbit 小程序手机号入口与本人账户客户端    | 受控验证 | [Orbit](../orbit/README.md)、[小程序会话](client/session.md)、[客户端恢复](client/recovery.md)；已消费共同实际 OpenAPI，原生包及受控行为已验证，微信平台与真实业务链路待验 |
+| Orbit 小程序手机号入口与本人账户客户端    | 受控验证 | [Orbit](../orbit/README.md)、[小程序会话](client/session.md)、[客户端恢复](client/recovery.md)；本草本人入口源码已实现，具名包及受控行为已验证，微信平台与真实业务链路待验 |
 | Orbit 小程序本人登录管理                  | 受控验证 | [小程序会话](client/session.md)、[客户端恢复](client/recovery.md)；正式协议列表与所选其他登录退出、当前及全部退出连接已受控验证，微信平台与真实组合待验                    |
 | 网站及小程序其余页面                      | 目标     | [页面](client/pages.md)、[网站工程](client/website.md)                                                                                                                     |
 | 真实部署、Nginx 与 systemd 验收           | 目标     | [业务交付顺序](engineering/delivery.md#里程碑与生产准备)                                                                                                                   |
@@ -99,6 +100,7 @@
 | [模型选择与协作](engineering/models.md)                 | 模型默认值与升级、运行限制、委派接纳和上下文接续                                        |
 | [模型行为场景](engineering/model-scenarios.md)          | 模型与交付流程的验收输入、可观察预期与失败条件                                          |
 | [Claude Code 调用](engineering/claude-code.md)          | 经官方 DeepSeek 或 OpenCode 的只读、有界执行调用、工具审批、输出与失败恢复边界          |
+| [小程序集成夹具](engineering/native-mini.md)            | 临时 HTTP/PG、有限私有控制、响应故障、自证与原生验收边界                                |
 | [项目标识](identifiers.md)                              | UUIDv4 服务端生成、客户端值解析、披露及非时间语义                                       |
 | [数据库](database.md)                                   | 连接、TLS、登录身份、运行权限和现有连接库                                               |
 | [部署设置](settings.md)                                 | 环境键、输入规则、默认值与消费所有者                                                    |
@@ -171,14 +173,14 @@
 
 ## Workforce
 
-| 文档                                   | 职责                             |
-| -------------------------------------- | -------------------------------- |
-| [工号](workforce/numbers.md)           | 号码池、分配、更正、撤销和恢复   |
-| [目录](workforce/directories.md)       | 科室、职务、职称及分类规则       |
-| [配置完成](workforce/completions.md)   | 可变配置的原操作结果             |
-| [模板与照片](workforce/media.md)       | 模板内容、字体、照片和排版       |
-| [申请](workforce/applications.md)      | 固定提交、分类、审批和终止       |
-| [成品与发放](workforce/fulfillment.md) | Render、Badge、Delivery 及原结果 |
+| 文档                                   | 职责                           |
+| -------------------------------------- | ------------------------------ |
+| [工号](workforce/numbers.md)           | 号码池、分配、更正、撤销和恢复 |
+| [目录](workforce/directories.md)       | 科室、职务、职称及分类规则     |
+| [配置完成](workforce/completions.md)   | 可变配置的原操作结果           |
+| [模板与照片](workforce/media.md)       | 模板内容、字体、照片和排版     |
+| [申请](workforce/applications.md)      | 固定提交、分类、审批和终止     |
+| [成品与发放](workforce/fulfillment.md) | 成品图片、发放及保留           |
 
 ## Content
 

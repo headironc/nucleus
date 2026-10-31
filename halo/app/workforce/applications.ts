@@ -8,6 +8,7 @@ import {
   prepareApplicationPhoto,
   previewApplication,
   submitApplication,
+  cancelApplication,
   application,
   applications,
   applicationResource,
@@ -59,6 +60,8 @@ export type ApplicationState =
       artwork: ApplicationArtwork;
     }
   | { kind: "unknown" }
+  | { kind: "cancellation-unknown"; retryAt: number; message: string }
+  | { kind: "cancelled" }
   | {
       kind: "created";
       application: Pick<Application, "id" | "kind" | "status" | "submittedAt">;
@@ -70,16 +73,19 @@ export type ApplicationState =
       artwork?: ApplicationArtwork;
       media?: "loading" | "failed";
       retryAt?: number;
+      cancellation?: boolean;
+      pending?: boolean;
+      notice?: string;
     };
 
 const READ_ERROR = "暂时无法加载，请刷新后重试。";
 export const APPLICATION_FAILURE_COPY: Record<string, string> = {
-  data_changed: "工牌内容已变化，请刷新办理内容后重新预览并确认。",
-  number_required: "当前没有可用工号，请先申请工号。",
+  data_changed: "工牌内容已变化，请重新加载申请表后预览并确认。",
+  number_required: "当前没有可用工号，暂时无法申请工牌。",
   selection_unavailable:
-    "所选科室、职务、职称或领取地点已不可用，请刷新后重新选择。",
-  missing_glyph: "工牌字体无法显示全部文字，请联系管理员调整字体后再办理。",
-  text_overflow: "完整文字无法放入当前工牌，请联系管理员调整模板后再办理。",
+    "所选科室、职务、职称或领取地点已不可用，请重新加载申请表后选择。",
+  missing_glyph: "工牌文字无法完整显示，请联系工牌管理人员处理。",
+  text_overflow: "工牌文字无法完整显示，请联系工牌管理人员处理。",
   target_unavailable: "无法使用这项内容，请刷新后重新准备。",
   invalid_input: "请检查填写内容和照片后重试。",
   rate_limited: "暂时无法处理，请稍后再试。",
@@ -92,6 +98,7 @@ const DEFAULT_API = {
   photo: prepareApplicationPhoto,
   preview: previewApplication,
   submit: submitApplication,
+  cancellation: cancelApplication,
   list: applications,
   detail: application,
   resource: applicationResource,
@@ -121,6 +128,8 @@ export class Applications {
   private timer?: ReturnType<typeof setTimeout>;
   private uncertainAccount?: string;
   private submittingAccount?: string;
+  private cancellingAccount?: string;
+  private uncertainCancellation?: string;
   private page = 1;
   private retryAt = 0;
   private waitingSelection?: string;
@@ -157,6 +166,9 @@ export class Applications {
     return state.kind === "ready" ? state.account.id : undefined;
   }
   private cancel() {
+    if (this.cancellingAccount)
+      this.uncertainCancellation = this.cancellingAccount;
+    this.cancellingAccount = undefined;
     if (this.submittingAccount) this.uncertainAccount = this.submittingAccount;
     this.submittingAccount = undefined;
     this.generation++;
@@ -199,7 +211,8 @@ export class Applications {
       this.show({ kind: "unknown" });
       return;
     }
-    if (service.kind === "ready") void this.load(this.page);
+    if (this.mode.kind !== "new" || service.kind === "ready")
+      void this.load(this.page);
     else if (service.kind === "unavailable" || service.kind === "limited")
       this.show({
         kind: "error",
@@ -244,15 +257,44 @@ export class Applications {
     this.timer = setTimeout(() => {
       if (!active()) return;
       const unknown = !!this.submittingAccount;
+      const cancelling = !!this.cancellingAccount;
+      const state = this.state;
       this.cancel();
       this.clear();
+      const retryAt = this.dependencies.now() + 5000;
+      if (this.mode.kind !== "new") {
+        this.retryAt = retryAt;
+        this.waitingSelection = `${binding.selection.id}/${binding.selection.revision}`;
+      }
+      if (cancelling || this.uncertainCancellation === this.account()) {
+        this.show({
+          kind: "cancellation-unknown",
+          retryAt,
+          message: "请刷新详情查看当前状态，暂时不要重复提交。",
+        });
+        return;
+      }
+      if (
+        !unknown &&
+        state.kind === "detail" &&
+        state.result.access === "full" &&
+        state.media === "loading"
+      ) {
+        this.show({
+          kind: "detail",
+          result: state.result,
+          media: "failed",
+          retryAt,
+        });
+        return;
+      }
       this.show(
         unknown
           ? { kind: "unknown" }
           : {
               kind: "error",
               message: READ_ERROR,
-              retryAt: this.dependencies.now() + 5000,
+              retryAt,
             },
       );
     }, 35000);
@@ -291,6 +333,7 @@ export class Applications {
     },
     binding: CurrentBinding,
     editing = false,
+    displayMessage?: string,
   ) {
     if (
       result.kind === "failure" &&
@@ -304,19 +347,39 @@ export class Applications {
     this.retryAt = retryAt;
     this.waitingSelection = `${binding.selection.id}/${binding.selection.revision}`;
     const message =
-      result.kind === "artwork-error"
-        ? "工牌预览无法完整显示，请联系管理员检查字体、照片和模板。"
-        : (APPLICATION_FAILURE_COPY[result.code ?? ""] ?? READ_ERROR);
+      displayMessage ??
+      (result.kind === "artwork-error"
+        ? "工牌预览无法完整显示，请联系工牌管理人员处理。"
+        : (APPLICATION_FAILURE_COPY[result.code ?? ""] ?? READ_ERROR));
     if (editing && this.context)
       this.show({ kind: "edit", context: this.context, message, retryAt });
     else {
       this.clear();
-      this.show({ kind: "error", message, retryAt });
+      this.show(
+        this.uncertainCancellation === this.account()
+          ? {
+              kind: "cancellation-unknown",
+              retryAt,
+              message:
+                result.status === 404
+                  ? "目前无法查看这份申请，仍无法确认刚才的取消是否成功。可返回列表查看当前允许访问的记录。"
+                  : "请刷新详情查看当前状态，暂时不要重复提交。",
+            }
+          : { kind: "error", message, retryAt },
+      );
     }
   }
-  async load(page = 1): Promise<void> {
+  async load(page = 1, notice?: string): Promise<void> {
     if (this.dependencies.now() < this.retryAt) {
-      this.show({ kind: "error", message: READ_ERROR, retryAt: this.retryAt });
+      this.show(
+        this.uncertainCancellation === this.account()
+          ? {
+              kind: "cancellation-unknown",
+              message: "请刷新详情查看当前状态，暂时不要重复提交。",
+              retryAt: this.retryAt,
+            }
+          : { kind: "error", message: READ_ERROR, retryAt: this.retryAt },
+      );
       return;
     }
     const scope = this.scope();
@@ -332,8 +395,7 @@ export class Applications {
         if (service.kind !== "ready" || service.status !== "active") {
           this.show({
             kind: "blocked",
-            message:
-              "当前员工服务不可用于新申请。你仍可查看允许访问的申请记录。",
+            message: "目前无法提交新的工牌申请。可在“我的申请”查看记录。",
             retryAt: 0,
           });
           return;
@@ -421,13 +483,32 @@ export class Applications {
           scope.signal,
         );
         if (!(await scope.guard())) return;
-        if (result.kind !== "ok") return this.failure(result, scope.binding);
+        if (result.kind !== "ok")
+          return this.failure(
+            result,
+            scope.binding,
+            false,
+            result.kind === "failure" && result.status === 404
+              ? "目前无法查看这份申请。"
+              : undefined,
+          );
+        this.retryAt = 0;
+        const uncertain = this.uncertainCancellation === this.account();
+        this.uncertainCancellation = undefined;
+        notice ??= uncertain
+          ? "已读取当前状态。请核对申请后再决定是否取消。"
+          : undefined;
         if (result.value.access === "restricted") {
-          this.show({ kind: "detail", result: result.value });
+          this.show({ kind: "detail", result: result.value, notice });
           return;
         }
         const item = result.value.application;
-        this.show({ kind: "detail", result: result.value, media: "loading" });
+        this.show({
+          kind: "detail",
+          result: result.value,
+          media: "loading",
+          notice,
+        });
         const resources = await this.api.artwork(
           session,
           item.snapshot.template,
@@ -473,9 +554,11 @@ export class Applications {
           return this.detailMediaFailure(artwork, scope.binding, result.value);
         this.previewArtwork = artwork.value;
         this.show({
+          ...(this.state.kind === "detail" ? this.state : {}),
           kind: "detail",
           result: result.value,
           artwork: artwork.value,
+          media: undefined,
         });
       }
     } catch {
@@ -487,6 +570,73 @@ export class Applications {
             this.state.result,
           );
         else await this.failure({ kind: "disconnected" }, scope.binding);
+      }
+    } finally {
+      scope.finish();
+    }
+  }
+  confirmCancellation() {
+    const state = this.state;
+    if (
+      state.kind !== "detail" ||
+      state.pending ||
+      !["submitted", "approved"].includes(state.result.application.status)
+    )
+      return;
+    this.show({ ...state, cancellation: true });
+  }
+  dismissCancellation() {
+    if (this.state.kind === "detail" && !this.state.pending)
+      this.show({ ...this.state, cancellation: false });
+  }
+  async cancelApplication() {
+    const state = this.state;
+    if (state.kind !== "detail" || !state.cancellation || state.pending) return;
+    const expectedStatus = state.result.application.status;
+    if (expectedStatus !== "submitted" && expectedStatus !== "approved") return;
+    const scope = this.scope();
+    if (!scope) return;
+    this.show({ ...state, pending: true });
+    try {
+      if (!(await scope.guard())) return;
+      this.cancellingAccount = this.account();
+      const result = await this.api.cancellation(
+        scope.binding.selection.id,
+        state.result.application.id,
+        { mode: "self", expectedStatus },
+        scope.signal,
+      );
+      if (!(await scope.guard())) return;
+      this.cancellingAccount = undefined;
+      if (result.kind === "ok") {
+        this.uncertainCancellation = undefined;
+        this.clear();
+        this.show({ kind: "cancelled" });
+      } else if (result.kind !== "failure" || result.status >= 500) {
+        this.uncertainCancellation = this.account();
+        this.clear();
+        this.retryAt =
+          result.kind === "failure"
+            ? this.dependencies.now() + result.retryAfter
+            : 0;
+        this.waitingSelection = `${scope.binding.selection.id}/${scope.binding.selection.revision}`;
+        this.show({
+          kind: "cancellation-unknown",
+          retryAt: this.retryAt,
+          message: "请刷新详情查看当前状态，暂时不要重复提交。",
+        });
+      } else if (result.code === "state_changed") {
+        await this.load(1, "申请状态已更新。请核对当前状态后重新确认取消。");
+      } else await this.failure(result, scope.binding);
+    } catch {
+      if (scope.active()) {
+        this.cancel();
+        this.clear();
+        this.show({
+          kind: "cancellation-unknown",
+          retryAt: 0,
+          message: "请刷新详情查看当前状态，暂时不要重复提交。",
+        });
       }
     } finally {
       scope.finish();
@@ -684,6 +834,7 @@ export class Applications {
     }
   }
   previewFailed() {
+    if (this.state.kind === "detail" && this.state.pending) return;
     if (this.state.kind === "detail") {
       const result = this.state.result;
       this.cancel();
@@ -707,7 +858,7 @@ export class Applications {
           ? { kind: "unknown" }
           : {
               kind: "error",
-              message: "工牌预览无法完整显示，请刷新后重试。",
+              message: "工牌预览无法完整显示，请重新加载申请表后重试。",
               retryAt: 0,
             },
       );

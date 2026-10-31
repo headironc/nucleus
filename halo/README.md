@@ -168,6 +168,19 @@ bun run test:browser -- tests/reviews.spec.ts tests/review-dialog.spec.ts --outp
 
 浏览器夹具运行真实管理页、本人历史页、生成校验器、IndexedDB、固定字体和图片解码，HTTP 响应受控。虚构像素只在测试响应中提供；资源失败时产品页面显示占位。验收覆盖分页筛选、固定资料与当前差异、权限与资格、未知决定、状态竞争、迟到响应、受限历史、完整理由及窄屏焦点。每轮验收选独立输出目录，保留截图和原 reporter；同目录再次运行会替换旧图片。受控检查与后端事务检查、真实组合验收分别取证。
 
+## 工牌取消
+
+本人详情和管理详情复用 `cancellation-dialog.tsx`，各页控制器拥有自己的显式模式及确认状态。本人读取与新申请资格分开；员工服务读取失败时，历史页继续读取服务端允许的本人投影。正常生成器从实际 OpenAPI 生成取消请求及响应校验器。
+
+取消收到成功回执后显示已确认结果。状态竞争后重新读取详情，关闭旧确认并要求再次确认。断线、超时或不可信回包后只提供读取动作；不可见记录仍显示结果无法确认。详情读取继续使用当前账户、请求代次及资源释放保护。
+
+```bash
+cd halo
+bun run test:browser -- tests/reviews.spec.ts tests/cancellation-dialog.spec.ts --output ../target/badge-cancellation-browser/current
+```
+
+受控浏览器检查覆盖本人完整及受限读取、显式管理模式、取消说明、状态竞争、未知结果与历史展示。后端事务及真实组合分别按[申请验收](../docs/workforce/applications.md#验收)取证。
+
 ## 头像本地选择与预览
 
 `app/avatar/candidate.ts` 读取本地文件，核对大小、实际格式、动画和正方形尺寸后解码预览。`format.ts` 检查图片容器，并仅为预览去除方向元数据。候选保留原 `File`，不会裁剪、缩放或改写待提交字节。重新选择、取消和关闭时释放旧解码资源；迟到的解码结果不能覆盖后来选择。
