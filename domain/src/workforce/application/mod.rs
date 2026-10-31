@@ -2,6 +2,7 @@
 
 mod database;
 pub mod photo;
+mod review;
 mod settings;
 mod value;
 
@@ -38,6 +39,7 @@ pub struct Service {
     current: current::Service,
     numbers: number::Service,
     roles: role::Reader,
+    persons: person::Reader,
     settings: Option<Arc<Settings>>,
     // The owned permit moves into the blocking closure, including after a caller disconnects.
     processing: Arc<Semaphore>,
@@ -48,9 +50,14 @@ impl Service {
         app: App,
         current: current::Service,
         numbers: number::Service,
+        keys: Arc<crate::identity::keys::Keys>,
         settings: Option<Arc<Settings>>,
     ) -> Self {
         Self {
+            persons: person::Reader::new(
+                account::Reader::new(app.clone(), Arc::clone(&keys)),
+                keys,
+            ),
             roles: role::Reader::new(app.clone()),
             app,
             current,
@@ -355,9 +362,17 @@ impl Service {
         let result = timeout(
             Duration::from_secs(3),
             budget.run(client, self.app.anchors(), |view| async move {
-                let (person, _, active, _) =
+                let (person, _, active, now) =
                     self.identity(client, actor, Read::Snapshot(view)).await?;
-                database::list(client, person, active, pagination).await
+                database::list(
+                    client,
+                    person,
+                    active,
+                    pagination,
+                    &self.persons.with_read(Read::Snapshot(view)),
+                    now,
+                )
+                .await
             }),
         )
         .await
@@ -373,9 +388,17 @@ impl Service {
         let result = timeout(
             Duration::from_secs(3),
             budget.run(client, self.app.anchors(), |view| async move {
-                let (person, _, active, _) =
+                let (person, _, active, now) =
                     self.identity(client, actor, Read::Snapshot(view)).await?;
-                database::detail(client, person, active, id).await
+                database::detail(
+                    client,
+                    person,
+                    active,
+                    id,
+                    &self.persons.with_read(Read::Snapshot(view)),
+                    now,
+                )
+                .await
             }),
         )
         .await
@@ -404,7 +427,22 @@ impl Service {
                 if !active {
                     return Err(Error::TargetUnavailable);
                 }
-                database::readable_resource(client, person, id, &self.settings()?.template).await
+                let roles = self.roles.at(view);
+                let manager = match Box::pin(member::authorize(
+                    client,
+                    &roles,
+                    &self.current,
+                    actor,
+                    role::Code::WorkforceApproval,
+                ))
+                .await
+                {
+                    Ok(_) => true,
+                    Err(grant::Error::Denied) => false,
+                    Err(error) => return Err(Error::Grant(error)),
+                };
+                database::readable_resource(client, person, id, &self.settings()?.template, manager)
+                    .await
             }),
         )
         .await
@@ -500,6 +538,8 @@ pub enum Error {
     Number(#[from] number::Error),
     #[error("current directory failed")]
     Directory(#[from] directory::Error),
+    #[error("current person failed")]
+    Person(#[from] person::ReadError),
     #[error("database operation failed")]
     Query(#[from] Query),
     #[error("database connection failed")]
@@ -534,6 +574,10 @@ pub enum Error {
     TargetUnavailable,
     #[error("the confirmed content changed")]
     Changed,
+    #[error("the application already has a decision")]
+    StateChanged,
+    #[error("the applicant's current account and participation are required")]
+    ApplicantUnavailable,
     #[error("the template has a missing glyph")]
     MissingGlyph,
     #[error("complete text does not fit the configured area")]
@@ -568,6 +612,7 @@ impl Error {
             Self::History(error) => error.corrupt(),
             Self::Number(error) => error.is_corrupt(),
             Self::Directory(error) => error.is_corrupt(),
+            Self::Person(error) => error.unreliable(),
             Self::Rollback { cause, .. } => cause.unreliable(),
             _ => false,
         }
@@ -681,6 +726,500 @@ mod tests {
         )
     }
 
+    fn application_services<'a>(
+        context: &'a Context,
+        settings: ServicesSettings,
+        supplier: &'a Supplier,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Services> + 'a>> {
+        Box::pin(async move {
+            Box::pin(Services::start(
+                Barrier::begin(context.clone()).await.expect("barrier"),
+                authentication::inventory(authentication::keys()),
+                settings,
+                supplier.client(),
+                authentication::unused_client().await,
+            ))
+            .await
+            .expect("services")
+        })
+    }
+
+    fn verify_inactive_applicant<'a>(
+        services: &'a Services,
+        database: &'a Database,
+        supplier: &'a mut Supplier,
+        institution: &'a Actor,
+        applicant: &'a Actor,
+        reviewer: &'a Actor,
+        id: Id,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Actor> + 'a>> {
+        Box::pin(async move {
+            let candidate = Box::pin(
+                services
+                    .account()
+                    .candidate(institution, "13800000000".parse().expect("mobile")),
+            )
+            .await
+            .expect("current account candidate");
+            let subject = candidate.identity();
+            let suspension = Box::pin(services.suspension().suspend(institution.clone(),operation(),applicant.account_id(),serde_json::from_value(json!({"personId":subject.person_id(),"revisionId":subject.revision_id(),"mobile":"13800000000"})).expect("suspension input"))).await.expect("suspend applicant account");
+            let detail = Box::pin(services.application().managed_detail(reviewer, id))
+                .await
+                .expect("ineligible account remains visible to approval authority");
+            assert!(!detail.current.account_active);
+            assert!(
+                detail.current.participation_active,
+                "account eligibility is independent of the retained active grant"
+            );
+            assert!(matches!(
+                Box::pin(
+                    services
+                        .application()
+                        .review(reviewer, id, ReviewInput::Approve {})
+                )
+                .await,
+                Err(Error::ApplicantUnavailable)
+            ));
+            Box::pin(
+                services.application().review(
+                    reviewer,
+                    id,
+                    serde_json::from_value(
+                        json!({"decision":"reject","reason":"Account suspended"}),
+                    )
+                    .expect("reason"),
+                ),
+            )
+            .await
+            .expect("ineligible account may still be rejected");
+            Box::pin(services.application().resource(
+                reviewer,
+                detail.application.photo.resource_id,
+                read_capacity(),
+                false,
+            ))
+            .await
+            .expect("manager can still read referenced media");
+            Box::pin(services.suspension().resume(institution.clone(),operation(),applicant.account_id(),serde_json::from_value(json!({"personId":subject.person_id(),"revisionId":subject.revision_id(),"mobile":"13800000000","suspensionId":suspension.id()})).expect("resumption input"))).await.expect("resume applicant account");
+            let message = Box::pin(authentication::session::tests::message(
+                database,
+                services.authentication(),
+                supplier,
+                "13800000000",
+            ))
+            .await;
+            let authentication::session::Receipt::Session(session) =
+                Box::pin(services.authentication().create_session(
+                    authentication::session::tests::input(
+                        uuid::Uuid::new_v4(),
+                        message,
+                        "13800000000",
+                        authentication::session::tests::CODE,
+                    ),
+                ))
+                .await
+                .expect("new session after account resumption")
+            else {
+                panic!("existing account session")
+            };
+            services
+                .current()
+                .authenticate(current::Proof::Cookie {
+                    id: session.id(),
+                    token: session.token().text().parse().expect("session proof"),
+                })
+                .await
+                .expect("resumed authenticated applicant")
+        })
+    }
+
+    fn verify_reviews<'a>(
+        services: &'a Services,
+        database: &'a Database,
+        supplier: &'a mut Supplier,
+        institution: &'a Actor,
+        applicant: (&'a Actor, grant::Id),
+        ids: &'a [Id],
+        proxy: &'a fixture::database_proxy::Proxy,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = i64> + 'a>> {
+        Box::pin(async move {
+            let (applicant, applicant_grant) = applicant;
+            let service = services.application();
+            let page = || serde_json::from_value(json!({})).expect("management page");
+            assert!(matches!(
+                Box::pin(service.managed_list(institution, page())).await,
+                Err(Error::Grant(grant::Error::Denied))
+            ));
+            assert!(matches!(
+                Box::pin(service.managed_detail(institution, ids[0])).await,
+                Err(Error::Grant(grant::Error::Denied))
+            ));
+            assert!(matches!(
+                Box::pin(service.review(institution, ids[0], ReviewInput::Approve {})).await,
+                Err(Error::Grant(grant::Error::Denied))
+            ));
+            let reviewer = Box::pin(crate::access::appointment::tests::register_numbered(
+                database, services, supplier, 21,
+            ))
+            .await;
+            let grant = Box::pin(admit(
+                services,
+                institution,
+                Entry::Institution,
+                &crate::access::appointment::tests::mobile(21),
+                RoleKind::Full,
+            ))
+            .await;
+            let observer = database
+                .connections(&database.user)
+                .recover()
+                .await
+                .expect("review observer");
+            let owner = database
+                .connections(&database.owner)
+                .recover()
+                .await
+                .expect("fault fixture owner");
+            let listing = Box::pin(service.managed_list(&reviewer, page()))
+                .await
+                .expect("current approval authority");
+            assert_eq!(listing.count, 6);
+            let detail = Box::pin(service.managed_detail(&reviewer, ids[0]))
+                .await
+                .expect("fixed and current details");
+            assert!(detail.current.account_active && detail.current.participation_active);
+            assert_eq!(detail.current.name, "Target Person");
+            let fixed = detail.application.snapshot.clone();
+            let resource = detail.application.photo.resource_id;
+            let bytes = Box::pin(service.resource(&reviewer, resource, read_capacity(), false))
+                .await
+                .expect("manager reads a referenced applicant photo")
+                .bytes;
+            assert!(!bytes.is_empty());
+            let draft = Box::pin(service.prepare_photo(&reviewer, "image/webp".into(), bytes))
+                .await
+                .expect("another person's unreferenced draft");
+            assert!(
+                matches!(
+                    Box::pin(service.resource(
+                        applicant,
+                        draft.resource_id,
+                        read_capacity(),
+                        false
+                    ))
+                    .await,
+                    Err(Error::TargetUnavailable)
+                ),
+                "approval authority never opens an arbitrary foreign draft"
+            );
+            assert!(matches!(
+                Box::pin(service.resource(applicant, draft.resource_id, read_capacity(), true))
+                    .await,
+                Err(Error::TargetUnavailable)
+            ));
+            let approved = Box::pin(service.review(&reviewer, ids[1], ReviewInput::Approve {}))
+                .await
+                .expect("approve without PDF");
+            assert!(matches!(approved.decision, Decision::Approved { .. }));
+            let rejected = Box::pin(
+                service.review(
+                    &reviewer,
+                    ids[2],
+                    serde_json::from_value(
+                        json!({"decision":"reject","reason":"  Photo needs correction  "}),
+                    )
+                    .expect("reason"),
+                ),
+            )
+            .await
+            .expect("reject with a reason");
+            let rejection = serde_json::to_value(rejected).expect("public decision");
+            assert_eq!(rejection["rejectionReason"], "Photo needs correction");
+            assert_eq!(rejection["status"], "rejected");
+            let (first, second) = tokio::join!(
+                Box::pin(service.review(&reviewer, ids[0], ReviewInput::Approve {})),
+                Box::pin(
+                    service.review(
+                        &reviewer,
+                        ids[0],
+                        serde_json::from_value(
+                            json!({"decision":"reject","reason":"Competing decision"})
+                        )
+                        .expect("competing reason")
+                    )
+                ),
+            );
+            assert_eq!(usize::from(first.is_ok()) + usize::from(second.is_ok()), 1);
+            assert!(matches!(
+                (&first, &second),
+                (Ok(_), Err(Error::StateChanged)) | (Err(Error::StateChanged), Ok(_))
+            ));
+            assert_eq!(observer.client().query_one("SELECT count(*) FROM audit.events WHERE target_id=$1 AND action IN ('workforce.application.approved','workforce.application.rejected')", &[&ids[0]]).await.expect("one review audit").get::<_,i64>(0), 1);
+            owner.client().batch_execute("CREATE FUNCTION audit.reject_review_fixture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture review audit rejection'; END $$; CREATE TRIGGER reject_review_fixture BEFORE INSERT ON audit.events FOR EACH ROW EXECUTE FUNCTION audit.reject_review_fixture()").await.expect("audit failure injection");
+            assert!(
+                Box::pin(service.review(&reviewer, ids[3], ReviewInput::Approve {}))
+                    .await
+                    .is_err()
+            );
+            assert!(matches!(
+                Box::pin(service.managed_detail(&reviewer, ids[3]))
+                    .await
+                    .expect("refresh rolled back review")
+                    .application
+                    .decision,
+                Decision::Submitted
+            ));
+            owner.client().batch_execute("DROP TRIGGER reject_review_fixture ON audit.events; DROP FUNCTION audit.reject_review_fixture()").await.expect("remove fixture failure");
+            // Configuration changes and missing current numbers are advisory, never snapshot edits.
+            let department = Box::pin(services.directory().list(applicant, directory::Collection::Departments)).await.expect("current department").into_iter().find(|item|matches!(item,Item::Department(department) if department.id()==fixed.department.id)).expect("retained department");
+            let Item::Department(department) = department else {
+                panic!("department")
+            };
+            let mut replacement =
+                serde_json::to_value(&department).expect("current department JSON");
+            replacement["enabled"] = json!(false);
+            let update = serde_json::from_value::<directory::Update<directory::department::Item>>(
+                json!({"expected":department,"replacement":replacement}),
+            )
+            .expect("explicit disable")
+            .into_items();
+            Box::pin(services.directory().update(
+                applicant.clone(),
+                operation(),
+                directory::Target::Department(fixed.department.id),
+                update,
+            ))
+            .await
+            .expect("disabled directory through its real consumer");
+            let changed = Box::pin(service.managed_detail(&reviewer, ids[3]))
+                .await
+                .expect("disabled directory shown separately");
+            assert!(!changed.current.department.enabled);
+            assert_eq!(changed.application.snapshot, fixed);
+            proxy.arm(fixture::database_proxy::Fault::LostCommit);
+            match Box::pin(service.review(&reviewer, ids[3], ReviewInput::Approve {})).await {
+                Err(error) => assert!(
+                    matches!(error, Error::Unknown(_)),
+                    "lost review commit: {error:?}"
+                ),
+                Ok(_) => panic!("review acknowledged despite an armed lost-commit fault"),
+            }
+            let backend = proxy.intercepted().await;
+            let durable = Box::pin(service.managed_detail(&reviewer, ids[3]))
+                .await
+                .expect("GET refresh after lost response");
+            assert!(matches!(
+                durable.application.decision,
+                Decision::Approved { .. }
+            ));
+            assert_eq!(observer.client().query_one("SELECT count(*) FROM audit.events WHERE target_id=$1 AND action='workforce.application.approved'", &[&ids[3]]).await.expect("no automatic repeat").get::<_,i64>(0), 1);
+            proxy.release();
+            timeout(Duration::from_secs(3), async {
+                let mut cadence = tokio::time::interval(Duration::from_millis(10));
+                loop {
+                    cadence.tick().await;
+                    if observer
+                        .client()
+                        .query_one(
+                            "SELECT NOT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid=$1)",
+                            &[&backend],
+                        )
+                        .await
+                        .expect("original backend")
+                        .get::<_, bool>(0)
+                    {
+                        break;
+                    }
+                }
+            })
+            .await
+            .expect("unknown write backend ended");
+            let own = serde_json::to_value(
+                Box::pin(service.list(applicant, Pagination::new(1, 20).expect("page")))
+                    .await
+                    .expect("full decided history"),
+            )
+            .expect("history JSON");
+            assert!(
+                own["applications"]
+                    .as_array()
+                    .expect("history rows")
+                    .iter()
+                    .filter(|row| row["status"] != "submitted")
+                    .all(|row| row["reviewerName"] == "H*")
+            );
+            assert!(
+                own["applications"]
+                    .as_array()
+                    .expect("history rows")
+                    .iter()
+                    .any(|row| row["status"] == "rejected"
+                        && row["rejectionReason"] == "Photo needs correction")
+            );
+            for sql in [
+                "UPDATE workforce.applications SET status='submitted',reviewer_id=NULL,reviewed_at=NULL,rejection_reason=NULL WHERE status='approved'",
+                "UPDATE workforce.applications SET reviewer_id=NULL WHERE status='rejected'",
+                "UPDATE workforce.applications SET submitted_at=submitted_at + interval '1 second' WHERE status='submitted'",
+                "UPDATE workforce.applications SET status='rejected',reviewer_id=person_id,reviewed_at=statement_timestamp(),rejection_reason=' ' WHERE status='submitted'",
+            ] {
+                assert!(
+                    owner.client().batch_execute(sql).await.is_err(),
+                    "database review protection: {sql}"
+                );
+            }
+            let resumed = verify_inactive_applicant(
+                services,
+                database,
+                supplier,
+                institution,
+                applicant,
+                &reviewer,
+                ids[4],
+            )
+            .await;
+            let applicant = &resumed;
+            let remaining = ids[5];
+            Box::pin(
+                services
+                    .grant()
+                    .terminate(applicant.clone(), operation(), applicant_grant),
+            )
+            .await
+            .expect("real own service termination");
+            assert!(
+                matches!(
+                    Box::pin(service.review(&reviewer, remaining, ReviewInput::Approve {})).await,
+                    Err(Error::ApplicantUnavailable)
+                ),
+                "ended participation prohibits approval"
+            );
+            Box::pin(service.managed_detail(&reviewer, remaining))
+                .await
+                .expect("manager still sees an ineligible applicant");
+            Box::pin(
+                service.review(
+                    &reviewer,
+                    remaining,
+                    serde_json::from_value(
+                        json!({"decision":"reject","reason":"Participation ended"}),
+                    )
+                    .expect("reason"),
+                ),
+            )
+            .await
+            .expect("manager may still reject");
+            assert!(
+                matches!(
+                    Box::pin(service.detail(applicant, remaining)).await,
+                    Err(Error::TargetUnavailable)
+                ),
+                "restricted history conceals rejected decisions and snapshots"
+            );
+            let restricted = serde_json::to_value(
+                Box::pin(service.list(applicant, Pagination::new(1, 20).expect("page")))
+                    .await
+                    .expect("restricted history"),
+            )
+            .expect("projection");
+            let count:i64=observer.client().query_one("SELECT count(*) FROM workforce.applications WHERE person_id=(SELECT person_id FROM identity.accounts WHERE id=$1) AND status IN ('submitted','approved')",&[&applicant.account_id()]).await.expect("independent restricted count").get(0);
+            assert_eq!(restricted["count"], count);
+            assert!(
+                restricted["applications"]
+                    .as_array()
+                    .expect("restricted rows")
+                    .iter()
+                    .all(|row| row.as_object().expect("summary").len() == 4)
+            );
+            let expected_cancellable = if first.is_ok() { 3 } else { 2 };
+            assert_eq!(
+                restricted["count"], expected_cancellable,
+                "fixed reviews, two ineligible rejections, and the race's actual winner determine the exact count"
+            );
+            proxy.arm(fixture::database_proxy::Fault::StalledCurrent);
+            let pending_review = {
+                let service = service.clone();
+                let actor = reviewer.clone();
+                let id = ids[1];
+                tokio::spawn(
+                    async move { service.review(&actor, id, ReviewInput::Approve {}).await },
+                )
+            };
+            let waiting = proxy.intercepted().await;
+            Box::pin(
+                services
+                    .grant()
+                    .terminate(reviewer.clone(), operation(), grant.id()),
+            )
+            .await
+            .expect("revoke approval participation");
+            proxy.release();
+            assert!(matches!(
+                timeout(Duration::from_secs(3), pending_review)
+                    .await
+                    .expect("review ended after revocation")
+                    .expect("review task ended"),
+                Err(Error::Grant(grant::Error::Denied))
+            ));
+            assert!(observer.client().query_one("SELECT NOT EXISTS (SELECT 1 FROM pg_stat_activity WHERE pid=$1 AND state='active')",&[&waiting]).await.expect("original request finished").get::<_,bool>(0));
+            assert!(matches!(
+                Box::pin(service.managed_detail(&reviewer, ids[1])).await,
+                Err(Error::Grant(grant::Error::Denied))
+            ));
+            assert!(matches!(
+                Box::pin(service.review(&reviewer, ids[1], ReviewInput::Approve {})).await,
+                Err(Error::Grant(grant::Error::Denied))
+            ));
+            assert!(matches!(
+                Box::pin(service.resource(&reviewer, resource, read_capacity(), false)).await,
+                Err(Error::TargetUnavailable)
+            ));
+            let candidate = Box::pin(
+                services.account().candidate(
+                    institution,
+                    crate::access::appointment::tests::mobile(21)
+                        .parse()
+                        .expect("reviewer mobile"),
+                ),
+            )
+            .await
+            .expect("reviewer account candidate");
+            Box::pin(services.cancellation().cancel(reviewer.clone(),operation(),serde_json::from_value(json!({"accountId":reviewer.account_id(),"personId":candidate.identity().person_id(),"revisionId":candidate.identity().revision_id()})).expect("self cancellation input"))).await.expect("cancel reviewer account while retaining the person");
+            Box::pin(admit(
+                services,
+                institution,
+                Entry::Institution,
+                "13800000000",
+                RoleKind::Full,
+            ))
+            .await;
+            let retained = serde_json::to_value(
+                Box::pin(service.list(applicant, Pagination::new(1, 20).expect("page")))
+                    .await
+                    .expect("decided history after reviewer cancellation"),
+            )
+            .expect("history JSON");
+            assert_eq!(retained["access"], "full");
+            assert_eq!(retained["count"], 6);
+            assert!(
+                retained["applications"]
+                    .as_array()
+                    .expect("retained rows")
+                    .iter()
+                    .all(|row| row["reviewerName"] == "H*")
+            );
+            let retained_detail = serde_json::to_value(
+                Box::pin(service.managed_detail(applicant, ids[1]))
+                    .await
+                    .expect("retained reviewer in management detail"),
+            )
+            .expect("detail JSON");
+            assert_eq!(retained_detail["application"]["reviewerName"], "H*");
+            owner.terminate().await.expect("owner ended");
+            observer.terminate().await.expect("observer ended");
+            expected_cancellable
+        })
+    }
+
     async fn cancelled_resource_read(service: &Service, actor: &Actor, id: ResourceId) {
         let (entered, started) = tokio::sync::oneshot::channel();
         let (release, released) = std::sync::mpsc::channel();
@@ -724,13 +1263,312 @@ mod tests {
         release.send(()).expect("allow actual read");
         gate.await.expect("blocking gate ended");
         timeout(Duration::from_secs(5), async {
-            while transfers.available_permits() != 1 {
+            while transfers.available_permits() != 1 || service.processing.available_permits() != 2
+            {
                 tokio::task::yield_now().await;
             }
         })
         .await
         .expect("actual read releases transfer capacity");
         assert_eq!(service.processing.available_permits(), 2);
+    }
+
+    fn verify_private_photo<'a>(
+        service: &'a Service,
+        manager: &'a Actor,
+        institution: &'a Actor,
+        photo: &'a Photo,
+        observer: &'a Client,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'a>> {
+        Box::pin(async move {
+            assert!(matches!(
+                service
+                    .resource(institution, photo.resource_id, read_capacity(), false)
+                    .await,
+                Err(Error::TargetUnavailable)
+            ));
+            let original_file = service
+                .resource(manager, photo.resource_id, read_capacity(), false)
+                .await
+                .expect("original private photo")
+                .bytes;
+            let processing = Arc::clone(&service.processing)
+                .try_acquire_many_owned(2)
+                .expect("occupy actual processing capacity");
+            let metadata = service
+                .resource(manager, photo.resource_id, read_capacity(), true)
+                .await
+                .expect("HEAD avoids occupied processing slots");
+            assert!(metadata.bytes.is_empty());
+            assert_eq!(
+                metadata.size,
+                u64::try_from(original_file.len()).expect("resource size")
+            );
+            assert_eq!(metadata.media_type, "image/webp");
+            assert!(matches!(
+                service
+                    .resource(institution, photo.resource_id, read_capacity(), true)
+                    .await,
+                Err(Error::TargetUnavailable)
+            ));
+            drop(processing);
+            let private = &service.settings().expect("configured storage").directory;
+            let person: person::Id = observer
+                .query_one(
+                    "SELECT person_id FROM workforce.photos WHERE id=$1",
+                    &[&photo.photo_id],
+                )
+                .await
+                .expect("photo owner")
+                .get(0);
+            let person_path = person.to_string();
+            let segments = ["workforce", "photos", &person_path];
+            assert!(
+                private
+                    .publish(
+                        &segments,
+                        &photo.resource_id.to_string(),
+                        &uuid::Uuid::new_v4().to_string(),
+                        b"replacement bytes"
+                    )
+                    .is_err(),
+                "a retained resource cannot be overwritten"
+            );
+            assert_eq!(
+                service
+                    .resource(manager, photo.resource_id, read_capacity(), false)
+                    .await
+                    .expect("unchanged photo")
+                    .bytes,
+                original_file
+            );
+            assert!(
+                matches!(
+                    service
+                        .prepare_photo(manager, "image/webp".to_owned(), original_file.clone())
+                        .await,
+                    Err(Error::PhotoCapacity)
+                ),
+                "new preparation stops at the retained-file limit"
+            );
+            assert_eq!(
+                observer
+                    .query_one("SELECT count(*) FROM workforce.photos", &[])
+                    .await
+                    .expect("no rejected photo metadata")
+                    .get::<_, i64>(0),
+                1
+            );
+            assert_eq!(
+                observer
+                    .query_one(
+                        "SELECT count(*) FROM audit.events WHERE action='workforce.photo.prepared'",
+                        &[]
+                    )
+                    .await
+                    .expect("no rejected photo audit")
+                    .get::<_, i64>(0),
+                1
+            );
+            private
+                .remove(&segments, &photo.resource_id.to_string())
+                .expect("isolated missing-file injection");
+            assert!(matches!(
+                service
+                    .resource(manager, photo.resource_id, read_capacity(), false)
+                    .await,
+                Err(Error::MissingFile)
+            ));
+            assert!(matches!(
+                service
+                    .resource(manager, photo.resource_id, read_capacity(), true)
+                    .await,
+                Err(Error::MissingFile)
+            ));
+            private
+                .publish(
+                    &segments,
+                    &photo.resource_id.to_string(),
+                    &uuid::Uuid::new_v4().to_string(),
+                    b"wrong length",
+                )
+                .expect("isolated size mismatch");
+            assert!(matches!(
+                service
+                    .resource(manager, photo.resource_id, read_capacity(), true)
+                    .await,
+                Err(Error::File(_))
+            ));
+            private
+                .remove(&segments, &photo.resource_id.to_string())
+                .expect("remove malformed fixture");
+            private
+                .publish(
+                    &segments,
+                    &photo.resource_id.to_string(),
+                    &uuid::Uuid::new_v4().to_string(),
+                    &original_file,
+                )
+                .expect("restore retained fixture bytes");
+        })
+    }
+
+    fn verify_submission_outcomes<'a>(
+        services: &'a Services,
+        manager: (&'a Actor, grant::Id),
+        input: Input,
+        photo: &'a Photo,
+        proxy: &'a fixture::database_proxy::Proxy,
+        clients: (&'a Client, &'a Client),
+        first: Id,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + 'a>> {
+        Box::pin(async move {
+            let (manager, grant) = manager;
+            let (owner, observer) = clients;
+            let service = services.application();
+            let Input {
+                kind,
+                selections,
+                expected,
+            } = input;
+            let Detail::Full { application } = service
+                .detail(manager, first)
+                .await
+                .expect("retained snapshot")
+            else {
+                panic!("active detail")
+            };
+            assert_eq!(
+                application.snapshot, expected,
+                "configuration edits cannot rewrite an accepted print snapshot"
+            );
+            owner.batch_execute("CREATE FUNCTION audit.reject_fixture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture audit rejection'; END $$; CREATE TRIGGER reject_fixture BEFORE INSERT ON audit.events FOR EACH ROW EXECUTE FUNCTION audit.reject_fixture()").await.expect("atomic rollback injection");
+            assert!(
+                service
+                    .submit(
+                        manager,
+                        Input {
+                            kind,
+                            selections: selections.clone(),
+                            expected: expected.clone()
+                        }
+                    )
+                    .await
+                    .is_err()
+            );
+            assert_eq!(
+                observer
+                    .query_one("SELECT count(*) FROM workforce.applications", &[])
+                    .await
+                    .expect("application rolled back with audit")
+                    .get::<_, i64>(0),
+                5
+            );
+            owner.batch_execute("DROP TRIGGER reject_fixture ON audit.events; DROP FUNCTION audit.reject_fixture()").await.expect("remove fixture fault");
+            proxy.arm(fixture::database_proxy::Fault::LostCommit);
+            assert!(
+                matches!(
+                    service
+                        .submit(
+                            manager,
+                            Input {
+                                kind,
+                                selections: selections.clone(),
+                                expected: expected.clone()
+                            }
+                        )
+                        .await,
+                    Err(Error::Unknown(_))
+                ),
+                "a lost commit reply remains unknown"
+            );
+            let original_backend = proxy.intercepted().await;
+            observer
+                .batch_execute("BEGIN")
+                .await
+                .expect("independent outcome observation");
+            observer.query_one("SELECT id FROM identity.persons WHERE id=(SELECT person_id FROM identity.accounts WHERE id=$1) FOR UPDATE",&[&manager.account_id()]).await.expect("original transaction released its participant");
+            assert_eq!(
+                observer
+                    .query_one("SELECT count(*) FROM workforce.applications", &[])
+                    .await
+                    .expect("one durable result")
+                    .get::<_, i64>(0),
+                6
+            );
+            observer
+                .batch_execute("COMMIT")
+                .await
+                .expect("observation ended");
+            proxy.release();
+            assert!(matches!(
+                service
+                    .list(manager, Pagination::new(1, 20).expect("page"))
+                    .await
+                    .expect("refresh after unknown"),
+                List::Full { count: 6, .. }
+            ));
+            assert!(
+                service
+                    .resource(manager, photo.resource_id, read_capacity(), false)
+                    .await
+                    .is_ok(),
+                "unknown commit never deletes a referenced file"
+            );
+            timeout(Duration::from_secs(3),async {
+                let mut cadence=tokio::time::interval(Duration::from_millis(10));
+                loop {cadence.tick().await;if observer.query_one("SELECT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity WHERE pid=$1)",&[&original_backend]).await.expect("original backend state").get::<_,bool>(0){break;}}
+            }).await.expect("original backend ended before fixture cleanup");
+            cancelled_resource_read(service, manager, photo.resource_id).await;
+            Box::pin(
+                services
+                    .grant()
+                    .terminate(manager.clone(), operation(), grant),
+            )
+            .await
+            .expect("real own service termination");
+            let restricted = serde_json::to_value(
+                service
+                    .list(manager, Pagination::new(1, 20).expect("page"))
+                    .await
+                    .expect("restricted history"),
+            )
+            .expect("projection");
+            assert_eq!(restricted["access"], "restricted");
+            assert_eq!(restricted["count"], 6);
+            assert!(
+                restricted["applications"]
+                    .as_array()
+                    .expect("summaries")
+                    .iter()
+                    .all(|item| item.as_object().expect("summary").len() == 4)
+            );
+            assert!(matches!(
+                service
+                    .resource(manager, photo.resource_id, read_capacity(), false)
+                    .await,
+                Err(Error::TargetUnavailable)
+            ));
+            assert!(matches!(
+                service
+                    .resource(manager, photo.resource_id, read_capacity(), true)
+                    .await,
+                Err(Error::TargetUnavailable)
+            ));
+            assert!(matches!(
+                service
+                    .submit(
+                        manager,
+                        Input {
+                            kind,
+                            selections,
+                            expected
+                        }
+                    )
+                    .await,
+                Err(Error::Denied)
+            ));
+        })
     }
 
     async fn create(services: &Services, actor: &Actor, creation: Creation) -> Item {
@@ -1041,7 +1879,7 @@ mod tests {
                 let settings = Settings::new(storage,template,"image/png",background.into_inner(),include_bytes!("../../../tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(),vec!["Fixture reception".to_owned()], photo::Limits::new(1, 1 << 30, 2, 2 << 30).expect("fixture capacity")).expect("CJK fixture");
                 let proxy=fixture::database_proxy::Proxy::start(&server).await;
                 let context = Context::new(authentication::proxied(&database,&proxy)).await.expect("context");
-                let services = Box::pin(Services::start(Barrier::begin(context.clone()).await.expect("barrier"),authentication::inventory(authentication::keys()),ServicesSettings::new(4,crate::identity::message::Limits::default(),authentication::session_settings(),crate::registration::Limits::default(),authentication::avatar_settings()).expect("settings").with_application(settings),supplier.client(),authentication::unused_client().await)).await.expect("services");
+                let services = application_services(&context,ServicesSettings::new(4,crate::identity::message::Limits::default(),authentication::session_settings(),crate::registration::Limits::default(),authentication::avatar_settings()).expect("settings").with_application(settings),&supplier).await;
                 let institution = actor(&database,&services,&mut supplier).await;
                 let manager = Box::pin(register(&database,&services,&mut supplier)).await;
                 let grant = Box::pin(admit(&services,&institution,Entry::Institution,"13800000000",RoleKind::Full)).await;
@@ -1069,38 +1907,14 @@ mod tests {
                 let mut ids=Vec::new();
                 for kind in [Kind::Issuance,Kind::Duplication,Kind::Replacement,Kind::Issuance] {
                     let application=services.application().submit(&manager,Input {kind,selections:selections.clone(),expected:preview.snapshot.clone()}).await.expect("atomic application");
-                    ids.push(application.summary.id);
+                    ids.push(application.id);
                     assert_eq!(application.snapshot,preview.snapshot);
                 }
                 assert_eq!(observer.client().query_one("SELECT count(*) FROM audit.events WHERE action='workforce.application.submitted'",&[]).await.expect("audited submissions").get::<_,i64>(0),4);
                 let List::Full {count,applications} = services.application().list(&manager,Pagination::new(1,20).expect("page")).await.expect("history") else {panic!("active full history")};
                 assert_eq!(count,4); assert_eq!(applications.len(),4);
                 assert!(matches!(services.application().detail(&institution,ids[0]).await,Err(Error::TargetUnavailable)));
-                assert!(matches!(services.application().resource(&institution,photo.resource_id,read_capacity(),false).await,Err(Error::TargetUnavailable)));
-                let original_file=services.application().resource(&manager,photo.resource_id,read_capacity(),false).await.expect("original private photo").bytes;
-                let processing = Arc::clone(&services.application().processing).try_acquire_many_owned(2).expect("occupy actual processing capacity");
-                let metadata=Box::pin(services.application().resource(&manager,photo.resource_id,read_capacity(),true)).await.expect("HEAD avoids occupied processing slots");
-                assert!(metadata.bytes.is_empty());
-                assert_eq!(metadata.size,original_file.len() as u64);
-                assert_eq!(metadata.media_type,"image/webp");
-                assert!(matches!(Box::pin(services.application().resource(&institution,photo.resource_id,read_capacity(),true)).await,Err(Error::TargetUnavailable)));
-                drop(processing);
-                let private=&services.application().settings().expect("configured storage").directory;
-                let person: person::Id = observer.client().query_one("SELECT person_id FROM workforce.photos WHERE id=$1", &[&photo.photo_id]).await.expect("photo owner").get(0);
-                let person_path = person.to_string();
-                let segments = ["workforce", "photos", &person_path];
-                assert!(private.publish(&segments,&photo.resource_id.to_string(),&uuid::Uuid::new_v4().to_string(),b"replacement bytes").is_err(),"a retained resource cannot be overwritten");
-                assert_eq!(services.application().resource(&manager,photo.resource_id,read_capacity(),false).await.expect("unchanged photo").bytes,original_file);
-                assert!(matches!(services.application().prepare_photo(&manager,"image/webp".to_owned(),original_file.clone()).await,Err(Error::PhotoCapacity)), "new preparation stops at the retained-file limit");
-                assert_eq!(observer.client().query_one("SELECT count(*) FROM workforce.photos",&[]).await.expect("no rejected photo metadata").get::<_,i64>(0),1);
-                assert_eq!(observer.client().query_one("SELECT count(*) FROM audit.events WHERE action='workforce.photo.prepared'",&[]).await.expect("no rejected photo audit").get::<_,i64>(0),1);
-                private.remove(&segments,&photo.resource_id.to_string()).expect("isolated missing-file injection");
-                assert!(matches!(services.application().resource(&manager,photo.resource_id,read_capacity(),false).await,Err(Error::MissingFile)));
-                assert!(matches!(Box::pin(services.application().resource(&manager,photo.resource_id,read_capacity(),true)).await,Err(Error::MissingFile)));
-                private.publish(&segments,&photo.resource_id.to_string(),&uuid::Uuid::new_v4().to_string(),b"wrong length").expect("isolated size mismatch");
-                assert!(matches!(Box::pin(services.application().resource(&manager,photo.resource_id,read_capacity(),true)).await,Err(Error::File(_))));
-                private.remove(&segments,&photo.resource_id.to_string()).expect("remove malformed fixture");
-                private.publish(&segments,&photo.resource_id.to_string(),&uuid::Uuid::new_v4().to_string(),&original_file).expect("restore retained fixture bytes");
+                verify_private_photo(services.application(),&manager,&institution,&photo,observer.client()).await;
                 let delete = serde_json::from_value::<directory::Delete<directory::department::Item>>(json!({"expected":department})).expect("confirmed department deletion").into_items();
                 assert!(matches!(Box::pin(services.directory().delete(manager.clone(),operation(),directory::Target::Department(department.id()),delete)).await,Err(crate::kernel::Error::Rejected(directory::Rejection::InUse))));
                 // A real runtime identity cannot rewrite snapshots, delete audit, or cross-bind a photo.
@@ -1124,38 +1938,50 @@ mod tests {
                 directory_result.expect("directory task ended").expect("directory maintenance does not deadlock with its own application");
                 submit_result.expect("submit task ended").expect("both serialized outcomes remain available");
                 Box::pin(verify_directory_conflicts(&services,&manager,&department,&entries,&selections,&preview.snapshot,&database)).await;
-                let Detail::Full {application}=services.application().detail(&manager,ids[0]).await.expect("retained snapshot") else {panic!("active detail")};
-                assert_eq!(application.snapshot,preview.snapshot,"configuration edits cannot rewrite an accepted print snapshot");
-                owner.client().batch_execute("CREATE FUNCTION audit.reject_fixture() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'fixture audit rejection'; END $$; CREATE TRIGGER reject_fixture BEFORE INSERT ON audit.events FOR EACH ROW EXECUTE FUNCTION audit.reject_fixture()").await.expect("atomic rollback injection");
-                assert!(services.application().submit(&manager,Input {kind:Kind::Issuance,selections:selections.clone(),expected:preview.snapshot.clone()}).await.is_err());
-                assert_eq!(observer.client().query_one("SELECT count(*) FROM workforce.applications",&[]).await.expect("application rolled back with audit").get::<_,i64>(0),5);
-                owner.client().batch_execute("DROP TRIGGER reject_fixture ON audit.events; DROP FUNCTION audit.reject_fixture()").await.expect("remove fixture fault");
-                proxy.arm(fixture::database_proxy::Fault::LostCommit);
-                assert!(matches!(services.application().submit(&manager,Input {kind:Kind::Issuance,selections:selections.clone(),expected:preview.snapshot.clone()}).await,Err(Error::Unknown(_))),"a lost commit reply remains unknown");
-                let original_backend=proxy.intercepted().await;
-                observer.client().batch_execute("BEGIN").await.expect("independent outcome observation");
-                observer.client().query_one("SELECT id FROM identity.persons WHERE id=(SELECT person_id FROM identity.accounts WHERE id=$1) FOR UPDATE",&[&manager.account_id()]).await.expect("original transaction released its participant");
-                assert_eq!(observer.client().query_one("SELECT count(*) FROM workforce.applications",&[]).await.expect("one durable result").get::<_,i64>(0),6);
-                observer.client().batch_execute("COMMIT").await.expect("observation ended");
-                proxy.release();
-                assert!(matches!(services.application().list(&manager,Pagination::new(1,20).expect("page")).await.expect("refresh after unknown"),List::Full {count:6,..}));
-                assert!(services.application().resource(&manager,photo.resource_id,read_capacity(),false).await.is_ok(),"unknown commit never deletes a referenced file");
-                timeout(Duration::from_secs(3),async {
-                    let mut cadence=tokio::time::interval(Duration::from_millis(10));
-                    loop {cadence.tick().await;if observer.client().query_one("SELECT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity WHERE pid=$1)",&[&original_backend]).await.expect("original backend state").get::<_,bool>(0){break;}}
-                }).await.expect("original backend ended before fixture cleanup");
-                cancelled_resource_read(services.application(), &manager, photo.resource_id).await;
-                Box::pin(services.grant().terminate(manager.clone(),operation(),grant.id())).await.expect("real own service termination");
-                let restricted=serde_json::to_value(services.application().list(&manager,Pagination::new(1,20).expect("page")).await.expect("restricted history")).expect("projection");
-                assert_eq!(restricted["access"],"restricted");
-                assert_eq!(restricted["count"],6);
-                assert!(restricted["applications"].as_array().expect("summaries").iter().all(|item|item.as_object().expect("summary").len()==4));
-                assert!(matches!(services.application().resource(&manager,photo.resource_id,read_capacity(),false).await,Err(Error::TargetUnavailable)));
-                assert!(matches!(Box::pin(services.application().resource(&manager,photo.resource_id,read_capacity(),true)).await,Err(Error::TargetUnavailable)));
-                assert!(matches!(services.application().submit(&manager,Input {kind:Kind::Issuance,selections,expected:preview.snapshot}).await,Err(Error::Denied)));
+                verify_submission_outcomes(&services,(&manager,grant.id()),Input {kind:Kind::Issuance,selections,expected:preview.snapshot},&photo,&proxy,(owner.client(),observer.client()),ids[0]).await;
                 owner.terminate().await.expect("owner stopped"); observer.terminate().await.expect("observer stopped");
                 services.close(); services.drain().await.expect("drain"); context.stop().await.expect("context stopped"); proxy.stop().await; supplier.stop().await;
             })).await.expect("bounded application acceptance");
+        }));
+    }
+
+    #[test]
+    fn reviews_preserve_current_authority_atomic_decisions_privacy_and_unknown_outcomes() {
+        let server = server();
+        Runtime::new().expect("runtime").block_on(Box::pin(async {
+            timeout(Duration::from_secs(90), Box::pin(async {
+                let database = Database::initialized(Arc::clone(&server)).await;
+                let mut supplier = Supplier::new().await;
+                let (root, mount, device) = server.files();
+                let storage = platform::files::Settings::new(root, mount, device).expect("storage");
+                let mut background = Cursor::new(Vec::new());
+                image::DynamicImage::new_rgb8(85,54).write_to(&mut background,image::ImageFormat::Png).expect("background");
+                let settings = Settings::new(storage, fixture_template(), "image/png", background.into_inner(), include_bytes!("../../../tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(), vec!["Fixture reception".to_owned()], photo::Limits::new(1,1 << 30,2,2 << 30).expect("limits")).expect("settings");
+                let proxy = fixture::database_proxy::Proxy::start(&server).await;
+                let context = Context::new(authentication::proxied(&database,&proxy)).await.expect("context");
+                let services = application_services(&context,ServicesSettings::new(4,crate::identity::message::Limits::default(),authentication::session_settings(),crate::registration::Limits::default(),authentication::avatar_settings()).expect("services settings").with_application(settings),&supplier).await;
+                let institution = Box::pin(actor(&database,&services,&mut supplier)).await;
+                let applicant = Box::pin(register(&database,&services,&mut supplier)).await;
+                let grant = Box::pin(admit(&services,&institution,Entry::Institution,"13800000000",RoleKind::Full)).await;
+                Box::pin(services.number().allocate(applicant.clone(),operation(),serde_json::from_value(json!({"subtype":100})).expect("number"))).await.expect("number allocation");
+                let Item::Group(group) = Box::pin(create(&services,&applicant,Creation::Group(serde_json::from_value(json!({"name":"Group","enabled":true,"index":0})).expect("group")))).await else { panic!("group") };
+                let Item::Department(department) = Box::pin(create(&services,&applicant,Creation::Department(serde_json::from_value(json!({"name":"Department","enabled":true,"index":0,"groupId":group.id(),"parentId":null})).expect("department")))).await else { panic!("department") };
+                for subtype in number::Subtype::ALL {
+                    Box::pin(services.directory().configure_rule(applicant.clone(),operation(),subtype,serde_json::from_value(json!({"departmentId":department.id(),"position":false})).expect("rule"))).await.expect("complete rules");
+                }
+                let mut image = Cursor::new(Vec::new());
+                image::DynamicImage::new_rgb8(120,160).write_to(&mut image,image::ImageFormat::Png).expect("photo");
+                let photo = Box::pin(services.application().prepare_photo(&applicant,"image/png".to_owned(),image.into_inner())).await.expect("photo preparation");
+                let selections = Selections { department_id:department.id(),roster_id:None,title_id:None,photo_id:photo.photo_id,pickup:"Fixture reception".to_owned() };
+                let preview = Box::pin(services.application().preview(&applicant,PreviewInput {kind:Kind::Issuance,selections:selections.clone()})).await.expect("preview");
+                let mut ids = Vec::new();
+                for _ in 0..6 {
+                    let application = Box::pin(services.application().submit(&applicant,Input {kind:Kind::Issuance,selections:selections.clone(),expected:preview.snapshot.clone()})).await.expect("submitted fixture");
+                    ids.push(application.id);
+                }
+                verify_reviews(&services,&database,&mut supplier,&institution,(&applicant,grant.id()),&ids,&proxy).await;
+                services.close(); services.drain().await.expect("drain"); context.stop().await.expect("context stopped"); proxy.stop().await; supplier.stop().await;
+            })).await.expect("bounded review acceptance");
         }));
     }
 }

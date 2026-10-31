@@ -23,10 +23,12 @@ export function Result({
         {title}
       </h1>
       <p className="result-copy">{copy}</p>
-      <div className="notice">
-        <ShieldCheck size={20} aria-hidden="true" />
-        <p>{note}</p>
-      </div>
+      {note && (
+        <div className="notice">
+          <ShieldCheck size={20} aria-hidden="true" />
+          <p>{note}</p>
+        </div>
+      )}
       <div className="result-actions">{children}</div>
       {footer && <p className="scope-note">{footer}</p>}
     </div>
