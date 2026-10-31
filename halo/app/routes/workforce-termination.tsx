@@ -114,22 +114,16 @@ function serviceLabel(service: WorkforceState): string | null {
 
 function currentService(service: WorkforceState, rejoined: boolean): string {
   if (service.kind === "loading")
-    return "正在读取当前员工服务，此前办理结果不受影响。";
+    return "正在加载当前状态…";
   if (service.kind === "limited")
-    return "暂时无法处理，请稍后再读取当前员工服务。此前办理结果仍以本页为准。";
+    return "请稍后重新加载当前状态。";
   if (service.kind === "unavailable")
-    return "当前员工服务暂时无法读取。此前办理结果不受这次读取失败影响。";
-  if (service.kind === "hidden") return "正在读取当前员工服务，请稍候。";
+    return "当前状态暂时无法加载，请重试。";
+  if (service.kind === "hidden") return "正在加载当前状态…";
   if (service.kind !== "ready") return "当前员工服务状态暂时无法确认。";
-  const label = serviceLabel(service);
   if (rejoined && service.status === "active")
-    return "当前员工服务已重新开通。本次核对只确认此前的结束申请，不会结束当前服务。";
-  if (service.status === "terminated")
-    return "当前员工服务已结束。个人账户仍可使用。";
-  if (service.status === "suspended")
-    return "当前员工服务已暂停。个人账户仍可使用。";
-  if (service.status === "absent") return "当前没有员工服务。";
-  return label ?? "当前员工服务状态已读取。";
+    return "已有申请按当前状态办理。";
+  return "";
 }
 
 function resultCopy(
@@ -139,54 +133,31 @@ function resultCopy(
     case "complete":
       return [
         "此前的员工服务已结束",
-        "本次结束申请已完成。停止办理工号和工牌，尚未发放的原申请无法继续。",
+        "个人账户和已有工号保留。",
       ];
     case "rejected":
       if (state.notice === "limited")
         return [
-          "本次申请尚未受理",
-          "本次结束申请没有开始办理。请等待后返回确认页面，再决定是否提交。",
+          "本次结束申请未完成",
+          "请稍后返回确认页面，再决定是否结束。",
         ];
       if (state.notice === "conflict")
         return [
-          "本次申请未完成",
+          "本次结束申请未完成",
           state.canStart
-            ? "本次申请未被接纳。当前已有新的员工服务，请返回确认页面后重新决定。"
-            : "当前员工服务状态不适用于本次结束申请。请查看最新的员工服务状态。",
+            ? "当前已有新的员工服务。可返回确认页面，重新决定是否结束。"
+            : "可先查看当前员工服务状态。",
         ];
       return [
-        "本次申请未完成",
-        "本次申请未被接纳。请查看当前员工服务状态后重新确认。",
+        "本次结束申请未完成",
+        "可返回确认页面，重新决定是否结束。",
       ];
     default:
-      if (state.notice === "limited")
-        return [
-          "请稍后继续核对",
-          "本次办理结果尚未确定。等待后继续核对，不要重新发起结束申请。",
-        ];
-      if (state.notice === "refused")
-        return [
-          "本次核对未被接纳",
-          "本次核对未被接纳，此前结束申请的结果仍未确定。请稍后再核对，不要重新提交结束申请。",
-        ];
-      if (state.notice === "unavailable")
-        return [
-          "暂时无法查看本次办理结果",
-          "本次核对未能完成，此前结束申请是否完成仍无法确认。请稍后再核对。",
-        ];
-      if (state.notice === "denied")
-        return [
-          "暂时无法查看本次办理结果",
-          "本次核对未能完成。你可以返回个人账户或首页。",
-        ];
-      if (state.notice === "authentication")
-        return [
-          "请重新登录后继续核对",
-          "本次核对未能完成，此前结束申请是否完成仍无法确认。请登录同一账户后继续。",
-        ];
       return [
-        "暂时无法确认是否已结束",
-        "暂时无法确认员工服务是否已结束。请勿重复提交，可以继续核对本次办理。",
+        "结束结果尚不确定",
+        state.canQuery
+          ? "请稍后查看结束结果，暂时不要再次提交结束申请。"
+          : "目前无法查看结果。可先返回个人账户，暂时不要再次提交结束申请。",
       ];
   }
 }
@@ -197,29 +168,29 @@ function copy(state: State): [string, string] {
       switch (state.current.kind) {
         case "checking":
         case "changed":
-          return ["正在检查登录状态", "请稍候，检查完成后再继续。"];
+          return ["正在检查登录状态…", "请稍候。"];
         case "anonymous":
         case "expired":
           return [
             "请登录后继续",
             state.pending
-              ? "此前结束申请的结果仍待确认。请使用此前账户登录，再继续核对。"
+              ? "结束结果仍未确认，请使用原账户重新登录。"
               : state.rejected
-                ? "本次结束申请未受理。请重新登录后再继续。"
-                : "请先登录，再查看或结束本人员工服务。",
+                ? "本次结束申请未完成。登录后可查看当前员工服务。"
+                : "登录后可查看本人员工服务。",
           ];
         case "denied":
           return [
-            "无法查看这项内容",
-            "本次读取未能完成，你可以返回个人账户或首页。",
+            "目前无法查看员工服务",
+            "可返回个人账户或首页。",
           ];
         case "storage":
           return [
-            "暂时无法检查登录状态",
-            "浏览器无法读取登录信息，请重新检查。",
+            "登录信息暂时无法使用",
+            "请重新检查，或使用手机号登录。",
           ];
         case "reload":
-          return ["请重新加载页面", "页面暂时无法继续，请重新加载。"];
+          return ["请重新加载", "重新加载后，请按页面提示继续。"];
         case "limited":
           return ["请稍后再检查", "暂时无法检查登录状态，请稍后重试。"];
         default:
@@ -227,74 +198,76 @@ function copy(state: State): [string, string] {
       }
     case "other":
       return [
-        "当前账户已更新",
-        "这里不再显示此前账户的办理信息。可以查看当前账户的员工服务或个人账户。",
+        "当前账户已变化",
+        "可查看当前账户的员工服务或个人账户。",
       ];
     case "missing":
       return [
-        "暂时无法查看本次办理结果",
-        "本页保存的办理信息已不可用，结果仍不能确定。这不表示结束申请失败。可以查看当前员工服务状态。",
+        "结束结果尚不确定",
+        "本页无法查看原结束结果。可查看当前员工服务，暂时不要再次提交结束申请。",
       ];
     case "mismatch":
       return [
-        "暂时无法查看本次办理结果",
-        "核对信息与此前不一致，不能据此判断员工服务是否已结束。请先查看当前员工服务状态。",
+        "结束结果尚不确定",
+        "原结束结果仍无法确认。可查看当前员工服务，暂时不要再次提交结束申请。",
       ];
     case "reading":
-      return ["正在读取员工服务", "请稍候。"];
+      return ["正在加载员工服务状态…", "请稍候。"];
     case "service-failed":
       return state.service.kind === "limited"
-        ? ["暂时无法处理，请稍后再试", "请等待后重新读取员工服务状态。"]
-        : ["暂时无法读取员工服务", "请稍后重新读取，不能据此判断服务状态。"];
+        ? ["员工服务状态暂时无法加载", "请稍后重试。"]
+        : ["员工服务状态暂时无法加载", "请重试。"];
     case "unavailable":
       return state.service.kind === "ready" && state.service.status === "terminated"
-        ? ["员工服务已结束", "当前没有可结束的员工服务。个人账户仍可使用。"]
-        : ["员工服务未开通", "当前没有可结束的员工服务。个人账户仍可使用。"];
+        ? ["员工服务已结束", "当前没有可结束的员工服务。个人账户可继续使用。"]
+        : ["尚未加入员工服务", "当前没有可结束的员工服务。个人账户可继续使用。"];
     case "entry":
       return [
         "结束员工服务",
         state.status === "suspended"
-          ? "员工服务已暂停，正常账户仍可主动结束。请先了解结束后的影响。"
-          : "结束前，请了解对工号和工牌办理的影响。",
+          ? "员工服务已暂停，仍可主动结束。"
+          : "请先了解结束后的影响，再确认是否结束。",
       ];
     case "preparing":
       return [
         "正在准备结束申请",
-        "正在核对当前登录，本次结束申请尚未提交。",
+        "本次结束申请尚未提交。",
       ];
     case "submitting":
       return [
         "正在提交结束申请",
-        "请稍候。离开页面或停止等待不会取消已提交的申请。",
+        "请稍候。",
       ];
     case "querying":
       return [
-        "正在核对办理结果",
-        "只核对此前提交的结束申请，不会结束后来新开通的服务。",
+        "正在查看结束结果…",
+        "请稍候。",
       ];
     case "unsubmitted":
       return [
         "本次结束申请尚未提交",
-        "浏览器未能保存本次办理所需信息，因此没有发出申请。请返回确认页面后再继续。",
+        "请返回确认页面后再继续。",
       ];
     case "storage":
       return [
-        state.unsubmitted ? "本次结束申请尚未提交" : "暂时无法继续",
+        state.unsubmitted ? "本次结束申请尚未提交" : "结束信息暂时无法使用",
         state.unsubmitted
-          ? "浏览器无法保存本次办理信息，因此没有发出申请。请重新检查。"
-          : "浏览器暂时无法读取或保存本页信息。请重新检查。",
+          ? "请重新检查。"
+          : state.pending
+            ? "结束结果仍未确认。请重新检查。"
+            : "请重新检查。",
       ];
     case "random":
       return [
         "本次结束申请尚未提交",
-        "暂时无法准备本次办理，请重新加载页面后再试。",
+        "请重新加载后再试。",
       ];
     case "reload":
       return [
-        "请重新加载页面",
+        "请重新加载",
         state.pending
-          ? "本次结束申请结果仍未确定，请重新加载页面后继续核对。"
-          : "页面暂时无法继续，请重新加载。",
+          ? "结束结果仍未确认。重新加载后，请按页面提示继续。"
+          : "重新加载后，请按页面提示继续。",
       ];
     case "result":
       return resultCopy(state);
@@ -323,20 +296,14 @@ function EntryPanel({
       </div>
       {state.known && (
         <p className="termination-note-copy">
-          此前的结束申请已完成。下面是重新开通的员工服务。
+          此前的结束申请已完成。下方为重新加入后的员工服务。
         </p>
       )}
       <h2>结束后会发生什么</h2>
       <ul className="termination-consequences">
-        <li>停止办理工号和工牌，尚未发放的原申请无法继续。</li>
-        <li>以后重新开通服务，也不会恢复原申请或旧工牌的增办资格。</li>
+        <li>结束后，将无法申请工号或继续办理工牌。</li>
+        <li>个人账户和已有工号保留。</li>
       </ul>
-      <section className="termination-note">
-        <h3>个人账户仍可使用</h3>
-        <p>
-          当前登录、机构角色和已有工号不会因结束员工服务而改变。
-        </p>
-      </section>
       <div className="termination-actions">
         <Button ref={trigger} className="primary" onClick={onConfirm}>
           结束员工服务
@@ -360,22 +327,22 @@ function ServiceNote({
   retry: (() => void) | undefined;
   seconds: number;
 }) {
+  const description = currentService(service, rejoined);
   return (
     <section className="termination-guide" aria-label="当前员工服务">
-      <p className="eyebrow">当前员工服务</p>
       <h2>
         {rejoined
           ? "当前员工服务已重新开通"
           : (serviceLabel(service) ?? "当前员工服务")}
       </h2>
-      <p>{currentService(service, rejoined)}</p>
+      {description && <p>{description}</p>}
       {retry && (service.kind === "limited" || service.kind === "unavailable") && (
         <Button
           className="quiet-link"
           disabled={seconds > 0}
           onClick={retry}
         >
-          {seconds > 0 ? `${seconds} 秒后可重新读取` : "重新读取当前状态"}
+          {seconds > 0 ? `${seconds} 秒后可刷新状态` : "刷新当前状态"}
         </Button>
       )}
     </section>
@@ -534,11 +501,7 @@ function Content({ controller }: { controller: Termination }) {
         ← 返回员工服务
       </a>
       <div className="termination-heading">
-        <p className="eyebrow">
-          {state.kind === "result" && state.outcome === "complete"
-            ? "员工服务 · 此前办理"
-            : "员工服务 · 本人办理"}
-        </p>
+        <p className="eyebrow">员工服务</p>
         <h1 ref={heading} tabIndex={-1}>
           {title}
         </h1>
@@ -563,27 +526,19 @@ function Content({ controller }: { controller: Termination }) {
           )}
           {state.kind === "result" && (
             <>
-              <span className="termination-status">
-                {state.outcome === "complete"
-                  ? "此前办理 · 已完成"
-                  : state.outcome === "rejected"
-                    ? "本次申请"
-                    : "此前办理 · 待确认"}
-              </span>
               {state.outcome === "complete" && state.terminatedAt && (
                 <p className="termination-time">
-                  结束时间：{stamp(state.terminatedAt) ?? "已记录"}
+                  结束时间：{stamp(state.terminatedAt) ?? "暂时无法显示"}
                 </p>
               )}
               {state.outcome !== "complete" && state.previous && (
                 <p className="field-hint">
-                  此前已完成的结束结果仍保留：
-                  {stamp(state.previous) ?? "已记录"}。本次核对不会改变它。
+                  此前结束时间：{stamp(state.previous) ?? "暂时无法显示"}
                 </p>
               )}
               {state.outcome === "complete" && !state.persisted && (
                 <p className="field-hint">
-                  本次结果未能保存在本页，离开后可能无法再次查看。
+                  本页未能保存结束结果，离开后可能无法再次查看。
                 </p>
               )}
             </>
@@ -596,7 +551,7 @@ function Content({ controller }: { controller: Termination }) {
                   disabled={seconds > 0}
                   onClick={() => void controller.query()}
                 >
-                  {seconds > 0 ? `${seconds} 秒后可继续核对` : "继续核对"}
+                  {seconds > 0 ? `${seconds} 秒后可查看结束结果` : "查看结束结果"}
                 </Button>
               )}
               {state.outcome === "rejected" && state.canStart && (
@@ -618,8 +573,8 @@ function Content({ controller }: { controller: Termination }) {
                     onClick={() => void controller.refreshService()}
                   >
                     {serviceSeconds > 0
-                      ? `${serviceSeconds} 秒后可重新读取`
-                      : "重新读取当前状态"}
+                      ? `${serviceSeconds} 秒后可刷新状态`
+                      : "刷新当前状态"}
                   </Button>
                 ) : (
                   <a className="primary" href="/workforce">
@@ -670,7 +625,7 @@ function Content({ controller }: { controller: Termination }) {
                   ? "正在准备"
                   : state.kind === "submitting"
                     ? "正在提交"
-                    : "正在核对"}
+                    : "正在查看"}
               </Button>
               <a className="quiet-link" href="/">
                 返回首页
@@ -727,7 +682,7 @@ function Content({ controller }: { controller: Termination }) {
                 disabled={seconds > 0}
                 onClick={() => void controller.verify()}
               >
-                {seconds > 0 ? `${seconds} 秒后可重新读取` : "重新读取"}
+                {seconds > 0 ? `${seconds} 秒后可重新加载` : "重新加载"}
               </Button>
               <a className="quiet-link" href="/account">
                 打开个人账户
@@ -750,7 +705,7 @@ function Content({ controller }: { controller: Termination }) {
           {state.kind === "reload" && (
             <div className="termination-actions">
               <Button className="primary" onClick={() => location.reload()}>
-                重新加载页面
+                重新加载
               </Button>
               <a className="quiet-link" href="/">
                 返回首页
@@ -760,7 +715,7 @@ function Content({ controller }: { controller: Termination }) {
           {state.kind === "random" && (
             <div className="termination-actions">
               <Button className="primary" onClick={() => location.reload()}>
-                重新加载页面
+                重新加载
               </Button>
               <a className="quiet-link" href="/">
                 返回首页
@@ -843,12 +798,8 @@ function Content({ controller }: { controller: Termination }) {
         )}
         {state.kind === "entry" && (
           <aside className="termination-guide">
-            <p className="eyebrow">办理范围</p>
-            <h2>只结束本人的员工服务</h2>
-            <p>这不是注销账户，也不是退出登录。</p>
-            <p>
-              服务已暂停时，正常账户仍可主动结束。结束后的原申请仍按原有记录保留。
-            </p>
+            <p className="eyebrow">重新加入后</p>
+            <h2>已有申请按当时状态办理</h2>
           </aside>
         )}
       </div>
@@ -865,10 +816,10 @@ function Content({ controller }: { controller: Termination }) {
         <p className="eyebrow">本人确认</p>
         <h2 id="termination-confirm-title">结束员工服务？</h2>
         <p id="termination-confirm-description">
-          结束后将停止办理工号和工牌，尚未发放的原申请无法继续。以后重新开通也不会恢复原申请或旧工牌的增办资格。
+          结束后，将无法申请工号或继续办理工牌。
         </p>
         <p className="termination-dialog-note">
-          个人账户、当前登录和已有工号保持。
+          个人账户和已有工号保留。
         </p>
         <div className="termination-actions">
           <Button
@@ -900,9 +851,9 @@ function Content({ controller }: { controller: Termination }) {
           }}
           onClose={() => setLeaving(null)}
         >
-          <h2 id="termination-leave-title">离开前请留意结束申请结果</h2>
+          <h2 id="termination-leave-title">结束结果仍未确认</h2>
           <p>
-            此前结束申请的结果仍未确定。离开不会取消已经发出的申请，请勿重复提交。
+            离开不会撤回已发出的结束申请，暂时不要重复提交。
           </p>
           <div className="termination-actions">
             <Button
@@ -943,7 +894,7 @@ export default function TerminationPage() {
           <Content controller={controller} />
         ) : (
           <div className="loading-shell">
-            <p>正在打开员工服务页面…</p>
+            <p>正在打开结束服务页面…</p>
           </div>
         )}
       </main>
