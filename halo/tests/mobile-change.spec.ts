@@ -369,9 +369,9 @@ async function open(page: Page) {
 async function enterCurrent(page: Page) {
   await page.getByLabel("当前手机号", { exact: true }).fill(currentMobile);
   await page.getByRole("button", { name: "完成安全验证（测试替身）" }).click();
-  await page.getByRole("button", { name: "获取当前手机号验证码" }).click();
+  await page.getByRole("button", { name: "获取验证码" }).click();
   await expect(
-    page.getByRole("heading", { name: "输入当前手机号验证码" }),
+    page.getByRole("heading", { name: "输入当前手机号收到的验证码" }),
   ).toBeVisible();
 }
 
@@ -389,7 +389,7 @@ async function enterNew(page: Page) {
   await page.getByRole("button", { name: "完成安全验证（测试替身）" }).click();
   await page.getByRole("button", { name: "获取新手机号验证码" }).click();
   await expect(
-    page.getByRole("heading", { name: "输入新手机号验证码" }),
+    page.getByRole("heading", { name: "输入新手机号收到的验证码" }),
   ).toBeVisible();
 }
 
@@ -402,8 +402,191 @@ async function confirm(page: Page) {
   ).toBeVisible();
 }
 
+test("a failed startup read does not call an earlier completion unsubmitted", async ({
+  page,
+}) => {
+  await open(page);
+  await establish(page);
+  await confirm(page);
+  await page.getByRole("button", { name: "确认更换手机号" }).click();
+  await expect(
+    page.getByRole("heading", { name: "手机号已更换", exact: true }),
+  ).toBeVisible();
+  expect((await material(page)).known).toHaveLength(1);
+  await choose(page, sessionB, accountA);
+  await expect(
+    page.getByRole("heading", { name: "此前的手机号更换已完成", exact: true }),
+  ).toBeVisible();
+  const writes = calls.filter((call) => call.method !== "GET");
+  await page.addInitScript(() => {
+    const get = Storage.prototype.getItem;
+    Storage.prototype.getItem = function (key) {
+      if (this === sessionStorage && key === "halo.mobile-change")
+        throw new Error("Fixture stored-result read unavailable");
+      return get.call(this, key);
+    };
+  });
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "此前操作仍待确认", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator("main")).not.toContainText("尚未提交");
+  await expect(page.getByText(accountA.name, { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "打开个人账户", exact: true }),
+  ).toHaveAttribute("href", "/account");
+  await expect(page.getByRole("button", { name: "查看更换结果" })).toHaveCount(
+    0,
+  );
+  await expect(page.locator(".mobile-change-time")).toHaveCount(0);
+  expect(calls.filter((call) => call.method !== "GET")).toEqual(writes);
+  for (const width of [320, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.screenshot({
+      path: test
+        .info()
+        .outputPath(`stored-completion-read-failure-${width}.png`),
+      fullPage: true,
+    });
+  }
+});
+
+test("an unknown early send with no transfer promises no login-to-query recovery", async ({
+  page,
+}) => {
+  await open(page);
+  sendFault = "disconnect";
+  await page.getByLabel("当前手机号", { exact: true }).fill(currentMobile);
+  await page.getByRole("button", { name: "完成安全验证（测试替身）" }).click();
+  await page.getByRole("button", { name: "获取验证码", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "验证码发送待确认", exact: true }),
+  ).toBeVisible();
+  const send = calls.at(-1)!;
+  await page.getByRole("link", { name: "打开个人账户", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "本次操作结果尚未确认", exact: true }),
+  ).toBeVisible();
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await page.screenshot({
+    path: test.info().outputPath("early-send-leave-320.png"),
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "留在此页", exact: true }).click();
+  expect(calls.filter((call) => call.method !== "GET")).toEqual([send]);
+  expect((await material(page)).active.transfer).toBeUndefined();
+  await page.route(origin + "/api/v1/accounts/current", (route) =>
+    route.fulfill({ status: 401, json: { code: "authentication_invalid" } }),
+  );
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(
+    page.getByRole("heading", { name: "请重新登录", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator("main")).toContainText("本次操作结果尚未确认");
+  await expect(page.locator("main")).not.toContainText("继续查看更换结果");
+  await expect(
+    page.getByRole("link", { name: "手机号登录", exact: true }),
+  ).toHaveAttribute("href", "/authentication/codes?return=mobile-change");
+  await page.unroute(origin + "/api/v1/accounts/current");
+  await choose(page, sessionB, accountA);
+  await expect(
+    page.getByRole("heading", { name: "此前操作仍待确认", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "查看更换结果", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "获取验证码", exact: true }),
+  ).toHaveCount(0);
+  expect(
+    calls.filter((call) => call.path === "/api/v1/accounts/current/codes"),
+  ).toEqual([send]);
+  expect(
+    calls.filter(
+      (call) =>
+        call.path.startsWith("/api/v1/mobile-changes/") &&
+        call.method === "GET",
+    ),
+  ).toHaveLength(0);
+  for (const width of [320, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.screenshot({
+      path: test.info().outputPath(`no-transfer-after-login-${width}.png`),
+      fullPage: true,
+    });
+  }
+});
+
+test("continuing the original change and reading its result remain distinct actions", async ({
+  page,
+}) => {
+  await open(page);
+  await establish(page);
+  await confirm(page);
+  completeFault = "disconnect";
+  await page
+    .getByRole("button", { name: "确认更换手机号", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "更换结果尚不确定", exact: true }),
+  ).toBeVisible();
+  const put = calls.at(-1)!;
+  const sends = calls.filter((call) => call.path.endsWith("/codes"));
+  await clearBackoff(page);
+  await expect(
+    page.getByRole("button", { name: "继续本次更换", exact: true }),
+  ).toBeEnabled();
+  const pendingResponse = page.waitForResponse(
+    (response) =>
+      response.url() === origin + `/api/v1/mobile-changes/${transferId}` &&
+      response.request().method() === "GET",
+  );
+  await page.getByRole("button", { name: "查看更换结果", exact: true }).click();
+  expect(await (await pendingResponse).json()).toMatchObject({
+    transfer: { status: "pending" },
+  });
+  await expect(
+    page.getByRole("heading", { name: "更换结果尚不确定", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "查看更换结果", exact: true }),
+  ).toHaveClass("primary");
+  expect(calls.filter((call) => call.method === "PUT")).toEqual([put]);
+  expect(calls.filter((call) => call.path.endsWith("/codes"))).toEqual(sends);
+  await expect(
+    page.getByRole("button", { name: "继续本次更换", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "查看更换结果", exact: true }),
+  ).toBeVisible();
+  for (const colorScheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme });
+    for (const width of [320, 1440]) {
+      await page.setViewportSize({ width, height: 1000 });
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: test
+          .info()
+          .outputPath(`unknown-two-actions-${colorScheme}-${width}.png`),
+        fullPage: true,
+      });
+    }
+  }
+  completeFault = "none";
+  await page.getByRole("button", { name: "继续本次更换", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "手机号已更换", exact: true }),
+  ).toBeVisible();
+  expect(calls.filter((call) => call.method === "PUT")).toEqual([put, put]);
+  expect(calls.filter((call) => call.path.endsWith("/codes"))).toEqual(sends);
+});
+
 for (const stage of ["current", "new"] as const) {
-  test(`${stage} sending survives reload and only checks the original send`, async ({
+  test(`${stage} sending survives reload and retries the original send`, async ({
     page,
   }) => {
     await open(page);
@@ -421,9 +604,13 @@ for (const stage of ["current", "new"] as const) {
       .getByRole("button", { name: "完成安全验证（测试替身）" })
       .click();
     const startedAt = Date.now();
-    await page.getByRole("button", { name: `获取${label}验证码` }).click();
+    await page
+      .getByRole("button", {
+        name: stage === "current" ? "获取验证码" : "获取新手机号验证码",
+      })
+      .click();
     await expect(
-      page.getByRole("heading", { name: "短信仍在发送", exact: true }),
+      page.getByRole("heading", { name: "验证码正在发送", exact: true }),
     ).toBeVisible();
     const original = calls.filter((call) => call.path === path)[0];
     const saved = await material(page);
@@ -431,24 +618,24 @@ for (const stage of ["current", "new"] as const) {
     expect(saved.active.retryAt).toBeGreaterThanOrEqual(startedAt + 5000);
     await page.reload();
     await expect(
-      page.getByRole("heading", { name: "短信仍在发送", exact: true }),
+      page.getByRole("heading", { name: "验证码正在发送", exact: true }),
     ).toBeVisible();
     expect((await material(page)).active.retryAt).toBe(saved.active.retryAt);
     expect(calls.filter((call) => call.path === path)).toEqual([original]);
     await expect(page.getByRole("button", { name: /重新获取/ })).toHaveCount(0);
     await expect(
-      page.getByRole("heading", { name: `输入${label}验证码` }),
+      page.getByRole("heading", { name: `输入${label}收到的验证码` }),
     ).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "完成安全验证（测试替身）" }),
     ).toHaveCount(0);
     delivery = "sent";
     await page
-      .getByRole("button", { name: "查看发送结果", exact: true })
+      .getByRole("button", { name: `重试获取${label}验证码`, exact: true })
       .click({ timeout: 10_000 });
     expect(Date.now()).toBeGreaterThanOrEqual(saved.active.retryAt);
     await expect(
-      page.getByRole("heading", { name: `输入${label}验证码` }),
+      page.getByRole("heading", { name: `输入${label}收到的验证码` }),
     ).toBeVisible();
     expect(calls.filter((call) => call.path === path)).toEqual([
       original,
@@ -461,8 +648,38 @@ for (const stage of ["current", "new"] as const) {
 test("four stages keep independent operations and a completed result", async ({
   page,
 }) => {
+  const capture = async (state: string) => {
+    for (const colorScheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme });
+      for (const width of [320, 1440]) {
+        await page.setViewportSize({ width, height: 1000 });
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth,
+          ),
+        ).toBe(true);
+        await page.screenshot({
+          path: test.info().outputPath(`${state}-${colorScheme}-${width}.png`),
+          fullPage: true,
+        });
+      }
+    }
+  };
   await open(page);
   await enterCurrent(page);
+  await capture("current-code");
+  await page.getByRole("button", { name: "验证并继续", exact: true }).click();
+  await expect(page.locator("#code-error")).toHaveText(
+    "请输入 6 位短信验证码。",
+  );
+  for (const input of await page.locator(".code-slots input").all()) {
+    await expect(input).toHaveAttribute("aria-invalid", "true");
+    await expect(input).toHaveAttribute(
+      "aria-describedby",
+      "code-hint code-error",
+    );
+  }
+  await capture("current-code-error");
   expect(calls[0].method).toBe("POST");
   expect(calls[0].path).toBe("/api/v1/accounts/current/codes");
   expect(calls[0].session).toBe(sessionA);
@@ -482,6 +699,7 @@ test("four stages keep independent operations and a completed result", async ({
   await expect(
     page.getByRole("heading", { name: "填写新手机号" }),
   ).toBeVisible();
+  await capture("new-mobile");
   expect(calls[1].method).toBe("POST");
   expect(calls[1].path).toBe("/api/v1/mobile-changes");
   expect(JSON.parse(calls[1].body!)).toEqual({
@@ -491,6 +709,12 @@ test("four stages keep independent operations and a completed result", async ({
   expect(calls[1].operation).not.toBe(calls[0].operation);
 
   await enterNew(page);
+  await capture("new-code");
+  await page.getByRole("button", { name: "继续", exact: true }).click();
+  await expect(page.locator("#code-error")).toHaveText(
+    "请输入 6 位短信验证码。",
+  );
+  await capture("new-code-error");
   expect(calls[2].path).toBe(`/api/v1/mobile-changes/${transferId}/codes`);
   expect(JSON.parse(calls[2].body!)).toEqual({
     mobile: newMobile,
@@ -506,14 +730,16 @@ test("four stages keep independent operations and a completed result", async ({
   await page.getByRole("button", { name: "继续", exact: true }).click();
   await expect(page.getByText(newMobile)).toBeVisible();
   await expect(
-    page.getByText("完成后，所有设备上的本账户登录都会退出。", {
+    page.getByText("更换后，网站和小程序的全部登录将退出。", {
       exact: true,
     }),
   ).toBeVisible();
+  await capture("confirm");
   await page.getByRole("button", { name: "确认更换手机号" }).click();
   await expect(
     page.getByRole("heading", { name: "手机号已更换" }),
   ).toBeVisible();
+  await capture("completed");
   expect(calls[3].method).toBe("PUT");
   expect(calls[3].path).toBe("/api/v1/accounts/current/mobile");
   expect(JSON.parse(calls[3].body!)).toEqual({
@@ -542,12 +768,14 @@ test("four stages keep independent operations and a completed result", async ({
     closed: null,
   });
   await expect(
-    page.getByRole("link", { name: "手机号登录", exact: true }),
+    page.getByRole("link", { name: "使用新手机号登录", exact: true }),
   ).toHaveAttribute("href", "/authentication/codes?return=mobile-change");
   await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
   await expect(page.locator(".mobile-change-time")).toHaveCount(0);
   await page.evaluate(() => window.dispatchEvent(new Event("pageshow")));
-  await expect(page.getByRole("heading", { name: "请先登录" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "请使用手机号登录" }),
+  ).toBeVisible();
   await expect(page.locator(".mobile-change-time")).toHaveCount(0);
   await choose(page, sessionB, accountB);
   await expect(page.getByText(accountB.name, { exact: true })).toBeVisible();
@@ -561,7 +789,9 @@ test("four stages keep independent operations and a completed result", async ({
       });
   });
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-  await expect(page.getByRole("heading", { name: "请先登录" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "请使用手机号登录" }),
+  ).toBeVisible();
   await expect(page.locator(".mobile-change-time")).toHaveCount(0);
   expect((await material(page)).known).toHaveLength(1);
 });
@@ -579,9 +809,9 @@ test("save refusal, unknown send and unknown establish keep the original operati
   });
   await page.getByLabel("当前手机号", { exact: true }).fill(currentMobile);
   await page.getByRole("button", { name: "完成安全验证（测试替身）" }).click();
-  await page.getByRole("button", { name: "获取当前手机号验证码" }).click();
+  await page.getByRole("button", { name: "获取验证码" }).click();
   await expect(
-    page.getByRole("heading", { name: "本次申请尚未提交" }),
+    page.getByRole("heading", { name: "暂时无法继续" }),
   ).toBeVisible();
   expect(calls).toEqual([]);
   await page.reload();
@@ -593,24 +823,24 @@ test("save refusal, unknown send and unknown establish keep the original operati
   sendFault = "disconnect";
   await page.getByLabel("当前手机号", { exact: true }).fill(currentMobile);
   await page.getByRole("button", { name: "完成安全验证（测试替身）" }).click();
-  await page.getByRole("button", { name: "获取当前手机号验证码" }).click();
+  await page.getByRole("button", { name: "获取验证码" }).click();
   await expect(
     page.getByRole("heading", {
-      name: "暂时无法确认验证码是否已发送",
+      name: "验证码发送待确认",
     }),
   ).toBeVisible();
   const operation = calls[0].operation;
-  await expect(page.getByRole("button", { name: /秒后可查看/ })).toBeDisabled();
+  await expect(page.getByRole("button", { name: /秒后可重试/ })).toBeDisabled();
   await clearBackoff(page);
   await expect(
     page.getByRole("heading", {
-      name: "暂时无法确认验证码是否已发送",
+      name: "验证码发送待确认",
     }),
   ).toBeVisible();
   sendFault = "none";
-  await page.getByRole("button", { name: "查看发送结果" }).click();
+  await page.getByRole("button", { name: "重试获取当前手机号验证码" }).click();
   await expect(
-    page.getByRole("heading", { name: "输入当前手机号验证码" }),
+    page.getByRole("heading", { name: "输入当前手机号收到的验证码" }),
   ).toBeVisible();
   expect(calls[1].operation).toBe(operation);
   expect(calls[1].body).toBe(calls[0].body);
@@ -619,31 +849,31 @@ test("save refusal, unknown send and unknown establish keep the original operati
   await paste(page, currentCode);
   await page.getByRole("button", { name: "验证并继续" }).click();
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认当前号验证结果" }),
+    page.getByRole("heading", { name: "验证结果尚不确定" }),
   ).toBeVisible();
   await page.getByRole("link", { name: "打开个人账户" }).click();
   await expect(
-    page.getByRole("heading", { name: "离开前，请留意办理结果" }),
+    page.getByRole("heading", { name: "本次操作结果尚未确认" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "留在此页" }).click();
   const establishOperation = calls[2].operation;
   await clearBackoff(page);
   await expect(
     page.getByRole("heading", {
-      name: "暂时无法确认当前号验证结果",
+      name: "验证结果尚不确定",
     }),
   ).toBeVisible();
   establishFault = "wrong-code";
-  await page.getByRole("button", { name: "查看验证结果" }).click();
+  await page.getByRole("button", { name: "继续本次验证" }).click();
   await expect(
     page.getByRole("heading", {
-      name: "暂时无法确认当前号验证结果",
+      name: "验证结果尚不确定",
     }),
   ).toBeVisible();
-  await expect(page.getByText("本次请求未被接纳")).toBeVisible();
+  await expect(page.getByText("填写内容暂时无法使用。")).toBeVisible();
   expect(calls[3].operation).toBe(establishOperation);
   expect(calls[3].body).toBe(calls[2].body);
-  await expect(page.getByRole("button", { name: "查看验证结果" })).toHaveCount(
+  await expect(page.getByRole("button", { name: "继续本次验证" })).toHaveCount(
     0,
   );
 });
@@ -700,10 +930,7 @@ for (const action of ["current", "establish", "new", "complete"] as const) {
           .click();
         await page
           .getByRole("button", {
-            name:
-              action === "current"
-                ? "获取当前手机号验证码"
-                : "获取新手机号验证码",
+            name: action === "current" ? "获取验证码" : "获取新手机号验证码",
           })
           .click();
       } else if (action === "establish") {
@@ -715,19 +942,26 @@ for (const action of ["current", "establish", "new", "complete"] as const) {
           .click();
       const retry =
         action === "establish"
-          ? "查看验证结果"
+          ? "继续本次验证"
           : action === "complete"
-            ? "查看提交结果"
-            : "查看发送结果";
+            ? "继续本次更换"
+            : action === "current"
+              ? "重试获取当前手机号验证码"
+              : "重试获取新手机号验证码";
       if (replay) {
         await expect(
-          page.getByRole("button", { name: /秒后可查看/ }),
+          page.getByRole("button", {
+            name:
+              action === "current" || action === "new"
+                ? /秒后可重试/
+                : /秒后可继续/,
+          }),
         ).toBeDisabled();
         await page.clock.runFor(5000);
         await page.getByRole("button", { name: retry, exact: true }).click();
       }
       await expect(
-        page.getByRole("button", { name: "重新加载页面" }),
+        page.getByRole("button", { name: "重新加载" }),
       ).toBeVisible();
       const count = initial + (replay ? 2 : 1);
       expect(calls).toHaveLength(count);
@@ -741,7 +975,7 @@ for (const action of ["current", "establish", "new", "complete"] as const) {
       ).toHaveCount(0);
       expect(calls).toHaveLength(count);
       await page.unroute(origin + path);
-      await page.getByRole("button", { name: "重新加载页面" }).click();
+      await page.getByRole("button", { name: "重新加载" }).click();
       await expect(
         page.getByRole("button", { name: retry, exact: true }),
       ).toBeEnabled();
@@ -750,11 +984,11 @@ for (const action of ["current", "establish", "new", "complete"] as const) {
       await page.getByRole("button", { name: retry, exact: true }).click();
       const heading =
         action === "current"
-          ? "输入当前手机号验证码"
+          ? "输入当前手机号收到的验证码"
           : action === "establish"
             ? "填写新手机号"
             : action === "new"
-              ? "输入新手机号验证码"
+              ? "输入新手机号收到的验证码"
               : "手机号已更换";
       await expect(
         page.getByRole("heading", { name: heading, exact: true }),
@@ -784,33 +1018,34 @@ for (const stage of ["current", "new"] as const)
         .click();
       await page
         .getByRole("button", {
-          name:
-            stage === "current" ? "获取当前手机号验证码" : "获取新手机号验证码",
+          name: stage === "current" ? "获取验证码" : "获取新手机号验证码",
         })
         .click();
       if (unknown) {
         await expect(
-          page.getByRole("heading", { name: "暂时无法确认验证码是否已发送" }),
+          page.getByRole("heading", { name: "验证码发送待确认" }),
         ).toBeVisible();
         const operation = calls[initial].operation;
         await clearBackoff(page);
         sendFault = "limited";
         await page
-          .getByRole("button", { name: "查看发送结果", exact: true })
+          .getByRole("button", {
+            name: `重试获取${stage === "current" ? "当前手机号" : "新手机号"}验证码`,
+            exact: true,
+          })
           .click();
         await expect(
-          page.getByText(
-            "本次查询过于频繁，请等待后再试。此前办理的结果仍待确认。",
-            { exact: true },
-          ),
+          page.getByText("暂时无法继续，请稍后再试。本次结果仍未确认。", {
+            exact: true,
+          }),
         ).toBeVisible();
         expect(calls[initial + 1].operation).toBe(operation);
         await expect(
-          page.getByText("本次申请尚未受理，请等待后再试。", { exact: true }),
+          page.getByText("暂时无法获取验证码，请稍后再试。", { exact: true }),
         ).toHaveCount(0);
       } else {
         await expect(
-          page.getByText("本次申请尚未受理，请等待后再试。", { exact: true }),
+          page.getByText("暂时无法获取验证码，请稍后再试。", { exact: true }),
         ).toBeVisible();
       }
       const record = await material(page);
@@ -825,14 +1060,17 @@ for (const stage of ["current", "new"] as const)
         await clearBackoff(page);
         sendFault = "none";
         await page
-          .getByRole("button", { name: "重试发送验证码", exact: true })
+          .getByRole("button", {
+            name: `重试获取${stage === "current" ? "当前手机号" : "新手机号"}验证码`,
+            exact: true,
+          })
           .click();
         await expect(
           page.getByRole("heading", {
             name:
               stage === "current"
-                ? "输入当前手机号验证码"
-                : "输入新手机号验证码",
+                ? "输入当前手机号收到的验证码"
+                : "输入新手机号收到的验证码",
           }),
         ).toBeVisible();
         expect(calls[initial + 1]).toEqual(calls[initial]);
@@ -851,20 +1089,20 @@ test("a fresh history entry retains unresolved-operation protection after materi
   sendFault = "disconnect";
   await page.getByLabel("当前手机号", { exact: true }).fill(currentMobile);
   await page.getByRole("button", { name: "完成安全验证（测试替身）" }).click();
-  await page.getByRole("button", { name: "获取当前手机号验证码" }).click();
+  await page.getByRole("button", { name: "获取验证码" }).click();
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认验证码是否已发送" }),
+    page.getByRole("heading", { name: "验证码发送待确认" }),
   ).toBeVisible();
   await page.goto(origin);
   await page.goto(origin + "/account/mobile");
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认验证码是否已发送" }),
+    page.getByRole("heading", { name: "验证码发送待确认" }),
   ).toBeVisible();
   expect(await page.evaluate(() => history.state?.haloMobileChange)).toBe(true);
   await page.evaluate(() => sessionStorage.removeItem("halo.mobile-change"));
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "暂时无法查看本次更换结果" }),
+    page.getByRole("heading", { name: "此前操作仍待确认" }),
   ).toBeVisible();
   await expect(page.getByLabel("当前手机号", { exact: true })).toHaveCount(0);
   expect(calls).toHaveLength(1);
@@ -919,23 +1157,34 @@ test("a pending status read cannot permit new input and a completed read confirm
   completeFault = "disconnect";
   await page.getByRole("button", { name: "确认更换手机号" }).click();
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认更换结果" }),
+    page.getByRole("heading", { name: "更换结果尚不确定" }),
   ).toBeVisible();
   const put = calls[calls.length - 1];
 
-  await page.getByRole("button", { name: "查询更换结果" }).click();
+  const pendingResponse = page.waitForResponse(
+    (response) =>
+      response.url() === origin + `/api/v1/mobile-changes/${transferId}` &&
+      response.request().method() === "GET",
+  );
+  await page.getByRole("button", { name: "查看更换结果" }).click();
+  expect(await (await pendingResponse).json()).toMatchObject({
+    transfer: { status: "pending" },
+  });
   await expect(
-    page.getByRole("heading", { name: "本次更换状态尚未确认" }),
+    page.getByRole("heading", { name: "更换结果尚不确定" }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "查看更换结果", exact: true }),
+  ).toHaveClass("primary");
   expect(
     await page.getByRole("button", { name: "继续验证新手机号" }).count(),
   ).toBe(0);
   expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1);
 
   status = "completed";
-  await page.getByRole("button", { name: "查询更换结果" }).click();
+  await page.getByRole("button", { name: "查看更换结果" }).click();
   await expect(
-    page.getByRole("heading", { name: "手机号已更换" }),
+    page.getByRole("heading", { name: "此前的手机号更换已完成" }),
   ).toBeVisible();
   expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1);
   expect(calls[calls.length - 1].method).toBe("GET");
@@ -956,7 +1205,7 @@ test("proof expiry removes phone inputs but preserves explicit original-result r
   completeFault = "disconnect";
   await page.getByRole("button", { name: "确认更换手机号" }).click();
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认更换结果" }),
+    page.getByRole("heading", { name: "更换结果尚不确定" }),
   ).toBeVisible();
   const original = (await material(page)).active;
   expect(original).toMatchObject({
@@ -979,9 +1228,9 @@ test("proof expiry removes phone inputs but preserves explicit original-result r
   for (const field of ["newMobile", "code", "token", "messageId", "operation"])
     expect(expired[field]).toBeUndefined();
   status = "completed";
-  await page.getByRole("button", { name: "查询更换结果" }).click();
+  await page.getByRole("button", { name: "查看更换结果" }).click();
   await expect(
-    page.getByRole("heading", { name: "手机号已更换" }),
+    page.getByRole("heading", { name: "此前的手机号更换已完成" }),
   ).toBeVisible();
   expect(calls.filter((call) => call.method === "PUT")).toHaveLength(1);
   expect(calls.filter((call) => call.method === "POST")).toHaveLength(3);
@@ -1048,8 +1297,34 @@ test("only an explicit ordinary-entry action starts another change after complet
   await choose(page, sessionB, accountA);
   await page.goto(origin + "/account/mobile?return=mobile-change");
   await expect(
-    page.getByRole("heading", { name: "手机号已更换" }),
+    page.getByRole("heading", { name: "此前的手机号更换已完成" }),
   ).toBeVisible();
+  await expect(page.locator("main")).not.toContainText(
+    "请使用新手机号重新登录",
+  );
+  await expect(
+    page.getByRole("link", { name: "打开个人账户", exact: true }),
+  ).toHaveClass("primary");
+  await expect(
+    page.getByRole("link", { name: "手机号登录", exact: true }),
+  ).toBeVisible();
+  for (const colorScheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme });
+    for (const width of [320, 1440]) {
+      await page.setViewportSize({ width, height: 1000 });
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: test
+          .info()
+          .outputPath(`historical-completion-${colorScheme}-${width}.png`),
+        fullPage: true,
+      });
+    }
+  }
   await expect(
     page.getByRole("button", { name: "再次更换手机号" }),
   ).toHaveCount(0);
@@ -1078,11 +1353,11 @@ test("only an explicit ordinary-entry action starts another change after complet
   await paste(page, currentCode);
   await page.getByRole("button", { name: "验证并继续" }).click();
   await expect(
-    page.getByRole("heading", { name: "本次办理已不能继续" }),
+    page.getByRole("heading", { name: "本次更换无法继续" }),
   ).toBeVisible();
-  await expect(
-    page.getByRole("heading", { name: "本次手机号更换已完成" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "手机号已更换" })).toHaveCount(
+    0,
+  );
   expect((await material(page)).known[0].transfer).toBe(transferId);
 });
 
@@ -1109,25 +1384,30 @@ for (const stage of ["current", "new"] as const) {
       const before = calls.length;
       await page
         .getByRole("button", {
-          name:
-            stage === "current" ? "获取当前手机号验证码" : "获取新手机号验证码",
+          name: stage === "current" ? "获取验证码" : "获取新手机号验证码",
         })
         .click();
       if (replay) {
         await expect(
-          page.getByRole("heading", { name: "暂时无法确认验证码是否已发送" }),
+          page.getByRole("heading", { name: "验证码发送待确认" }),
         ).toBeVisible();
         await clearBackoff(page);
         await expect(
-          page.getByRole("button", { name: "查看发送结果" }),
+          page.getByRole("button", {
+            name: `重试获取${stage === "current" ? "当前手机号" : "新手机号"}验证码`,
+          }),
         ).toBeEnabled();
         await page.route(origin + "/build.json", (route) =>
           route.fulfill({ json: { buildId: "next-build" } }),
         );
-        await page.getByRole("button", { name: "查看发送结果" }).click();
+        await page
+          .getByRole("button", {
+            name: `重试获取${stage === "current" ? "当前手机号" : "新手机号"}验证码`,
+          })
+          .click();
       }
       await expect(
-        page.getByRole("button", { name: "重新加载页面" }),
+        page.getByRole("button", { name: "重新加载" }),
       ).toBeVisible();
       expect(calls).toHaveLength(before + (replay ? 1 : 0));
       expect((await material(page)).active).toMatchObject({
@@ -1155,33 +1435,36 @@ for (const stage of ["current", "new"] as const) {
       .click();
     await page
       .getByRole("button", {
-        name:
-          stage === "current" ? "获取当前手机号验证码" : "获取新手机号验证码",
+        name: stage === "current" ? "获取验证码" : "获取新手机号验证码",
       })
       .click();
     await expect(
-      page.getByRole("heading", { name: "请稍后重试发送" }),
+      page.getByRole("heading", { name: "请稍后重试" }),
     ).toBeVisible();
     const original = calls.at(-1)!;
     const count = calls.length;
     await clearBackoff(page);
     await expect(
-      page.getByRole("button", { name: "重试发送验证码", exact: true }),
+      page.getByRole("button", {
+        name: `重试获取${stage === "current" ? "当前手机号" : "新手机号"}验证码`,
+        exact: true,
+      }),
     ).toBeEnabled();
     await page.route(origin + "/build.json", (route) =>
       route.fulfill({ json: { buildId: "next-build" } }),
     );
     await page
-      .getByRole("button", { name: "重试发送验证码", exact: true })
+      .getByRole("button", {
+        name: `重试获取${stage === "current" ? "当前手机号" : "新手机号"}验证码`,
+        exact: true,
+      })
       .click();
-    await expect(
-      page.getByRole("button", { name: "重新加载页面" }),
-    ).toBeVisible();
+    await expect(page.getByRole("button", { name: "重新加载" })).toBeVisible();
     expect(calls).toHaveLength(count);
     await page.unroute(origin + "/build.json");
-    await page.getByRole("button", { name: "重新加载页面" }).click();
+    await page.getByRole("button", { name: "重新加载" }).click();
     await expect(
-      page.getByRole("heading", { name: "请稍后重试发送" }),
+      page.getByRole("heading", { name: "请稍后重试" }),
     ).toBeVisible();
     await expect(
       page.getByRole("button", { name: "完成安全验证（测试替身）" }),
@@ -1189,12 +1472,17 @@ for (const stage of ["current", "new"] as const) {
     sendFault = "none";
     await clearBackoff(page);
     await page
-      .getByRole("button", { name: "重试发送验证码", exact: true })
+      .getByRole("button", {
+        name: `重试获取${stage === "current" ? "当前手机号" : "新手机号"}验证码`,
+        exact: true,
+      })
       .click();
     await expect(
       page.getByRole("heading", {
         name:
-          stage === "current" ? "输入当前手机号验证码" : "输入新手机号验证码",
+          stage === "current"
+            ? "输入当前手机号收到的验证码"
+            : "输入新手机号收到的验证码",
       }),
     ).toBeVisible();
     expect(calls.at(-1)).toEqual(original);
@@ -1240,8 +1528,7 @@ for (const stage of ["current", "new"] as const) {
       .click();
     await page
       .getByRole("button", {
-        name:
-          stage === "current" ? "获取当前手机号验证码" : "获取新手机号验证码",
+        name: stage === "current" ? "获取验证码" : "获取新手机号验证码",
       })
       .click();
     await expect.poll(() => sends.length).toBe(1);
@@ -1251,21 +1538,26 @@ for (const stage of ["current", "new"] as const) {
     });
     release();
     await expect(
-      page.getByRole("heading", { name: "暂时无法确认验证码是否已发送" }),
+      page.getByRole("heading", { name: "验证码发送待确认" }),
     ).toBeVisible();
     await page.clock.runFor(4999);
     expect(sends).toHaveLength(1);
     await expect(
-      page.getByRole("button", { name: /秒后可查看/ }),
+      page.getByRole("button", { name: /秒后可重试/ }),
     ).toBeDisabled();
     await page.clock.runFor(1);
     await page
-      .getByRole("button", { name: "查看发送结果", exact: true })
+      .getByRole("button", {
+        name: `重试获取${stage === "current" ? "当前手机号" : "新手机号"}验证码`,
+        exact: true,
+      })
       .click();
     await expect(
       page.getByRole("heading", {
         name:
-          stage === "current" ? "输入当前手机号验证码" : "输入新手机号验证码",
+          stage === "current"
+            ? "输入当前手机号收到的验证码"
+            : "输入新手机号收到的验证码",
       }),
     ).toBeVisible();
     expect(sends).toHaveLength(2);
@@ -1284,7 +1576,7 @@ for (const action of ["complete", "query"] as const) {
       completeFault = "disconnect";
       await page.getByRole("button", { name: "确认更换手机号" }).click();
       await expect(
-        page.getByRole("heading", { name: "暂时无法确认更换结果" }),
+        page.getByRole("heading", { name: "更换结果尚不确定" }),
       ).toBeVisible();
       await clearBackoff(page);
       status = "completed";
@@ -1309,7 +1601,7 @@ for (const action of ["complete", "query"] as const) {
     );
     await page
       .getByRole("button", {
-        name: action === "complete" ? "确认更换手机号" : "查询更换结果",
+        name: action === "complete" ? "确认更换手机号" : "查看更换结果",
         exact: true,
       })
       .click();
@@ -1348,7 +1640,7 @@ for (const action of ["complete", "query"] as const) {
     );
     release();
     await expect(
-      page.getByRole("heading", { name: "当前账户已更新" }),
+      page.getByRole("heading", { name: "当前账户已变化" }),
     ).toBeVisible();
     await expect(page.locator(".mobile-change-time")).toHaveCount(0);
     await expect
@@ -1416,7 +1708,7 @@ test("account entry, three leave prompts and keyboard focus", async ({
   await expect(page).toHaveURL(origin + "/account/mobile");
 
   await page.getByRole("button", { name: "完成安全验证（测试替身）" }).click();
-  await page.getByRole("button", { name: "获取当前手机号验证码" }).click();
+  await page.getByRole("button", { name: "获取验证码" }).click();
   await paste(page, currentCode);
   await page.getByRole("button", { name: "验证并继续" }).click();
   await expect(
@@ -1478,7 +1770,7 @@ test("responsive widths, dark theme and long account names stay readable", async
   await page.emulateMedia({ colorScheme: "light" });
   await page.setViewportSize({ width: 390, height: 900 });
   await page.getByRole("button", { name: "完成安全验证（测试替身）" }).click();
-  await page.getByRole("button", { name: "获取当前手机号验证码" }).click();
+  await page.getByRole("button", { name: "获取验证码" }).click();
   await expect(page.locator(".code-slots input").first()).toBeFocused();
   await page.keyboard.type("01");
   await expect(page.locator(".code-slots input").nth(2)).toBeFocused();

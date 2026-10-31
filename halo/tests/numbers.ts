@@ -215,7 +215,7 @@ export async function ownNumbers(
     } else {
       expect(body.number).toBeNull();
       await expect(
-        page.getByText("当前没有工号。", { exact: true }),
+        page.getByText("当前没有可用工号", { exact: true }),
       ).toBeVisible();
       expect(await page.locator("main").innerText()).not.toMatch(
         /从未|已被撤销/,
@@ -225,7 +225,7 @@ export async function ownNumbers(
       page.getByText("Second Fixture", { exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "员工服务已开通" }),
+      page.getByRole("heading", { name: "已加入员工服务" }),
     ).toBeVisible();
     page.off("request", capture);
     expect(requests.length).toBeGreaterThan(0);

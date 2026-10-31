@@ -93,17 +93,17 @@ function sameTarget(a: Candidate, b: Candidate, mobile: string) {
 function rejection(code: string): string {
   switch (code) {
     case "target_changed":
-      return "同事资料或服务状态已变化，请重新查找并确认。";
+      return "本次开通时，同事资料或员工服务状态已变化。请重新查找并核对。";
     case "role_changed":
-      return "所选角色已变化，请重新查找并选择角色。";
+      return "本次开通时，所选角色已变化。请重新查找并选择角色。";
     case "already_authorized":
-      return "该同事已有员工服务，无需再次开通。";
+      return "本次开通时，该同事已有未结束的员工服务。请重新查找并查看当前状态。";
     case "account_not_ready":
-      return "该账户当前已暂停，暂时无法开通员工服务。";
+      return "本次开通时，该账户处于暂停状态。请重新查找并查看当前状态。";
     case "target_unavailable":
-      return "无法为该账户办理，请核对手机号及可办理范围。";
+      return "暂时无法为该同事办理。请核对手机号，或查找其他同事。";
     default:
-      return "本次开通未被接纳，请重新查找并确认。";
+      return "本次开通未完成。请重新查找并核对。";
   }
 }
 
@@ -180,8 +180,8 @@ export class Admission {
           this.content = {
             kind: "pending",
             message: this.material.blocked
-              ? "本次核对的资料不一致，暂时无法确认原开通结果。请联系管理人员，不要重复办理。"
-              : "此前开通结果尚未确认。请检查原办理结果，暂时不要再次办理。",
+              ? "暂时无法确认此前的开通结果。可返回个人账户，暂时不要重复办理。"
+              : "此前的开通结果尚不确定。请查看开通结果，暂时不要重复办理。",
             retryAt: this.material.retryAt,
             blocked: this.material.blocked,
           };
@@ -191,13 +191,13 @@ export class Admission {
         )
           this.content = {
             kind: "rejected",
-            message: "暂时无法查找同事和可选角色，请稍后重新查找。",
+            message: "暂时无法查找同事，请稍后再试。",
             retryAt: this.candidateWait.get(current.account.id),
           };
       } catch {
         this.content = {
           kind: "storage",
-          message: "暂时无法读取本页办理信息，请重新检查。",
+          message: "办理信息暂时无法使用，请重新检查。",
         };
       }
     }
@@ -294,7 +294,7 @@ export class Admission {
       ) {
         this.content = {
           kind: "rejected",
-          message: "机构管理入口不能为本人办理。",
+          message: "请查找其他同事，不能为本人开通。",
         };
         this.render();
         return;
@@ -302,7 +302,7 @@ export class Admission {
       if (previous && !sameTarget(previous.candidate, candidate, mobile)) {
         this.content = {
           kind: "rejected",
-          message: "同事资料或角色列表已变化，请重新查找并确认。",
+          message: "同事资料或可选角色已变化，请重新查找并核对。",
         };
         this.render();
         return;
@@ -327,7 +327,7 @@ export class Admission {
         if (!sameTarget(candidate, last.candidate, mobile)) {
           this.content = {
             kind: "rejected",
-            message: "同事资料或角色列表已变化，请重新查找并确认。",
+            message: "同事资料或可选角色已变化，请重新查找并核对。",
           };
           this.render();
           return;
@@ -366,7 +366,7 @@ export class Admission {
         message:
           result.kind === "failure" && result.code === "target_unavailable"
             ? rejection(result.code)
-            : "暂时无法查找同事和可选角色，请稍后重新查找。",
+            : "暂时无法查找同事，请稍后再试。",
       };
       this.render();
     }
@@ -437,7 +437,7 @@ export class Admission {
     } catch {
       this.content = {
         kind: "storage",
-        message: "本次开通尚未提交。浏览器无法保存办理信息，请重新检查。",
+        message: "本次开通尚未提交。请重新检查。",
       };
       this.render();
       return;
@@ -508,8 +508,8 @@ export class Admission {
         retryAt,
         blocked,
         message: blocked
-          ? "本次核对的资料不一致，暂时无法确认原开通结果。请联系管理人员，不要重复办理。"
-          : "暂时无法确认开通结果。检查只处理本次开通，不会另办一次。",
+          ? "暂时无法确认此前的开通结果。可返回个人账户，暂时不要重复办理。"
+          : "开通结果尚不确定。请稍后查看结果，暂时不要重复办理。",
       };
       this.render();
     });
