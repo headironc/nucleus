@@ -23,6 +23,8 @@ export type ManagedApplicationList =
 export type ManagedApplicationDetail =
   components["schemas"]["application.ManagedDetailResponse"];
 export type ReviewInput = components["schemas"]["application.ReviewInput"];
+export type CancellationInput =
+  components["schemas"]["application.CancellationInput"];
 export type PhotoMetadata = components["schemas"]["application.Photo"];
 export type ApplicationResult<T> = { kind: "ok"; value: T } | Failure;
 
@@ -155,6 +157,26 @@ export async function reviewApplication(
   )
     return { kind: "untrusted" };
   return { kind: "ok", value: item };
+}
+
+export async function cancelApplication(
+  session: string,
+  id: string,
+  input: CancellationInput,
+  signal: AbortSignal,
+): Promise<ApplicationResult<components["schemas"]["application.Cancelled"]>> {
+  const result = await request<
+    components["schemas"]["application.Cancellation"]
+  >(
+    "POST /api/v1/workforce/applications/{id}/cancellations",
+    `/api/v1/workforce/applications/${encodeURIComponent(id)}/cancellations`,
+    session,
+    signal,
+    input,
+  );
+  if (result.kind !== "ok") return result;
+  if (result.value.application.id !== id) return { kind: "untrusted" };
+  return { kind: "ok", value: result.value.application };
 }
 
 export function applicationTemplate(session: string, signal: AbortSignal) {

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { CancellationDialog } from "../workforce/cancellation-dialog";
 import { flushSync } from "react-dom";
 import { useParams } from "react-router";
 import { Button } from "@base-ui/react/button";
@@ -146,6 +147,7 @@ export function ApplicationsPanel({
   const heading = useRef<HTMLHeadingElement>(null),
     dialogHeading = useRef<HTMLHeadingElement>(null);
   const previewButton = useRef<HTMLButtonElement>(null);
+  const cancelTrigger = useRef<HTMLButtonElement>(null);
   const previous = useRef(state.kind);
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
@@ -187,7 +189,6 @@ export function ApplicationsPanel({
         <a href="/workforce/reviews">工牌审核</a>
         <a href="/account">个人账户</a>
       </nav>
-      <p className="eyebrow">员工服务 / 工牌申请</p>
       <h1 ref={heading} tabIndex={-1}>
         {title}
       </h1>
@@ -227,18 +228,48 @@ export function ApplicationsPanel({
                   className="primary"
                   disabled={wait > 0}
                   onClick={() => {
-                    void service.refresh();
+                    if (controller.mode.kind === "new") void service.refresh();
+                    else void controller.load();
                   }}
                 >
-                  {wait ? `${wait} 秒后可刷新` : "刷新办理内容"}
+                  {wait
+                    ? `${wait} 秒后可刷新`
+                    : controller.mode.kind === "new"
+                      ? "重新加载申请表"
+                      : controller.mode.kind === "list"
+                        ? "刷新列表"
+                        : "刷新详情"}
                 </Button>
                 {state.kind === "blocked" &&
                   serviceState.kind === "ready" &&
                   serviceState.status === "active" && (
-                    <a href="/workforce/number">申请工号</a>
+                    <a href="/workforce/number">查看工号</a>
                   )}
               </div>
             </div>
+          )}
+          {state.kind === "cancellation-unknown" && (
+            <section className="application-notice">
+              <h2>暂时无法确认取消结果</h2>
+              <p role="status">{state.message}</p>
+              <div className="application-actions">
+                <Button
+                  className="secondary"
+                  disabled={wait > 0}
+                  onClick={() => void controller.load()}
+                >
+                  {wait > 0 ? `${wait} 秒后可刷新详情` : "刷新详情"}
+                </Button>
+                <a href="/workforce/applications">返回申请列表</a>
+              </div>
+            </section>
+          )}
+          {state.kind === "cancelled" && (
+            <section className="application-notice">
+              <h2>申请已取消</h2>
+              <p role="status">需要办理时，请重新申请。</p>
+              <a href="/workforce/applications">返回申请列表</a>
+            </section>
           )}
           {editing && (
             <form
@@ -249,7 +280,7 @@ export function ApplicationsPanel({
               }}
             >
               <p className="application-introduction">
-                选择本次工牌使用的内容，预览后再提交。
+                选择工牌内容和照片，预览确认后提交。
               </p>
               {state.kind === "edit" && state.message && (
                 <p className="application-notice" role="alert">
@@ -286,7 +317,7 @@ export function ApplicationsPanel({
                   }
                 >
                   {state.kind === "working"
-                    ? "正在准备完整预览"
+                    ? "正在准备工牌预览…"
                     : wait
                       ? `${wait} 秒后可预览`
                       : "预览工牌"}
@@ -296,12 +327,10 @@ export function ApplicationsPanel({
                   disabled={state.kind === "working" || wait > 0}
                   onClick={() => void controller.load()}
                 >
-                  刷新办理内容
+                  重新加载申请表
                 </Button>
               </div>
-              <p className="field-hint">
-                刷新办理内容会清除本页尚未提交的选择和照片，请重新确认。
-              </p>
+              <p className="field-hint">重新加载会清除尚未提交的选择和照片。</p>
             </form>
           )}
           {state.kind === "created" && (
@@ -319,7 +348,7 @@ export function ApplicationsPanel({
                 className="primary"
                 href={`/workforce/applications/${state.application.id}`}
               >
-                查看已保存的申请
+                查看申请详情
               </a>
               <a href="/workforce/applications">查看我的申请</a>
             </section>
@@ -332,7 +361,7 @@ export function ApplicationsPanel({
               <h2 id="application-unknown">暂时无法确认申请是否已提交</h2>
               <p>请先查看我的申请，暂时不要重复提交。</p>
               <a className="primary" href="/workforce/applications">
-                刷新申请列表
+                查看我的申请
               </a>
             </section>
           )}
@@ -341,12 +370,12 @@ export function ApplicationsPanel({
               {serviceState.kind === "ready" &&
                 serviceState.status === "active" && (
                   <a className="primary" href="/workforce/applications/new">
-                    申请新工牌
+                    申请工牌
                   </a>
                 )}
               {state.result.access === "restricted" && (
                 <p className="application-notice">
-                  当前仅可查看未发放申请的类型、状态和提交时间。
+                  当前仅可查看待审核和审核通过的申请摘要。
                 </p>
               )}
               {!state.result.applications.length ? (
@@ -401,6 +430,11 @@ export function ApplicationsPanel({
           )}
           {state.kind === "detail" && (
             <section className="application-detail own-application-detail">
+              {state.notice && (
+                <p role="status" className="application-notice">
+                  {state.notice}
+                </p>
+              )}
               <p>
                 {KINDS[state.result.application.kind]} ·{" "}
                 {STATUSES[state.result.application.status]}
@@ -423,7 +457,7 @@ export function ApplicationsPanel({
                         <p className="application-notice" role="status">
                           {state.media === "loading"
                             ? "正在加载工牌预览…"
-                            : "工牌预览暂时无法显示，请重新加载。"}
+                            : "工牌预览暂时无法显示，请刷新详情。"}
                         </p>
                       )}
                       <SnapshotDetails
@@ -450,11 +484,32 @@ export function ApplicationsPanel({
               )}
               <Button
                 className="secondary"
-                disabled={wait > 0}
+                disabled={wait > 0 || state.pending}
                 onClick={() => void controller.load()}
               >
                 {wait > 0 ? `${wait} 秒后可刷新详情` : "刷新详情"}
               </Button>
+              {(state.result.application.status === "submitted" ||
+                state.result.application.status === "approved") && (
+                <Button
+                  ref={cancelTrigger}
+                  className="review-danger"
+                  disabled={state.pending}
+                  onClick={() => controller.confirmCancellation()}
+                >
+                  取消申请
+                </Button>
+              )}
+              {state.cancellation && (
+                <CancellationDialog
+                  application={state.result.application}
+                  mode="self"
+                  pending={!!state.pending}
+                  trigger={cancelTrigger}
+                  close={() => controller.dismissCancellation()}
+                  submit={() => void controller.cancelApplication()}
+                />
+              )}
             </section>
           )}
           <Dialog.Root
@@ -471,10 +526,10 @@ export function ApplicationsPanel({
                 initialFocus={dialogHeading}
               >
                 <Dialog.Title ref={dialogHeading} tabIndex={-1}>
-                  确认本次工牌申请
+                  确认提交工牌申请
                 </Dialog.Title>
                 <Dialog.Description>
-                  请核对完整工牌和领取地点。提交后保存本次内容，更改内容需新建申请。
+                  请核对工牌内容、照片和领取地点。提交后无法修改本次申请，需调整时请重新申请。
                 </Dialog.Description>
                 <div className="application-dialog-content">
                   {modal && (
@@ -485,6 +540,7 @@ export function ApplicationsPanel({
                       <PreviewFigure
                         artwork={modal.artwork}
                         failed={() => controller.previewFailed()}
+                        caption=""
                       />
                       <SnapshotDetails snapshot={modal.preview.snapshot} />
                     </>
@@ -506,7 +562,7 @@ export function ApplicationsPanel({
                     onClick={() => void controller.submit()}
                   >
                     {state.kind === "submitting"
-                      ? "正在提交申请"
+                      ? "正在提交申请…"
                       : "确认并提交申请"}
                   </Button>
                 </div>

@@ -7,9 +7,9 @@ use crate::{
     identity::person,
     pagination::Pagination,
     workforce::application::{
-        Application, Decision, Detail, DirectoryValue, Error, Id, Kind, List, ManagedList,
-        ManagedSummary, ManagementQuery, Photo, PhotoId, ResourceId, Snapshot, Status, Summary,
-        Template,
+        Application, Approval, Decision, Detail, DirectoryValue, Error, Id, Kind, List,
+        ManagedList, ManagedSummary, ManagementQuery, Photo, PhotoId, ResourceId, Snapshot, Status,
+        Summary, Template,
     },
 };
 
@@ -95,6 +95,7 @@ impl TryFrom<Row> for Summary {
             "submitted" => Status::Submitted,
             "approved" => Status::Approved,
             "rejected" => Status::Rejected,
+            "cancelled" => Status::Cancelled,
             _ => return Err(Error::Configuration),
         };
         Ok(Self {
@@ -121,9 +122,23 @@ impl TryFrom<(Row, Option<person::revision::Identity>)> for Application {
                 if reviewed_at >= summary.submitted_at && identity.person_id() == reviewer_id =>
             {
                 Decision::Approved {
-                    reviewer_id,
-                    reviewer_name: identity.name().to_owned(),
-                    reviewed_at,
+                    approval: Approval {
+                        reviewer_id,
+                        reviewer_name: identity.name().to_owned(),
+                        reviewed_at,
+                    },
+                }
+            }
+            (Status::Cancelled, None, None, None, None) => Decision::Cancelled { approval: None },
+            (Status::Cancelled, Some(reviewer_id), Some(reviewed_at), None, Some(identity))
+                if reviewed_at >= summary.submitted_at && identity.person_id() == reviewer_id =>
+            {
+                Decision::Cancelled {
+                    approval: Some(Approval {
+                        reviewer_id,
+                        reviewer_name: identity.name().to_owned(),
+                        reviewed_at,
+                    }),
                 }
             }
             (
@@ -269,6 +284,7 @@ pub(super) async fn managed_list(
         Status::Submitted => "submitted",
         Status::Approved => "approved",
         Status::Rejected => "rejected",
+        Status::Cancelled => "cancelled",
     };
     let count = client
         .query_one(
@@ -403,4 +419,50 @@ pub(super) async fn review(
     }
     client.execute("INSERT INTO audit.events (actor_id,occurred_at,action,target_type,target_id,details) SELECT reviewer_id,reviewed_at,'workforce.application.' || status,'workforce.application',id,jsonb_build_object('previousStatus','submitted','status',status,'rejectionReason',rejection_reason) FROM workforce.applications WHERE id=$1", &[&id]).await?;
     managed_application(client, id, persons, now).await
+}
+
+pub(super) async fn cancel(
+    client: &Client,
+    id: Id,
+    operator: person::Id,
+    input: super::CancellationInput,
+) -> Result<Id, Error> {
+    let (expected, own, mode, reason) = match input {
+        super::CancellationInput::SelfService { expected_status } => {
+            (expected_status, true, "self", None)
+        }
+        super::CancellationInput::Manager {
+            expected_status,
+            reason,
+        } => (expected_status, false, "manager", Some(reason)),
+    };
+    let expected = match expected {
+        super::CancellableStatus::Submitted => "submitted",
+        super::CancellableStatus::Approved => "approved",
+    };
+    let changed = client
+        .execute(
+            "UPDATE workforce.applications SET status='cancelled' WHERE id=$1 AND status=$2 AND (NOT $3 OR person_id=$4)",
+            &[&id, &expected, &own, &operator],
+        )
+        .await?;
+    if changed != 1 {
+        let visible = client
+            .query_opt(
+                "SELECT id FROM workforce.applications WHERE id=$1 AND (NOT $2 OR person_id=$3)",
+                &[&id, &own, &operator],
+            )
+            .await?
+            .is_some();
+        return Err(if visible {
+            Error::StateChanged
+        } else {
+            Error::TargetUnavailable
+        });
+    }
+    client.execute(
+        "INSERT INTO audit.events (actor_id,action,target_type,target_id,details) VALUES ($1,'workforce.application.cancelled','workforce.application',$2,jsonb_build_object('previousStatus',$3::text,'status','cancelled','mode',$4::text) || CASE WHEN $5::text IS NULL THEN '{}'::jsonb ELSE jsonb_build_object('reason',$5::text) END)",
+        &[&operator, &id, &expected, &mode, &reason],
+    ).await?;
+    Ok(id)
 }
