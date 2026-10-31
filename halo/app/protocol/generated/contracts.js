@@ -575,7 +575,6 @@ export default {
     "409": {
       "validator": "createCurrentAffiliation_409",
       "codes": [
-        "request_mismatch",
         "state_conflict"
       ]
     },

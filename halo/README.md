@@ -27,6 +27,8 @@ bun run build
 
 完整单元测试包含真实 Nginx 代理回归。默认使用 `/usr/sbin/nginx`，可通过 `HALO_NGINX` 指定可执行文件。
 
+生产代理只为精确的头像路径开放 2 MiB、工牌照片路径开放 8 MiB、工牌申请提交路径开放 128 KiB 请求正文。预览和其他 API 保持 8 KiB。`tools/nginx.test.ts` 使用实际生产配置，核对边界字节、超限和近邻路径拒绝，以及工牌照片的鉴权头、Cookie、上游缓存策略和拒绝响应透传。该代理回归使用隔离 HTTP 上游；真实照片解码、存储与申请事务另由业务组合验收覆盖。
+
 应用类型检查显式执行 `typescript-compiler` 别名中的 TypeScript 7。`openapi-typescript` 仍依赖 TypeScript 5 的 AST API，因此 `typescript` 保留其支持范围内的最新稳定版 5.9.3。根维护工具也使用 TypeScript 7。生成器支持新版 API 后，再移除这项兼容分离；当前不把生成器的 AST 库宣称为全局最新版本。
 
 构建期依赖链 `@react-router/dev@8.5.1 → @babel/core@7.29.7 → gensync@1.0.0-beta.2` 仍要求 `gensync@^1.0.0-beta.2`。现有稳定版 0.1.0 不满足该范围，因此锁定上游要求的 beta.2，保留这一预发布限制。上游提供可合法解析到稳定 gensync 的兼容构建依赖链，并通过相关验收后，再解除限制。
@@ -128,6 +130,29 @@ bun run test:browser -- tests/applications.spec.ts tests/application-photo.spec.
 ```
 
 浏览器夹具使用真实页面、控制器、生成校验器、IndexedDB、图片解码和合法测试字体，HTTP 响应受控。覆盖三种类型、同快照提交与查询、未知提交不重发、受限摘要、账户切换、失效资源、UTF-8 行范围、明暗主题和窄屏焦点。测试字体优先读取本树的后端夹具。后端候选尚未合入时，将 `HALO_APPLICATION_FONT_REV` 设为已抓取的准确 Git 修订，只读取得该修订中的字体；不读取其他任务的 WIP。原件分别记录协议快照摘要、字体来源及字节摘要。字体修订不代表协议或后端集成修订。这些检查不证明真实数据库事务、完整端到端或跨引擎打印效果。
+
+### 真实组合脚本
+
+`tests/badge-applications.ts` 由独立集成候选消费。集成作者在 `admissionAndFirstNumber` 完成 `allocation-current-after` 并返回后，调用 `ownBadgeApplications(page, manager, owner, other, select)`。`owner` 使用已真实准入、领号的虚构同事 17；`other` 使用独立注册、活跃且仅具 `workforce.directory` 角色的虚构同事 18。两者必须来自真实会话和本人响应，不能用机构管理员或旧流程的 13 替代。helper 结束时恢复原管理者选择和视口。
+
+注册、角色授予、目录设置和服务端模板准备在观察窗口外完成，由集成候选同时交付调用点及夹具。目录必须包含全部 16 类规则，本场景的 902 使用 `position: false`，职务与职称明确不选。照片夹具采用每人 4 个文件、全局至少 8 个文件，字节预算不先触顶。模板、背景和已许可的 Noto Sans SC 仅用于隔离验收；这些值不成为生产默认。
+
+脚本通过真实页面确认裁剪、选择新办、增办和换证，再次明确选择新办丢弃一次真实 `201` 回执。四次照片使用不同的合成图案，逐次核对真实照片准备、预览与创建响应的引用和快照，随后逐条读取历史保持原内容。HTTP 拦截只负责观察和丢弃该成功回执，不伪造业务成功或数据库事实。
+
+照片准备、预览和提交共用[已认证写入来源桶](../docs/http/admission.md#逐级扣额与回收)，每秒补充 2 次、容量为 4。helper 起点预留 2 秒补满时间，三类原始请求统一按至少 500 毫秒间隔转发，保持来源 17／18，不改变生产限额，也不因拒绝或未知结果重发。失败诊断只列端点、状态、已校验的公开 code 和数字 Retry-After；非数字头只标记存在，不输出正文或凭据。每个可信回包仍要求 no-store，不能设置 Cookie。
+
+| phase                                    | 独立观察窗口与客户端断言                                                                            |
+| ---------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `issuance`、`duplication`、`replacement` | 真实确认后的各一次创建，提交内容等于对应预览，记录实际 `201`                                        |
+| `lost`                                   | 再次新办，真实创建并观察后丢回执；页面只提供申请列表刷新                                            |
+| `refresh`                                | 只读四条申请与各自详情，保持固定快照，没有第五次提交                                                |
+| `foreign`                                | 18 读取 17 的私有照片和详情均为 `404`，自己的可信列表为空                                           |
+| `capacity`                               | 17 第五次照片准备为 `503 dependency_unavailable`，保持编辑，不继续预览、提交或自动重传              |
+| `restricted`                             | 17 合法结束资格已完成后才开始；列表和详情仅有四字段摘要，照片直接读取为 `404`，页面不再获取受限资源 |
+
+每组使用 `badge-{phase}-{before|after}.pending` 写入，再原子改名为 `.request`；独立 Rust 数据库观察器完成后写同路径 `.ack`，内容为 `ok`。请求 JSON 形状由 `BadgeObservation` 拥有。`accountId`、`personId`、`session` 始终指本阶段实际调用者，`foreign` 三项均为 18；`applicationIds` 则保留目标 17 已创建的申请。创建窗口另带实际请求及创建响应；其他窗口不编造创建事实。Session 只记录公开 UUID，`Operation-Id` 只作诊断，不作为申请去重或原操作恢复事实。
+
+截图保存在本轮证据目录的 `badge-applications/`，并附加到 Playwright 报告。完整组合沿[浏览器隔离验收](#浏览器隔离验收)执行，须同时具备正式后端、页面、夹具和观察器。类型检查、脚本存在及旧准入报告均不能替代本场景真实运行、独立数据库核对和原图接纳。
 
 ## 头像本地选择与预览
 
@@ -278,18 +303,18 @@ Cookie 对象断言可能通过通用 `value` 字段携带秘密，因此该字�
 
 `/account` 的“政治面貌”进入 `/account/affiliation`。页面分别确认当前账户、读取当前政治面貌并读取固定名称，不占员工服务资格；已有值只读。只有可信 `404 affiliation_unset` 开放首次填写，身份、当前值或名称读取失败都不转为未填。固定名称不写入客户端常量，`app/protocol/affiliation.ts` 只接受按 `01` 至 `13` 升序、名称唯一且完整的 13 项响应；PUT 正文只为 `{affiliation:code}`，可信成功只接纳 `{code:"ok"}`，不从回执推断当前值或时间。
 
-`app/affiliation/controller.ts` 拥有页面内存中的原操作、当前值读取和失败分类；`app/affiliation/marker.ts` 拥有 `halo:affiliation` 的最小会话标记。标记、结果未知、固定原键重试、当前值独立读取和离开提示的规则见[页面文案](../docs/client/pages.md#网站本人政治面貌)及[客户端恢复](../docs/client/recovery.md)。政治面貌值、选择、名称、摘要与原请求正文不写入存储、URL 或日志。
+`app/affiliation/controller.ts` 拥有明确填写、当前值读取和失败处理。提交未取得响应时只提示刷新，读取成功后直接展示普通当前记录或未填写页面。可信创建成功提示保留，随后读取失败只影响当前记录展示。`app/affiliation/marker.ts` 只清理旧 `halo:affiliation` 键，失败不锁页，不改其他路由状态。敏感值不持久保存，具体动作与离页提示见[页面文案](../docs/client/pages.md#网站本人政治面貌)及[客户端恢复](../docs/client/recovery.md)。
 
-协议、标记和状态机可运行：
+协议、标记清理和页面行为可运行：
 
 ```bash
 cd halo
 bun run test -- app/protocol/affiliation.test.ts app/affiliation/marker.test.ts app/affiliation/controller.test.ts
 ```
 
-受控浏览器检查可运行 `bun run test:browser -- tests/affiliation.spec.ts`。夹具构建实际页面与样式，使用真实会话选择、真实 IndexedDB 与 BroadcastChannel，并由受控响应覆盖首次读取、13 个选项、成功与成功后的独立当前读取、各类首次拒绝、401/403、结果未知与同键原重试、标记存在或损坏、迟到响应、账户切换、离页、聚焦、四种宽度及明暗主题。受控响应不代替真实 Cookie、数据库事务或 Nginx 验收。
+受控浏览器检查可运行 `bun run test:browser -- tests/affiliation.spec.ts`。夹具构建实际页面与样式，使用真实会话选择、真实 IndexedDB 与 BroadcastChannel。覆盖首次读取、13 个选项、可信成功及读取失败、各类拒绝、401/403、提交无响应后的普通刷新、再次明确填写、旧标记及存储不可用、迟到响应、账户切换、离页、聚焦、四种宽度及明暗主题。受控响应不代替真实 Cookie、数据库事务或 Nginx 验收。
 
-真实组合验收在现有登录场景内使用独立虚构账户首次填写政治面貌，丢弃真实成功回包后以同一 Operation-Id 和正文重试，再分别读取当前值并以新键触发冲突。浏览器核对页面、Cookie 与固定原键；Rust 在首次提交和重放前后独立比较中心政治面貌、完成、人员档案与非中心账户、人员、会话、授权和终止事实。重放不新增第二条政治面貌事实，当前读取和冲突不改变业务事实。运行方式仍为 `HALO_NGINX=/usr/sbin/nginx bun tools/check-halo-test.ts browser`；受控浏览器检查、类型检查和单元测试都不能替代该验收。
+真实组合验收在现有登录场景内使用独立虚构账户首次填写政治面貌。丢弃真实成功回包后刷新并展示当前记录，页面 PUT 仍为一次。刷新及明确的冲突探测不新增业务事实。七个数据库观察点由 Rust 在隔离库独立比较政治面貌及其他业务事实，覆盖历史、加密绑定、审计及最多一次首次填写。完整真实验收在前后端准确集成候选上执行，入口为 `HALO_NGINX=/usr/sbin/nginx bun tools/check-halo-test.ts browser`；受控页面检查、类型检查和单元测试都不能替代该验收。
 
 ### 机构入口开通员工服务
 

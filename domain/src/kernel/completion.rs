@@ -24,7 +24,6 @@ use crate::{
     runtime::{registry, work},
 };
 
-pub(crate) const CENTER: &str = "center.completions";
 pub(crate) const CONTENT: &str = "content.completions";
 pub(crate) const ACCESS: &str = "access.completions";
 pub(crate) const WORKFORCE: &str = "workforce.completions";
@@ -62,7 +61,6 @@ impl Template {
     pub(crate) fn expires(self, created_at: DateTime<Utc>) -> Option<DateTime<Utc>> {
         match self.family {
             Family::ContentColumn
-            | Family::CenterAffiliation
             | Family::InstitutionRole
             | Family::WorkforceRole
             | Family::InstitutionAppointment
@@ -166,15 +164,10 @@ impl Subject {
                 matches!(action, "grant" | "revoke")
             }
             (Family::SystemCorrection, Self::System { .. }) => action == "correct",
-            (Family::CenterAffiliation, Self::Session { .. }) => {
-                matches!(action, "fill" | "correct")
-            }
-            (Family::CenterAffiliation, Self::System { .. }) => action == "system_correct",
             (
                 Family::Initialization | Family::InstitutionAppointment | Family::SystemCorrection,
                 _,
             ) => false,
-            (Family::CenterAffiliation, _) => false,
             (_, Self::Session { .. }) => true,
             _ => false,
         }
@@ -1326,8 +1319,8 @@ mod tests {
             revision_id: serde_json::from_str("\"00000000-0000-4000-8000-000000000004\"")
                 .expect("revision"),
         };
-        let binding = Binding::new(Family::CenterAffiliation, operation, subject).expect("binding");
-        let bytes = hex::decode("010000000000000000000102030405060708090a0b702d5ff009f3413efed09f2d30bdbcc6c21569ffb41111d60df521c1fde907c2f89f175f").expect("Python AESGCMSIV vector");
+        let binding = Binding::new(Family::ContentColumn, operation, subject).expect("binding");
+        let bytes = hex::decode("010000000000000000000102030405060708090a0bf94c610afcb47f8364147d8d9e67cb426e3c60af89213f7a3e4bcdaebe33ec65548f").expect("Python AESGCMSIV vector");
         let aad = Encoded::fields(&[
             binding.domain(),
             &bytes[..21],
@@ -1335,29 +1328,29 @@ mod tests {
             binding.field(),
         ])
         .expect("AAD");
-        assert_eq!(aad.as_ref().len(), 167);
+        assert_eq!(aad.as_ref().len(), 163);
         assert_eq!(
             hex::encode(sha256::Digest::new(&aad).as_ref()),
-            "ff3ea82997a8dc611e7ddfd287869d77674c64dfde5ab19ec840fd41db5a21ff"
+            "5ad1c850e34460d34f728b56c65b02f8d50b31020d5990007ec2d86156cbfb1b"
         );
         let mut record = Record {
-            family: Family::CenterAffiliation,
+            family: Family::ContentColumn,
             operation_id: operation,
-            action: "correct".into(),
+            action: "create".into(),
             target: "00000000-0000-4000-8000-000000000001".into(),
             input: Sealed(Envelope::new(bytes).expect("envelope")),
             subject,
             created_at: DateTime::from_timestamp_micros(1_700_000_000_123_000).expect("time"),
             expires_at: None,
             seal: seal::Seal::stored(
-                hex::decode("b355b7447e73c7015dc231ba722c2e515d7d8d1f41d456af33f686c43ae6558c")
+                hex::decode("77314d1214d6f1eae7809045a0d5dff9577b8b734a9f15c1eb13df805f8e3427")
                     .expect("Python HMAC"),
                 key_id,
                 1,
             )
             .expect("seal"),
         };
-        let plaintext = br#"{"affiliation":"01"}"#;
+        let plaintext = br#"{"name":"example"}"#;
         assert_eq!(
             record
                 .verify(keys)
@@ -1372,10 +1365,10 @@ mod tests {
             &fields.iter().map(Vec::as_slice).collect::<Vec<_>>(),
         )
         .expect("seal encoding");
-        assert_eq!(encoded.as_ref().len(), 237);
+        assert_eq!(encoded.as_ref().len(), 230);
         assert_eq!(
             hex::encode(sha256::Digest::new(&encoded).as_ref()),
-            "f66a3717f2311efb988a16f20f5f5e0e307e6d73b8a8a3f2b3d33585794509ef"
+            "2f155d6f59664525d0521d8d1d8209590cc6af12c247f0b69d5d0020b0a52f8c"
         );
         // Re-encryption changes envelope bytes, while the seal still authenticates the same input.
         let inventory = authentication::inventory(authentication::keys());
@@ -1391,7 +1384,7 @@ mod tests {
                 seals: &seals,
             })
             .expect("seal survives re-encryption");
-        record.action = "fill".into();
+        record.action = "update".into();
         assert!(
             record
                 .verify(history::Keys {

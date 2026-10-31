@@ -8,7 +8,7 @@ use syn::{
     parse::{ParseStream, Parser},
 };
 
-const PROTECTED_TABLES: [(&str, &[&str]); 55] = [
+const PROTECTED_TABLES: [(&str, &[&str]); 53] = [
     ("content.columns", &["content/column/state.rs"]),
     (
         "content.changes",
@@ -33,9 +33,7 @@ const PROTECTED_TABLES: [(&str, &[&str]); 55] = [
     ),
     ("identity.corrections", &["identity/person/record.rs"]),
     ("identity.cancellations", &["identity/person/record.rs"]),
-    ("center.profiles", &["center/affiliation/profile.rs"]),
     ("center.affiliations", &["center/affiliation/database.rs"]),
-    ("center.completions", &["kernel/completion.rs"]),
     ("workforce.completions", &["kernel/completion.rs"]),
     ("workforce.numbers", &["workforce/number/state.rs"]),
     ("workforce.revisions", &["workforce/number/revision.rs"]),
@@ -399,7 +397,7 @@ mod tests {
             assert!(error.contains(table), "{error}");
         }
         let error = check_source(
-            Path::new("center/affiliation/profile.rs"),
+            Path::new("center/affiliation/command.rs"),
             r#"const SQL: &str = "SELECT * FROM center.affiliations";"#,
         )
         .expect_err("one declaring module does not own another table");
@@ -409,22 +407,28 @@ mod tests {
         );
         let error = check_source(
             Path::new("history_extra.rs"),
-            r#"const SQL: &str = "SELECT * FROM center.profiles";"#,
+            r#"const SQL: &str = "SELECT * FROM center.affiliations";"#,
         )
         .expect_err("history permission uses a directory boundary");
-        assert!(error.contains("protected table center.profiles"), "{error}");
+        assert!(
+            error.contains("protected table center.affiliations"),
+            "{error}"
+        );
     }
 
     #[test]
     fn sql_guard_rejects_case_whitespace_and_quoted_names() {
         for source in [
-            r#"fn query() { let _ = "select * from CENTER.PROFILES"; }"#,
-            r#"fn query() { let _ = "select * from center \n . \t profiles"; }"#,
-            r##"fn query() { let _ = r#"select * from "center" . "profiles""#; }"##,
+            r#"fn query() { let _ = "select * from CENTER.AFFILIATIONS"; }"#,
+            r#"fn query() { let _ = "select * from center \n . \t affiliations"; }"#,
+            r##"fn query() { let _ = r#"select * from "center" . "affiliations""#; }"##,
         ] {
             let error = check_source(Path::new("consumer.rs"), source)
                 .expect_err("SQL spelling does not change table ownership");
-            assert!(error.contains("protected table center.profiles"), "{error}");
+            assert!(
+                error.contains("protected table center.affiliations"),
+                "{error}"
+            );
         }
     }
 
@@ -560,14 +564,17 @@ mod tests {
     #[test]
     fn sql_guard_rejects_nested_modules_and_macro_strings() {
         for source in [
-            r#"mod nested { fn query() { let _ = "center.profiles"; } }"#,
-            r#"fn query() { execute!("SELECT * FROM center.profiles"); }"#,
-            r##"macro_rules! query { () => { call!(r#"center.profiles"#) }; }"##,
-            r#"#[query("SELECT * FROM center.profiles")] fn query() {}"#,
+            r#"mod nested { fn query() { let _ = "center.affiliations"; } }"#,
+            r#"fn query() { execute!("SELECT * FROM center.affiliations"); }"#,
+            r##"macro_rules! query { () => { call!(r#"center.affiliations"#) }; }"##,
+            r#"#[query("SELECT * FROM center.affiliations")] fn query() {}"#,
         ] {
             let error = check_source(Path::new("consumer.rs"), source)
                 .expect_err("nested and macro literals retain their source owner");
-            assert!(error.contains("protected table center.profiles"), "{error}");
+            assert!(
+                error.contains("protected table center.affiliations"),
+                "{error}"
+            );
         }
     }
 
@@ -577,20 +584,20 @@ mod tests {
             Path::new("consumer.rs"),
             r#"
             #[cfg(test)]
-            mod tests { const SQL: &str = "center.profiles"; }
+            mod tests { const SQL: &str = "center.affiliations"; }
             mod nested {
                 #[cfg(test)]
                 fn example() { execute!("center.affiliations"); }
-                const OTHER: &str = "center.profiles_archive mycenter.profiles";
+                const OTHER: &str = "center.affiliations_archive mycenter.affiliations";
             }
-            /// The center.profiles table is protected.
+            /// The center.affiliations table keeps its SQL owner.
             fn production() {}
             "#,
         )
         .expect("test items, documentation and different table names are outside the guard");
         check_source(
             Path::new("example.rs"),
-            r#"#![cfg(test)] const SQL: &str = "center.profiles";"#,
+            r#"#![cfg(test)] const SQL: &str = "center.affiliations";"#,
         )
         .expect("test-only source is excluded");
     }
@@ -607,7 +614,7 @@ mod tests {
                 Example {
                     active: true,
                     #[cfg(test)]
-                    sql: concat!("center.profiles"),
+                    sql: concat!("center.affiliations"),
                 }
             }
         "#;
@@ -617,7 +624,7 @@ mod tests {
             Path::new("consumer.rs"),
             r#"enum ExampleKind {
                 #[cfg(test)]
-                Test([u8; { "center.profiles".len() }]),
+                Test([u8; { "center.affiliations".len() }]),
                 Production,
             }"#,
         )
@@ -626,14 +633,17 @@ mod tests {
             let source = source.replace("cfg(test)", &format!("cfg({condition})"));
             let error = check_source(Path::new("consumer.rs"), &source)
                 .expect_err("production field initializers remain guarded");
-            assert!(error.contains("protected table center.profiles"), "{error}");
+            assert!(
+                error.contains("protected table center.affiliations"),
+                "{error}"
+            );
         }
     }
 
     #[test]
     fn sql_guard_accepts_test_match_arms_without_excluding_mixed_conditions() {
         let source = r#"
-            //! Template examples for center.profiles.
+            //! Template examples for center.affiliations.
             enum Family {
                 Production,
                 #[cfg(test)]
@@ -642,7 +652,7 @@ mod tests {
             fn query(family: Family) -> &'static str {
                 match family {
                     #[cfg(test)]
-                    Family::Toy => "center.profiles",
+                    Family::Toy => "center.affiliations",
                     _ => "",
                 }
             }
@@ -653,7 +663,10 @@ mod tests {
             let source = source.replace("cfg(test)", &format!("cfg({condition})"));
             let error = check_source(Path::new("consumer.rs"), &source)
                 .expect_err("a potentially production match arm remains covered");
-            assert!(error.contains("protected table center.profiles"), "{error}");
+            assert!(
+                error.contains("protected table center.affiliations"),
+                "{error}"
+            );
         }
     }
 
@@ -677,14 +690,17 @@ mod tests {
         .expect("write test module declaration");
         fs::write(
             directory.path().join("examples.rs"),
-            r#"const SQL: &str = "center.profiles";"#,
+            r#"const SQL: &str = "center.affiliations";"#,
         )
         .expect("write external test example");
         check_sources(directory.path()).expect("external test modules are excluded");
         fs::write(directory.path().join("lib.rs"), "mod examples;")
             .expect("make the module a production consumer");
         let error = check_sources(directory.path()).expect_err("production consumer is checked");
-        assert!(error.contains("protected table center.profiles"), "{error}");
+        assert!(
+            error.contains("protected table center.affiliations"),
+            "{error}"
+        );
 
         let directory = tempfile::tempdir().expect("nested source tree");
         fs::create_dir(directory.path().join("examples")).expect("nested module directory");
@@ -695,7 +711,7 @@ mod tests {
         .expect("write nested test module declaration");
         fs::write(
             directory.path().join("examples/data.rs"),
-            r#"const SQL: &str = "center.profiles";"#,
+            r#"const SQL: &str = "center.affiliations";"#,
         )
         .expect("write nested external test example");
         check_sources(directory.path()).expect("nested modules inherit the test exclusion");

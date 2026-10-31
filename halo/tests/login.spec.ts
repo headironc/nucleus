@@ -8,10 +8,11 @@ import { ownWorkforce } from "./workforce";
 import { ownNumbers } from "./numbers";
 import { ownTermination } from "./termination";
 import { admissionAndFirstNumber } from "./admission-number";
+import { ownBadgeApplications } from "./badge-applications";
 import { ownMobileChange } from "./mobile-change";
 import { cookieDigests, identityObservation, identityReads } from "./identity";
 import { affiliationObservation } from "./affiliation";
-import type { Account } from "../app/protocol/session";
+import type { Account, Session } from "../app/protocol/session";
 
 async function message(
   page: Page,
@@ -306,6 +307,67 @@ async function registerRealAccount(
   await expect(page.getByText(name, { exact: true })).toBeVisible();
   const account = (await (await currentRead).json()).account as Account;
   return { account, session: await selectedSession(page), sentAt };
+}
+
+async function prepareBadgeDirectory(
+  page: Page,
+  manager: Session,
+  other: { account: Account; session: Session },
+) {
+  await page.evaluate(async ({ manager, other }) => {
+    const request = async (
+      session: string, path: string, input: unknown, method = "POST", status = 201,
+    ) => {
+      // Setup observes the real two-per-second authenticated-write budget.
+      await new Promise((resolve) => setTimeout(resolve, 550));
+      const response = await fetch(`/api/v1/workforce/${path}`, {
+        method, credentials: "same-origin", redirect: "error",
+        headers: {
+          "Session-Id": session, "Operation-Id": crypto.randomUUID(),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(input),
+      });
+      if (response.status !== status)
+        throw new Error(`Badge setup ${path}: ${response.status}`);
+      return response.json();
+    };
+    const { role } = await request(manager.id, "roles", {
+      entry: "institution", name: "Badge fixture directory", level: 100,
+      permissions: ["workforce.directory"],
+    });
+    const candidate = await request(manager.id, "grants/candidates", {
+      entry: "institution", mobile: "13900000018",
+    }, "POST", 200);
+    if (candidate.identity.accountId !== other.account.id ||
+        candidate.identity.personId !== other.account.personId ||
+        candidate.identity.revisionId !== other.account.revisionId)
+      throw new Error("Badge setup candidate differs from registered observer");
+    const receipt = await request(manager.id, "grants", {
+      entry: "institution",
+      target: {
+        accountId: candidate.identity.accountId, personId: candidate.identity.personId,
+        revisionId: candidate.identity.revisionId, mobile: "13900000018",
+        assignmentId: candidate.assignmentId, suspensionId: candidate.suspensionId,
+        grant: candidate.grant,
+      },
+      role: { id: role.id, changeId: role.changeId },
+    });
+    if (receipt.grant.status !== "active")
+      throw new Error("Badge observer was not admitted");
+    const { item: group } = await request(other.session.id, "directories/groups", {
+      name: "Badge fixture group", enabled: true, index: 0,
+    });
+    const { item: department } = await request(other.session.id, "directories/departments", {
+      name: "Badge fixture department", enabled: true, index: 0,
+      groupId: group.id, parentId: null,
+    });
+    for (const subtype of [100, 200, 300, 400, 500, 600, 700, 801, 802, 803, 804, 901, 902, 903, 904, 1000]) {
+      await request(other.session.id, `rules/${subtype}`, {
+        departmentId: department.id, position: subtype !== 902,
+      }, "PUT");
+    }
+  }, { manager, other });
 }
 
 test("damaged closed login records discard secrets without starting another login", async ({
@@ -1335,7 +1397,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
   );
   await ownHistory(other, original!.id, registeredAccount.personId);
 
-  await test.step("real first affiliation fill, dropped success and original replay", async () => {
+  await test.step("real first affiliation fill, dropped success and read-only state refresh", async () => {
     const person = registeredAccount.personId;
     let writes = 0;
     let originalOperation = "";
@@ -1345,6 +1407,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
       async (route) => {
         if (route.request().method() !== "PUT") return route.continue();
         writes++;
+        expect(writes).toBe(1);
         const operation = route.request().headers()["operation-id"]!;
         const body = route.request().postData()!;
         if (writes === 1) {
@@ -1353,18 +1416,12 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
           const response = await route.fetch();
           expect(response.status()).toBe(200);
           expect(await response.json()).toEqual({ code: "ok" });
-          // The backend committed. Prove that original fact before any replay,
+          // The backend committed. Prove that original fact before any refresh,
           // then drop the response so the browser observes an unknown outcome.
           await affiliationObservation(person, "dropped", "before", operation);
           await route.abort("connectionclosed");
           return;
         }
-        expect(operation).toBe(originalOperation);
-        expect(body).toBe(originalBody);
-        const response = await route.fetch();
-        expect(response.status()).toBe(200);
-        expect(await response.json()).toEqual({ code: "ok" });
-        await route.fulfill({ response });
       },
     );
     await other.goto("/account/affiliation");
@@ -1397,21 +1454,29 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     ).toBeVisible();
     await other.getByRole("button", { name: "确认填写" }).click();
     await expect(
-      other.getByRole("heading", { name: "暂时无法确认填写结果" }),
+      other.getByRole("heading", { name: "未能确认填写结果" }),
     ).toBeVisible();
     await expect(
       other.getByRole("button", { name: "重试本次填写" }),
-    ).toBeVisible();
+    ).toHaveCount(0);
     expect(originalOperation).toMatch(
       /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
     );
     expect(JSON.parse(originalBody)).toEqual({ affiliation: "04" });
 
-    await other.getByRole("button", { name: "重试本次填写" }).click();
+    await other
+      .getByRole("button", { name: "刷新", exact: true })
+      .click();
+    await expect(
+      other.getByRole("heading", { name: "当前政治面貌" }),
+    ).toBeVisible();
+    await expect(
+      other.getByRole("heading", { name: "未能确认填写结果" }),
+    ).toHaveCount(0);
     await expect(
       other.getByRole("heading", { name: "政治面貌已填写" }),
-    ).toBeVisible();
-    expect(writes).toBe(2);
+    ).toHaveCount(0);
+    expect(writes).toBe(1);
     await affiliationObservation(person, "dropped", "after", originalOperation);
     await other.unroute("**/api/v1/accounts/current/affiliation");
 
@@ -1423,7 +1488,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
         response.request().method() === "GET" &&
         response.status() === 200,
     );
-    await other.getByRole("button", { name: "查看当前政治面貌" }).click();
+    await other.reload();
     const current = await (await currentResponse).json();
     expect(current).toMatchObject({
       code: "ok",
@@ -1432,7 +1497,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     expect(Number.isFinite(Date.parse(current.affiliation.createdAt))).toBe(
       true,
     );
-    await expect(other.locator(".current-panel")).toContainText("民革会员");
+    await expect(other.locator(".record-panel")).toContainText("民革会员");
     await affiliationObservation(person, "read", "after");
 
     await affiliationObservation(person, "conflict", "before");
@@ -2127,6 +2192,9 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     await admissionAndFirstNumber(page, replacement, colleague, (session) =>
       choose(page, session),
     );
+    const other = await registerRealAccount(page, "13900000018", "Badge Observer", "000000200002298899");
+    await prepareBadgeDirectory(page, replacement, other);
+    await ownBadgeApplications(page, replacement, colleague, other, (session) => choose(page, session));
   });
   await ownWorkforce(page, replacement.id, secondSession!.id);
   const recoverTermination = await ownTermination(

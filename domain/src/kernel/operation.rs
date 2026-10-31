@@ -4,7 +4,6 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Family {
     ContentColumn,
-    CenterAffiliation,
     InstitutionRole,
     WorkforceRole,
     InstitutionAppointment,
@@ -69,7 +68,6 @@ impl Family {
     pub(crate) fn lock(self) -> &'static [u8] {
         match self {
             Self::ContentColumn => b"content/column/operation",
-            Self::CenterAffiliation => b"center/affiliation/operation",
             Self::InstitutionRole => b"access/role/operation",
             Self::WorkforceRole => b"access/workforce/role/operation",
             Self::InstitutionAppointment => b"access/appointment/operation",
@@ -102,7 +100,6 @@ impl Family {
     pub(crate) fn completions(self) -> &'static str {
         match self {
             Self::ContentColumn => crate::kernel::completion::CONTENT,
-            Self::CenterAffiliation => crate::kernel::completion::CENTER,
             Self::InstitutionRole
             | Self::WorkforceRole
             | Self::InstitutionAppointment
@@ -135,7 +132,6 @@ impl Family {
     pub fn label(self) -> &'static str {
         match self {
             Self::ContentColumn => "content_column",
-            Self::CenterAffiliation => "center_affiliation",
             Self::InstitutionRole => "institution_role",
             Self::WorkforceRole => "workforce_role",
             Self::InstitutionAppointment => "institution_appointment",
