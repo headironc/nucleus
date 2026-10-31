@@ -125,9 +125,227 @@ test.beforeEach(async ({ context, page }) => {
   await choose(page, session);
   await page.goto(`${origin}/sessions/logout`);
   await expect(
-    page.getByRole("heading", { name: "确认退出本次登录？", exact: true }),
+    page.getByRole("heading", { name: "退出登录？", exact: true }),
   ).toBeVisible();
 });
+
+for (const scope of ["current", "all"] as const) {
+  test(`${scope} immediate completion makes public home the primary action`, async ({
+    page,
+  }) => {
+    let deletes = 0;
+    let reads = 0;
+    await page.route(
+      scope === "all" ? "**/api/v1/sessions" : "**/api/v1/sessions/current",
+      async (route) => {
+        deletes++;
+        await route.fulfill({
+          json: {
+            code: "ok",
+            completion: {
+              id: route.request().headers()["operation-id"],
+              count: 1,
+              revokedAt,
+            },
+          },
+        });
+      },
+    );
+    await page.route("**/api/v1/revocations?*", async (route) => {
+      reads++;
+      await route.abort();
+    });
+    await page.goto(
+      `${origin}/sessions/${scope === "all" ? "logout-all" : "logout"}`,
+    );
+    await page
+      .getByRole("button", {
+        name: scope === "all" ? "退出全部登录" : "退出登录",
+        exact: true,
+      })
+      .click();
+    if (scope === "all")
+      await page.getByRole("button", { name: "全部退出", exact: true }).click();
+    await expect(
+      page.getByRole("heading", {
+        name: scope === "all" ? "已退出全部登录" : "已退出登录",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(
+      page.locator("main").getByRole("link", { name: "返回首页", exact: true }),
+    ).toHaveClass("primary");
+    if (scope === "all")
+      await expect(
+        page.getByRole("link", { name: "重新登录", exact: true }),
+      ).toHaveClass("quiet-link");
+    for (const colorScheme of ["light", "dark"] as const) {
+      await page.emulateMedia({ colorScheme });
+      for (const width of [320, 1440]) {
+        await page.setViewportSize({ width, height: 1000 });
+        expect(
+          await page.evaluate(
+            () => document.documentElement.scrollWidth <= innerWidth,
+          ),
+        ).toBe(true);
+        await page.screenshot({
+          path: test
+            .info()
+            .outputPath(`${scope}-completed-${colorScheme}-${width}.png`),
+          fullPage: true,
+        });
+      }
+    }
+    expect(deletes).toBe(1);
+    expect(reads).toBe(0);
+    expect(await page.evaluate(() => window.logoutSessions.read())).toMatchObject({
+      session: null,
+      attempt: null,
+    });
+  });
+  for (const terminal of ["complete", "denied"] as const) {
+    test(`${scope} unknown reads keep their meaning through empty, unavailable, limited and ${terminal}`, async ({
+      page,
+    }) => {
+      await page.clock.install();
+      let deletes = 0;
+      let reads = 0;
+      let operation: string | null = null;
+      const path =
+        scope === "all" ? "/sessions/logout-all" : "/sessions/logout";
+      await page.route(
+        scope === "all" ? "**/api/v1/sessions" : "**/api/v1/sessions/current",
+        async (route) => {
+          deletes++;
+          operation = route.request().headers()["operation-id"];
+          await route.abort();
+        },
+      );
+      await page.route("**/api/v1/revocations?*", async (route) => {
+        reads++;
+        expect(route.request().method()).toBe("GET");
+        expect(
+          new URL(route.request().url()).searchParams.get("operation_id"),
+        ).toBe(operation);
+        expect(route.request().headers()["session-id"]).toBe(newer.id);
+        if (reads === 1) {
+          await route.fulfill({
+            json: { code: "ok", original: null, count: 0, revocations: [] },
+          });
+        } else if (reads === 2) {
+          await route.abort();
+        } else if (reads === 3) {
+          await route.fulfill({
+            status: 429,
+            headers: { "Retry-After": "12" },
+            json: { code: "rate_limited" },
+          });
+        } else if (terminal === "denied") {
+          await route.fulfill({
+            status: 403,
+            json: { code: "permission_denied" },
+          });
+        } else {
+          const revocations =
+            scope === "all"
+              ? [
+                  { id: "019354fd-933c-7e6a-8912-345678901233", revokedAt },
+                  { id: session.id, revokedAt },
+                ]
+              : [{ id: session.id, revokedAt }];
+          await route.fulfill({
+            json: {
+              code: "ok",
+              original: { scope, initiatorId: session.id },
+              count: revocations.length,
+              revocations,
+            },
+          });
+        }
+      });
+      await page.goto(`${origin}${path}`);
+      await page
+        .getByRole("button", {
+          name: scope === "all" ? "退出全部登录" : "退出登录",
+          exact: true,
+        })
+        .click();
+      if (scope === "all")
+        await page
+          .getByRole("button", { name: "全部退出", exact: true })
+          .click();
+      await expect(
+        page.getByRole("heading", {
+          name: "退出结果尚不确定",
+          exact: true,
+        }),
+      ).toBeVisible();
+      await choose(page, newer);
+      await expect(
+        page.getByRole("heading", {
+          name: "退出结果尚不确定",
+          exact: true,
+        }),
+      ).toBeVisible();
+      for (const step of ["empty", "unavailable", "limited", terminal]) {
+        await page.clock.fastForward(step === terminal ? 13_000 : 6_000);
+        const count = reads;
+        await page
+          .getByRole("button", { name: "查看退出结果", exact: true })
+          .click();
+        await expect.poll(() => reads).toBe(count + 1);
+        const title =
+          step === "complete"
+            ? "此前的退出已完成"
+            : step === "denied"
+              ? "暂时无法查看此前的退出结果"
+              : "退出结果尚不确定";
+        await expect(
+          page.getByRole("heading", { name: title, exact: true }),
+        ).toBeVisible();
+        await expect(page.locator("main")).not.toContainText("本次尚未退出");
+        await expect(page.locator("main")).not.toContainText("新登录仍然有效");
+        if (step === "limited") {
+          await expect(
+            page.getByRole("button", { name: /秒后可查看/ }),
+          ).toBeDisabled();
+          await expect(
+            page.getByText("暂时无法查看退出结果，请稍后再试。", {
+              exact: true,
+            }),
+          ).toBeVisible();
+        }
+        if (step === "complete" && scope === "all")
+          await expect(page.getByText("2 条", { exact: true })).toBeVisible();
+        for (const width of [320, 1440]) {
+          await page.setViewportSize({ width, height: 1000 });
+          expect(
+            await page.evaluate(
+              () => document.documentElement.scrollWidth <= innerWidth,
+            ),
+          ).toBe(true);
+          await page.screenshot({
+            path: test.info().outputPath(`${scope}-${step}-${width}.png`),
+            fullPage: true,
+          });
+        }
+        expect(deletes).toBe(1);
+      }
+      await expect(
+        page.getByRole("button", { name: "查看退出结果", exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        page.getByRole("button", {
+          name: scope === "all" ? "重新确认全部退出" : "重新确认退出",
+          exact: true,
+        }),
+      ).toHaveCount(terminal === "complete" ? 1 : 0);
+      expect(
+        (await page.evaluate(() => window.logoutSessions.read()))?.session,
+      ).toEqual(newer);
+    });
+  }
+}
 
 test("all logout confirmation, long identity, avatar failure and responsive concealment", async ({
   page,
@@ -165,7 +383,7 @@ test("all logout confirmation, long identity, avatar failure and responsive conc
   await page.goto(`${origin}/sessions/logout-all`);
   await expect(page.getByText(longName, { exact: true })).toBeVisible();
   await expect(
-    page.getByRole("img", { name: "头像暂时无法加载" }),
+    page.getByRole("img", { name: "头像暂时无法显示" }),
   ).toBeVisible();
   for (const colorScheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme });
@@ -181,7 +399,9 @@ test("all logout confirmation, long identity, avatar failure and responsive conc
       );
       await expect(page.locator(".site-footer")).toBeInViewport();
       await page.screenshot({
-        path: `test-results/all-logout-bottom-${colorScheme}-${width}.png`,
+        path: test
+          .info()
+          .outputPath(`all-logout-bottom-${colorScheme}-${width}.png`),
       });
       await page.evaluate(async () => {
         scrollTo(0, 0);
@@ -191,13 +411,13 @@ test("all logout confirmation, long identity, avatar failure and responsive conc
         );
       });
       await page.screenshot({
-        path: `test-results/all-logout-${colorScheme}-${width}.png`,
+        path: test.info().outputPath(`all-logout-${colorScheme}-${width}.png`),
         fullPage: true,
       });
     }
   }
   const trigger = page.getByRole("button", {
-    name: "退出全部设备",
+    name: "退出全部登录",
     exact: true,
   });
   for (const close of ["Escape", "暂不退出", "关闭"]) {
@@ -215,7 +435,7 @@ test("all logout confirmation, long identity, avatar failure and responsive conc
   }
   await trigger.click();
   await page.screenshot({
-    path: "test-results/all-logout-confirm-dark-320.png",
+    path: test.info().outputPath("all-logout-confirm-dark-320.png"),
     fullPage: true,
   });
   await page.unroute("**/api/v1/accounts/current");
@@ -232,7 +452,7 @@ test("all logout confirmation, long identity, avatar failure and responsive conc
   ).toBeVisible();
   await expect(page.locator("dialog")).toHaveCount(0);
   await expect(page.locator("main")).not.toContainText(longName);
-  await expect(page.locator("main")).not.toContainText("退出全部设备");
+  await expect(page.locator("main")).not.toContainText("退出全部登录");
   expect(writes).toBe(0);
   await other.close();
 });
@@ -259,18 +479,16 @@ test("all mismatch survives failed save and fixed login return with a newer sele
     await route.fulfill({ status: 409, json: { code: "request_mismatch" } });
   });
   await page.goto(`${origin}/sessions/logout-all`);
-  await page.getByRole("button", { name: "退出全部设备", exact: true }).click();
-  await page
-    .getByRole("button", { name: "确认退出全部设备", exact: true })
-    .click();
+  await page.getByRole("button", { name: "退出全部登录", exact: true }).click();
+  await page.getByRole("button", { name: "全部退出", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "暂时无法继续", exact: true }),
+    page.getByRole("heading", { name: "退出结果尚不确定", exact: true }),
   ).toBeVisible();
   page.on("dialog", (dialog) => dialog.accept());
   await page.goto(`${origin}/sessions/logout-all?return=all-logout-result`);
   await choose(page, newer);
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认退出结果", exact: true }),
+    page.getByRole("heading", { name: "退出结果尚不确定", exact: true }),
   ).toBeVisible();
   let reads = 0;
   await page.route("**/api/v1/revocations?*", async (route) => {
@@ -280,6 +498,10 @@ test("all mismatch survives failed save and fixed login return with a newer sele
     ).toBe(operation);
     expect(route.request().headers()["operation-id"]).not.toBe(operation);
     expect(route.request().headers()["session-id"]).toBe(newer.id);
+    if (reads === 2) {
+      await route.fulfill({ status: 403, json: { code: "permission_denied" } });
+      return;
+    }
     await route.fulfill({
       json: {
         code: "ok",
@@ -299,10 +521,10 @@ test("all mismatch survives failed save and fixed login return with a newer sele
     page.getByRole("heading", { name: "已查到此前退出记录", exact: true }),
   ).toBeVisible();
   await expect(page.locator("main")).toContainText(
-    "不表示本次退出全部设备已完成",
+    "此前记录不能确认本次全部退出的结果",
   );
   await expect(
-    page.getByRole("heading", { name: "本次全部退出已完成", exact: true }),
+    page.getByRole("heading", { name: "已退出全部登录", exact: true }),
   ).toHaveCount(0);
   expect(
     await page.evaluate(
@@ -312,11 +534,42 @@ test("all mismatch survives failed save and fixed login return with a newer sele
   expect(writes).toBe(1);
   expect(reads).toBe(1);
   await page.getByRole("link", { name: "返回首页", exact: true }).click();
-  await expect(page.getByRole("dialog")).toContainText("此前退出");
+  await expect(page.getByRole("dialog")).toContainText("退出结果尚未确认");
   await page.getByRole("button", { name: "留在此页", exact: true }).click();
   await expect(
     page.getByRole("link", { name: "返回首页", exact: true }),
   ).toBeFocused();
+  await page.getByRole("button", { name: /查看退出结果|秒后可查看/ }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: "暂时无法查看此前的退出结果",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.locator("main")).not.toContainText("本次尚未退出");
+  await expect(page.locator("main")).not.toContainText("请稍后查看退出结果");
+  await expect(page.locator(".result-meta")).toHaveCount(0);
+  await expect(page.locator("main").getByRole("button")).toHaveCount(0);
+  await expect(page.locator("main").getByRole("link")).toHaveText(["返回首页"]);
+  expect(
+    await page.evaluate(
+      () => JSON.parse(sessionStorage.getItem("halo.logout-all")!).binding,
+    ),
+  ).toBe("mismatch");
+  expect(
+    await page.evaluate(
+      () => JSON.parse(sessionStorage.getItem("halo.logout-all")!).outcome,
+    ),
+  ).toBe("pending");
+  expect(writes).toBe(1);
+  expect(reads).toBe(2);
+  for (const width of [320, 1440]) {
+    await page.setViewportSize({ width, height: 1000 });
+    await page.screenshot({
+      path: test.info().outputPath(`all-mismatch-denied-${width}.png`),
+      fullPage: true,
+    });
+  }
 });
 
 test("all late completion preserves another tab's newer selection and login attempt", async ({
@@ -348,10 +601,8 @@ test("all late completion preserves another tab's newer selection and login atte
     });
   });
   await page.goto(`${origin}/sessions/logout-all`);
-  await page.getByRole("button", { name: "退出全部设备", exact: true }).click();
-  await page
-    .getByRole("button", { name: "确认退出全部设备", exact: true })
-    .click();
+  await page.getByRole("button", { name: "退出全部登录", exact: true }).click();
+  await page.getByRole("button", { name: "全部退出", exact: true }).click();
   await sending;
   const other = await context.newPage();
   await other.goto(origin);
@@ -364,7 +615,7 @@ test("all late completion preserves another tab's newer selection and login atte
   await page.bringToFront();
   await expect(
     page.getByRole("button", {
-      name: /查看此前退出结果|查看退出结果|秒后可查看/,
+      name: /查看退出结果|秒后可查看/,
     }),
   ).toBeVisible();
   const selected = await page.evaluate(() => window.logoutSessions.read());
@@ -396,7 +647,7 @@ test("explicit confirmation, failed first save and responsive account concealmen
       const layout = await page.evaluate(() => ({
         scrollY,
         height: document.documentElement.scrollHeight,
-        elements: [".site-header", "main", ".logout-guide", ".site-footer"].map(
+        elements: [".site-header", "main", ".logout-panel", ".site-footer"].map(
           (selector) => {
             const nodes = document.querySelectorAll(selector);
             return {
@@ -413,7 +664,7 @@ test("explicit confirmation, failed first save and responsive account concealmen
         layout.elements[3].bounds.top,
       );
       await writeFile(
-        `test-results/logout-layout-${colorScheme}-${width}.json`,
+        test.info().outputPath(`logout-layout-${colorScheme}-${width}.json`),
         JSON.stringify(layout, null, 2),
       );
       // Paint offscreen content before fullPage capture. Chrome 155 repeated
@@ -423,7 +674,9 @@ test("explicit confirmation, failed first save and responsive account concealmen
       );
       await expect(page.locator(".site-footer")).toBeInViewport();
       await page.screenshot({
-        path: `test-results/logout-bottom-${colorScheme}-${width}.png`,
+        path: test
+          .info()
+          .outputPath(`logout-bottom-${colorScheme}-${width}.png`),
       });
       await page.evaluate(async () => {
         scrollTo(0, 0);
@@ -433,7 +686,9 @@ test("explicit confirmation, failed first save and responsive account concealmen
         );
       });
       await page.screenshot({
-        path: `test-results/logout-confirm-${colorScheme}-${width}.png`,
+        path: test
+          .info()
+          .outputPath(`logout-confirm-${colorScheme}-${width}.png`),
         fullPage: true,
       });
     }
@@ -448,11 +703,9 @@ test("explicit confirmation, failed first save and responsive account concealmen
       set.call(this, key, value);
     };
   });
-  await page
-    .getByRole("button", { name: "确认退出本次登录", exact: true })
-    .click();
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
   await expect(
-    page.getByText("本次退出尚未提交", { exact: false }),
+    page.getByText("本次尚未提交退出", { exact: false }),
   ).toBeVisible();
   await expect(page.getByText("Original Fixture", { exact: true })).toHaveCount(
     0,
@@ -460,7 +713,7 @@ test("explicit confirmation, failed first save and responsive account concealmen
   expect(deletes).toBe(0);
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "确认退出本次登录？", exact: true }),
+    page.getByRole("heading", { name: "退出登录？", exact: true }),
   ).toBeVisible();
   expect(deletes).toBe(0);
   expect(
@@ -494,16 +747,14 @@ test("unknown original survives reload, explicit read and confirmed navigation w
       json: { code: "ok", original: null, count: 0, revocations: [] },
     });
   });
-  await page
-    .getByRole("button", { name: "确认退出本次登录", exact: true })
-    .click();
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "本次退出结果待确认", exact: true }),
+    page.getByRole("heading", { name: "退出结果尚不确定", exact: true }),
   ).toBeVisible();
   for (const width of [1440, 768, 390, 320]) {
     await page.setViewportSize({ width, height: 1000 });
     await expect(
-      page.getByRole("heading", { name: "查询不会再次退出", exact: true }),
+      page.getByRole("heading", { name: "退出结果尚不确定", exact: true }),
     ).toBeVisible();
     expect(
       await page.evaluate(
@@ -511,22 +762,20 @@ test("unknown original survives reload, explicit read and confirmed navigation w
       ),
     ).toBe(true);
     await page.screenshot({
-      path: `test-results/logout-pending-${width}.png`,
+      path: test.info().outputPath(`logout-pending-${width}.png`),
       fullPage: true,
     });
   }
   page.on("dialog", (dialog) => dialog.accept());
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "本次退出结果待确认", exact: true }),
+    page.getByRole("heading", { name: "退出结果尚不确定", exact: true }),
   ).toBeVisible();
   expect(writes).toHaveLength(1);
   expect(reads).toHaveLength(0);
-  await page
-    .getByRole("button", { name: "查看本次退出结果", exact: true })
-    .click();
+  await page.getByRole("button", { name: "查看退出结果", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "暂未查到本次退出结果", exact: true }),
+    page.getByRole("heading", { name: "退出结果尚不确定", exact: true }),
   ).toBeVisible();
   expect(reads).toHaveLength(1);
   expect(reads[0].query).toBe(writes[0].operation);
@@ -548,7 +797,7 @@ test("unknown original survives reload, explicit read and confirmed navigation w
   await expect(page.getByText("Public fixture", { exact: true })).toBeVisible();
   await page.goBack();
   await expect(
-    page.getByRole("heading", { name: "暂未查到本次退出结果", exact: true }),
+    page.getByRole("heading", { name: "退出结果尚不确定", exact: true }),
   ).toBeVisible();
   await home.click();
   await expect(page.getByRole("dialog")).toBeVisible();
@@ -574,11 +823,9 @@ test("an older unsent history entry preserves a later submitted logout on back n
       set.call(this, key, value);
     };
   });
-  await page
-    .getByRole("button", { name: "确认退出本次登录", exact: true })
-    .click();
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
   await expect(
-    page.getByText("本次退出尚未提交", { exact: false }),
+    page.getByText("本次尚未提交退出", { exact: false }),
   ).toBeVisible();
   await page
     .locator(".logout-panel")
@@ -586,11 +833,9 @@ test("an older unsent history entry preserves a later submitted logout on back n
     .click();
   await expect(page.getByText("Public fixture", { exact: true })).toBeVisible();
   await page.goto(`${origin}/sessions/logout`);
-  await page
-    .getByRole("button", { name: "确认退出本次登录", exact: true })
-    .click();
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "本次退出结果待确认", exact: true }),
+    page.getByRole("heading", { name: "退出结果尚不确定", exact: true }),
   ).toBeVisible();
   const saved = await page.evaluate(() =>
     sessionStorage.getItem("halo.logout"),
@@ -600,13 +845,13 @@ test("an older unsent history entry preserves a later submitted logout on back n
   await expect(page.getByText("Public fixture", { exact: true })).toBeVisible();
   await page.goBack();
   await expect(
-    page.getByRole("heading", { name: "本次退出结果待确认", exact: true }),
+    page.getByRole("heading", { name: "退出结果尚不确定", exact: true }),
   ).toBeVisible();
   expect(await page.evaluate(() => sessionStorage.getItem("halo.logout"))).toBe(
     saved,
   );
   await expect(
-    page.getByRole("button", { name: "确认退出本次登录", exact: true }),
+    page.getByRole("button", { name: "退出登录", exact: true }),
   ).toHaveCount(0);
   expect(deletes).toBe(1);
 });
@@ -633,9 +878,7 @@ test("leaving during logout preflight does not warn of a submitted operation or 
       .fulfill({ json: { buildId: "logout-fixture" } })
       .catch(() => {});
   });
-  await page
-    .getByRole("button", { name: "确认退出本次登录", exact: true })
-    .click();
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
   await started;
   await page
     .locator(".logout-panel")
@@ -681,18 +924,16 @@ for (const response of [
         json: { code: response === "untrusted-query" ? "ok" : response },
       });
     });
-    await page
-      .getByRole("button", { name: "确认退出本次登录", exact: true })
-      .click();
+    await page.getByRole("button", { name: "退出登录", exact: true }).click();
     if (response !== "untrusted-delete")
       await page
-        .getByRole("button", { name: "查看本次退出结果", exact: true })
+        .getByRole("button", { name: "查看退出结果", exact: true })
         .click();
     await expect(
       page.getByRole("heading", {
         name: response.startsWith("untrusted")
-          ? "请重新加载页面"
-          : "暂时无法查看退出结果",
+          ? "请重新加载"
+          : "暂时无法查看此前的退出结果",
         exact: true,
       }),
     ).toBeVisible();
@@ -705,7 +946,7 @@ for (const response of [
       .click();
     await expect(page.getByRole("dialog")).toBeVisible();
     await expect(page.getByRole("dialog")).toContainText(
-      "离开不会取消已提交的退出",
+      "离开不会撤回已经发出的退出请求",
     );
     await expect(page.getByRole("dialog")).not.toContainText("仍可查看");
     await page.getByRole("button", { name: "留在此页", exact: true }).click();
@@ -744,11 +985,9 @@ test("post-send storage failure keeps leave confirmation without another DELETE"
     });
     await route.abort();
   });
-  await page
-    .getByRole("button", { name: "确认退出本次登录", exact: true })
-    .click();
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "暂时无法继续", exact: true }),
+    page.getByRole("heading", { name: "退出结果尚不确定", exact: true }),
   ).toBeVisible();
   await page
     .locator(".logout-panel")
@@ -764,7 +1003,7 @@ test("post-send storage failure keeps leave confirmation without another DELETE"
   expect(beforeUnload.type()).toBe("beforeunload");
   await beforeUnload.dismiss();
   await expect(
-    page.getByRole("heading", { name: "暂时无法继续", exact: true }),
+    page.getByRole("heading", { name: "退出结果尚不确定", exact: true }),
   ).toBeVisible();
   expect(deletes).toBe(1);
 });
@@ -796,11 +1035,9 @@ for (const outcome of ["complete", "rejected"] as const) {
           : { status: 401, json: { code: "authentication_invalid" } },
       );
     });
-    await page
-      .getByRole("button", { name: "确认退出本次登录", exact: true })
-      .click();
+    await page.getByRole("button", { name: "退出登录", exact: true }).click();
     await expect(
-      page.getByRole("heading", { name: "暂时无法继续", exact: true }),
+      page.getByRole("heading", { name: "登录信息暂时无法使用", exact: true }),
     ).toBeVisible();
     expect(
       await page.evaluate(
@@ -852,18 +1089,16 @@ for (const outcome of ["complete", "rejected"] as const) {
             : { status: 401, json: { code: "authentication_invalid" } },
         );
       });
-      await page
-        .getByRole("button", { name: "确认退出本次登录", exact: true })
-        .click();
+      await page.getByRole("button", { name: "退出登录", exact: true }).click();
       await expect(
-        page.getByRole("heading", { name: "正在更新登录状态", exact: true }),
+        page.getByRole("heading", { name: "正在更新登录状态…", exact: true }),
       ).toBeVisible();
       if (reload) {
         await page.evaluate(() =>
           window.dispatchEvent(new Event("halo:reload-required")),
         );
         await expect(
-          page.getByRole("heading", { name: "请重新加载页面", exact: true }),
+          page.getByRole("heading", { name: "请重新加载", exact: true }),
         ).toBeVisible();
       }
       let warnings = 0;
@@ -938,15 +1173,13 @@ for (const result of ["complete", "rejected", "query"] as const) {
         },
       });
     });
-    await page
-      .getByRole("button", { name: "确认退出本次登录", exact: true })
-      .click();
+    await page.getByRole("button", { name: "退出登录", exact: true }).click();
     if (result === "query")
       await page
-        .getByRole("button", { name: "查看本次退出结果", exact: true })
+        .getByRole("button", { name: "查看退出结果", exact: true })
         .click();
     await expect(
-      page.getByRole("heading", { name: "暂时无法继续", exact: true }),
+      page.getByRole("heading", { name: "登录信息暂时无法使用", exact: true }),
     ).toBeVisible();
     expect(
       await page.evaluate(() => {
@@ -958,7 +1191,7 @@ for (const result of ["complete", "rejected", "query"] as const) {
     await page.getByRole("button", { name: "重新检查", exact: true }).click();
     await expect(
       page.getByRole("heading", {
-        name: result === "rejected" ? "本次退出未受理" : "本次登录已退出",
+        name: result === "rejected" ? "本次尚未退出" : "已退出登录",
         exact: true,
       }),
     ).toBeVisible();
@@ -1008,9 +1241,7 @@ test("late DELETE completion cannot clear another tab's newer choice", async ({
       })
       .catch(() => {});
   });
-  await page
-    .getByRole("button", { name: "确认退出本次登录", exact: true })
-    .click();
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
   await started;
   const other = await context.newPage();
   await other.goto(origin);
@@ -1048,12 +1279,10 @@ for (const outcome of ["pending", "rejected"] as const) {
           json: { code: "permission_denied" },
         });
     });
-    await page
-      .getByRole("button", { name: "确认退出本次登录", exact: true })
-      .click();
+    await page.getByRole("button", { name: "退出登录", exact: true }).click();
     await expect(
       page.getByRole("heading", {
-        name: outcome === "pending" ? "本次退出结果待确认" : "本次退出未受理",
+        name: outcome === "pending" ? "退出结果尚不确定" : "本次尚未退出",
         exact: true,
       }),
     ).toBeVisible();
@@ -1075,13 +1304,13 @@ for (const outcome of ["pending", "rejected"] as const) {
     });
     await page.bringToFront();
     await expect(
-      page.getByRole("heading", { name: "请登录后继续", exact: true }),
+      page.getByRole("heading", { name: "请使用手机号登录", exact: true }),
     ).toBeVisible();
     await expect(page.locator("main")).not.toContainText("退出");
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await page.reload();
     await expect(
-      page.getByRole("heading", { name: "请登录后继续", exact: true }),
+      page.getByRole("heading", { name: "请使用手机号登录", exact: true }),
     ).toBeVisible();
     await expect(page.locator("main")).not.toContainText("退出");
     await page.getByRole("link", { name: "返回首页", exact: true }).click();
@@ -1118,11 +1347,9 @@ test("same-account GET preserves the new selection and later anonymous entry con
       },
     });
   });
-  await page
-    .getByRole("button", { name: "确认退出本次登录", exact: true })
-    .click();
+  await page.getByRole("button", { name: "退出登录", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "本次退出结果待确认", exact: true }),
+    page.getByRole("heading", { name: "退出结果尚不确定", exact: true }),
   ).toBeVisible();
   const original = await page.evaluate(
     () => JSON.parse(sessionStorage.getItem("halo.logout")!).operation,
@@ -1132,11 +1359,9 @@ test("same-account GET preserves the new selection and later anonymous entry con
   await other.waitForFunction(() => !!window.logoutSessions);
   await choose(other, newer);
   await page.bringToFront();
-  await page
-    .getByRole("button", { name: "查看本次退出结果", exact: true })
-    .click();
+  await page.getByRole("button", { name: "查看退出结果", exact: true }).click();
   await expect(
-    page.getByText("当前的新登录仍然有效", { exact: false }),
+    page.getByRole("heading", { name: "此前的退出已完成", exact: true }),
   ).toBeVisible();
   expect(queried).toEqual({ operation: original, selected: newer.id });
   expect(
@@ -1158,7 +1383,7 @@ test("same-account GET preserves the new selection and later anonymous entry con
   });
   await page.bringToFront();
   await expect(
-    page.getByRole("heading", { name: "请登录后继续", exact: true }),
+    page.getByRole("heading", { name: "请使用手机号登录", exact: true }),
   ).toBeVisible();
   await expect(page.locator("main")).not.toContainText("退出");
   expect(writes).toBe(1);
