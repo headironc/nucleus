@@ -1,12 +1,10 @@
 <view class="page home">
   <view class="eyebrow">司籍处 · 本人账户</view>
-  <view class="hero-title">一份资料，<text class="line-break">安心办理。</text></view>
-  <view class="hero-copy">在这里查看与管理你的个人账户。</view>
+  <view class="hero-title">个人账户</view>
+  <view class="hero-copy">查看个人资料，管理登录。</view>
   <view class="intro-card">
-    <view class="section-label">从本人账户开始</view>
     <view class="card-title">登录与注册</view>
-    <view class="body-copy">使用微信绑定的手机号进入。首次使用时，在验证手机号后填写实名资料，创建个人账户。</view>
+    <view class="body-copy">使用手机号登录。首次使用需填写姓名和身份证号，创建个人账户。</view>
     <button class="primary" bindtap="openAccount">打开个人账户</button>
   </view>
-  <view class="footnote">公开简介无需登录。</view>
 </view>
