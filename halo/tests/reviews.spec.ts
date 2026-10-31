@@ -95,6 +95,7 @@ function control() {
     mediaFailed: false,
     mediaLimited: false,
     readFailure: false,
+    readDisconnected: false,
     limited: false,
     loseResponse: false,
     stateChanged: false,
@@ -201,6 +202,8 @@ async function install(page: Page, state: Control) {
           status: 503,
           json: { code: "dependency_unavailable" },
         });
+      if (state.readDisconnected && request.method() === "GET")
+        return route.abort("connectionfailed");
     }
     if (path.endsWith("/cancellations") && request.method() === "POST") {
       const item = state.records.find((item) =>
@@ -490,9 +493,14 @@ for (const restricted of [false, true]) {
         await expect(
           page.getByRole("button", { name: "取消申请", exact: true }),
         ).toHaveCount(0);
-        if (status === "approved")
+        if (status === "approved") {
+          await expect(page.getByText("取消前已审核通过。")).toBeVisible();
           await expect(page.getByText("林*", { exact: true })).toBeVisible();
-        else await expect(page.getByText("申请在审核前已取消。")).toBeVisible();
+        } else
+          await expect(page.getByText("申请在审核前已取消。")).toBeVisible();
+        await page.screenshot({
+          path: info.outputPath(`self-${status}-history.png`),
+        });
       }
     });
   }
@@ -536,9 +544,13 @@ for (const status of ["submitted", "approved"] as const) {
     await expect(
       page.getByText("重复申请，仅用于内部核对。", { exact: true }),
     ).toHaveCount(0);
-    if (status === "approved")
+    if (status === "approved") {
+      await expect(page.getByText("取消前已审核通过。")).toBeVisible();
       await expect(page.getByText("林*", { exact: true })).toBeVisible();
-    else await expect(page.getByText("申请在审核前已取消。")).toBeVisible();
+    } else await expect(page.getByText("申请在审核前已取消。")).toBeVisible();
+    await expect(
+      page.getByText("申请已取消。申请人如需办理，须重新申请。"),
+    ).toBeVisible();
     await page.screenshot({
       path: info.outputPath(`manager-${status}-history.png`),
     });
@@ -546,6 +558,54 @@ for (const status of ["submitted", "approved"] as const) {
     await page.getByRole("button", { name: "已取消", exact: true }).click();
     await expect(page.getByRole("table")).toContainText(original.snapshot.name);
     expect(state.listQueries.at(-1)).toBe("?page=1&size=20&status=cancelled");
+  });
+}
+
+for (const failedRead of ["disconnected", "503", "429"] as const) {
+  test(`cancellation manager: unknown GET ${failedRead} and cooldown retain the cancellation operation`, async ({
+    page,
+  }, info) => {
+    const state = control();
+    state.cancellationLost = true;
+    await install(page, state);
+    await page.clock.install();
+    await page.goto(origin + "/workforce/reviews/" + state.records[0].id);
+    await page.getByRole("button", { name: "取消申请", exact: true }).click();
+    await page.getByRole("textbox", { name: "取消说明" }).fill("重复申请");
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "取消申请", exact: true })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "暂时无法确认取消结果" }),
+    ).toBeVisible();
+    state.readDisconnected = failedRead === "disconnected";
+    state.readFailure = failedRead === "503";
+    state.limited = failedRead === "429";
+    await page.getByRole("button", { name: "刷新详情", exact: true }).click();
+    await expect(
+      page.getByRole("button", { name: /秒后可刷新/ }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("heading", { name: "暂时无法确认取消结果" }),
+    ).toBeVisible();
+    await expect(page.getByRole("status")).toHaveText(
+      "请刷新详情查看当前状态，暂时不要重复提交。",
+    );
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(
+      page.getByRole("heading", { name: "暂时无法确认取消结果" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: /秒后可刷新/ }),
+    ).toBeDisabled();
+    await expect(
+      page.getByRole("heading", { name: "暂时无法确认审核结果" }),
+    ).toHaveCount(0);
+    expect(state.cancellations).toHaveLength(1);
+    await page.screenshot({
+      path: info.outputPath(`manager-unknown-get-${failedRead}.png`),
+    });
   });
 }
 

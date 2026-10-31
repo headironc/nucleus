@@ -270,7 +270,7 @@ export class Applications {
         this.show({
           kind: "cancellation-unknown",
           retryAt,
-          message: "暂时无法确认取消结果。请刷新详情查看，暂时不要重复提交。",
+          message: "请刷新详情查看当前状态，暂时不要重复提交。",
         });
         return;
       }
@@ -361,7 +361,7 @@ export class Applications {
               message:
                 result.status === 404
                   ? "目前无法查看这份申请，仍无法确认刚才的取消是否成功。可返回列表查看当前允许访问的记录。"
-                  : "暂时无法确认取消结果。请刷新详情查看，暂时不要重复提交。",
+                  : "请刷新详情查看当前状态，暂时不要重复提交。",
             }
           : { kind: "error", message, retryAt },
       );
@@ -606,7 +606,7 @@ export class Applications {
         this.show({
           kind: "cancellation-unknown",
           retryAt: this.retryAt,
-          message: "暂时无法确认取消结果。请刷新详情查看，暂时不要重复提交。",
+          message: "请刷新详情查看当前状态，暂时不要重复提交。",
         });
       } else if (result.code === "state_changed") {
         await this.load(1, "申请状态已更新。请核对当前状态后重新确认取消。");
@@ -618,7 +618,7 @@ export class Applications {
         this.show({
           kind: "cancellation-unknown",
           retryAt: 0,
-          message: "暂时无法确认取消结果。请刷新详情查看，暂时不要重复提交。",
+          message: "请刷新详情查看当前状态，暂时不要重复提交。",
         });
       }
     } finally {

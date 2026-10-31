@@ -34,6 +34,7 @@ export function ReviewFacts({ application }: { application: Application }) {
   if (!application.reviewedAt) return <p>申请在审核前已取消。</p>;
   return (
     <>
+      {application.status === "cancelled" && <p>取消前已审核通过。</p>}
       <dl className="application-snapshot review-facts">
         <div>
           <dt>审核人</dt>

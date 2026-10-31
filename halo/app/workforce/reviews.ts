@@ -32,7 +32,13 @@ export type ReviewDetail = {
 };
 export type ReviewsState =
   | { kind: "hidden" | "loading" }
-  | { kind: "error" | "missing" | "unknown"; message: string; retryAt: number }
+  | { kind: "error" | "missing"; message: string; retryAt: number }
+  | {
+      kind: "unknown";
+      operation: "review" | "cancellation";
+      message: string;
+      retryAt: number;
+    }
   | { kind: "cancelled" }
   | {
       kind: "list";
@@ -93,6 +99,18 @@ export class Reviews {
     if (this.closed) return;
     this.state = state;
     this.listeners.forEach((listener) => listener());
+  }
+  private unknown(retryAt = 0, message?: string) {
+    this.show({
+      kind: "unknown",
+      operation: this.cancellationUnknown ? "cancellation" : "review",
+      message:
+        message ??
+        (this.cancellationUnknown
+          ? "请刷新详情查看当前状态，暂时不要重复提交。"
+          : UNKNOWN_COPY),
+      retryAt,
+    });
   }
   private account() {
     const identity = this.dependencies.current.snapshot();
@@ -177,17 +195,14 @@ export class Reviews {
         });
         return;
       }
-      this.show(
-        writing || this.uncertainAccount === this.account()
-          ? {
-              kind: "unknown",
-              message: this.cancellationUnknown
-                ? "暂时无法确认取消结果。请刷新详情查看，暂时不要重复提交。"
-                : UNKNOWN_COPY,
-              retryAt: this.retryAt,
-            }
-          : { kind: "error", message: READ_ERROR, retryAt: this.retryAt },
-      );
+      if (writing || this.uncertainAccount === this.account())
+        this.unknown(this.retryAt);
+      else
+        this.show({
+          kind: "error",
+          message: READ_ERROR,
+          retryAt: this.retryAt,
+        });
     }, 35000);
     return {
       binding,
@@ -227,13 +242,19 @@ export class Reviews {
       this.mode.kind === "detail" &&
       this.uncertainAccount === this.account() &&
       (result.status !== 404 || this.cancellationUnknown);
-    this.show({
-      kind: uncertain ? "unknown" : result.status === 404 ? "missing" : "error",
-      message: uncertain
-        ? result.status === 404
+    if (uncertain) {
+      this.unknown(
+        this.retryAt,
+        result.status === 404
           ? "目前无法查看这份申请，仍无法确认刚才的取消是否成功。"
-          : UNKNOWN_COPY
-        : result.status === 404
+          : undefined,
+      );
+      return;
+    }
+    this.show({
+      kind: result.status === 404 ? "missing" : "error",
+      message:
+        result.status === 404
           ? "目前无法查看这份申请。"
           : result.status === 429
             ? "暂时无法加载申请，请稍后再试。"
@@ -253,11 +274,13 @@ export class Reviews {
       ) {
         this.clearMedia();
         const uncertain = this.uncertainAccount === this.account();
-        this.show({
-          kind: uncertain ? "unknown" : "error",
-          message: uncertain ? UNKNOWN_COPY : READ_ERROR,
-          retryAt: this.retryAt,
-        });
+        if (uncertain) this.unknown(this.retryAt);
+        else
+          this.show({
+            kind: "error",
+            message: READ_ERROR,
+            retryAt: this.retryAt,
+          });
       }
       return;
     }
@@ -473,11 +496,7 @@ export class Reviews {
         ) {
           this.clearMedia();
           this.uncertainAccount = this.account();
-          this.show({
-            kind: "unknown",
-            message: UNKNOWN_COPY,
-            retryAt: 0,
-          });
+          this.unknown();
           return;
         }
         if (state.media.kind === "loading") this.clearMedia();
@@ -500,11 +519,7 @@ export class Reviews {
             ? this.dependencies.now() + result.retryAfter
             : 0;
         this.waitingSelection = `${scope.binding.selection.id}/${scope.binding.selection.revision}`;
-        this.show({
-          kind: "unknown",
-          message: UNKNOWN_COPY,
-          retryAt: this.retryAt,
-        });
+        this.unknown(this.retryAt);
       } else if (
         result.code === "state_changed" ||
         result.code === "applicant_unavailable"
@@ -521,11 +536,7 @@ export class Reviews {
       if (scope.active()) {
         this.uncertainAccount = this.account();
         this.clearMedia();
-        this.show({
-          kind: "unknown",
-          message: UNKNOWN_COPY,
-          retryAt: 0,
-        });
+        this.unknown();
       }
     } finally {
       scope.finish();
@@ -574,11 +585,7 @@ export class Reviews {
             ? this.dependencies.now() + result.retryAfter
             : 0;
         this.waitingSelection = `${scope.binding.selection.id}/${scope.binding.selection.revision}`;
-        this.show({
-          kind: "unknown",
-          message: "暂时无法确认取消结果。请刷新详情查看，暂时不要重复提交。",
-          retryAt: this.retryAt,
-        });
+        this.unknown(this.retryAt);
       } else {
         this.cancellationUnknown = false;
         if (result.code === "state_changed")
@@ -593,11 +600,7 @@ export class Reviews {
       if (scope.active()) {
         this.cancel();
         this.clearMedia();
-        this.show({
-          kind: "unknown",
-          message: "暂时无法确认取消结果。请刷新详情查看，暂时不要重复提交。",
-          retryAt: 0,
-        });
+        this.unknown();
       }
     } finally {
       scope.finish();

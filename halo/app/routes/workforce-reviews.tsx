@@ -276,7 +276,7 @@ function Detail({
                   {item.status === "approved"
                     ? "审核通过，工牌制作和发放另行办理。"
                     : item.status === "cancelled"
-                      ? "申请已取消。需要办理时须重新申请。"
+                      ? "申请已取消。申请人如需办理，须重新申请。"
                       : "审核未通过，申请人可修改资料后重新申请。"}
                 </p>
                 <ReviewFacts application={item} />
@@ -426,7 +426,7 @@ export function ReviewsPanel({ controllers }: { controllers: Controllers }) {
             <section className="review-panel review-message">
               <h2>
                 {state.kind === "unknown"
-                  ? state.message.includes("取消")
+                  ? state.operation === "cancellation"
                     ? "暂时无法确认取消结果"
                     : "暂时无法确认审核结果"
                   : state.kind === "missing"
