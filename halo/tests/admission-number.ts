@@ -286,22 +286,22 @@ export async function admissionAndFirstNumber(
       role: { id: role.id, changeId: role.changeId },
     };
     await page.route("**/api/v1/workforce/grants", captureAdmission);
-    await page.getByRole("button", { name: "确认开通", exact: true }).click();
+    await page.getByRole("button", { name: "下一步", exact: true }).click();
     await expect(
-      page.getByRole("button", { name: "取消", exact: true }),
+      page.getByRole("button", { name: "返回修改", exact: true }),
     ).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(page.getByRole("dialog")).not.toBeVisible();
     await expect(
-      page.getByRole("button", { name: "确认开通", exact: true }),
+      page.getByRole("button", { name: "下一步", exact: true }),
     ).toBeFocused();
-    await page.getByRole("button", { name: "确认开通", exact: true }).click();
+    await page.getByRole("button", { name: "下一步", exact: true }).click();
     await picture(page, "admission-confirm", true);
     await page
-      .getByRole("button", { name: "开通员工服务", exact: true })
+      .getByRole("button", { name: "确认开通", exact: true })
       .click();
     await expect(
-      page.getByText("暂时无法确认开通结果。", { exact: false }),
+      page.getByText("开通结果尚不确定。", { exact: false }),
     ).toBeVisible();
     expect(admissionCalls).toHaveLength(1);
     await picture(page, "admission-unknown");
@@ -320,11 +320,11 @@ export async function admissionAndFirstNumber(
     });
     await page.reload();
     await expect(
-      page.getByRole("button", { name: "检查开通结果", exact: true }),
+      page.getByRole("button", { name: "查看开通结果", exact: true }),
     ).toBeEnabled({ timeout: 10_000 });
     expect(admissionCalls).toHaveLength(1);
     await page
-      .getByRole("button", { name: "检查开通结果", exact: true })
+      .getByRole("button", { name: "查看开通结果", exact: true })
       .click();
     await expect(
       page.getByText("本次员工服务已开通", { exact: true }),
