@@ -41,7 +41,7 @@ async function prepare(page: Page, mobile: string) {
 }
 
 async function submit(page: Page) {
-  await page.getByRole("button", { name: "获取短信验证码" }).click();
+  await page.getByRole("button", { name: "获取验证码" }).click();
 }
 
 for (const delivery of ["sent", "unknown", "failed"] as const) {
@@ -140,7 +140,8 @@ for (const code of ["invalid_input", "permission_denied"] as const) {
       () => (window as any).__widgets[0].options.cData,
     );
     await submit(page);
-    const title = code === "invalid_input" ? "请检查填写内容" : "暂时无法办理";
+    const title =
+      code === "invalid_input" ? "请检查手机号" : "暂时无法获取验证码";
     await expect(
       page.getByRole("heading", { name: title, exact: true }),
     ).toBeVisible();
@@ -197,20 +198,17 @@ for (const [index, code] of (
     await prepare(page, `139000000${String(index + 9).padStart(2, "0")}`);
     await submit(page);
     await expect(
-      page.getByRole("heading", { name: "发送结果待确认" }),
+      page.getByRole("heading", { name: "暂时无法确认发送结果" }),
     ).toBeVisible();
     await page.reload();
     await expect(
-      page.getByRole("heading", { name: "发送结果待确认" }),
+      page.getByRole("heading", { name: "暂时无法确认发送结果" }),
     ).toBeVisible();
     expect(requests).toHaveLength(1);
     await page
-      .getByRole("button", { name: "查看发送结果", exact: true })
+      .getByRole("button", { name: "重试获取验证码", exact: true })
       .click();
-    const title =
-      code === "request_mismatch"
-        ? "发送信息与此前不一致"
-        : "本次发送结果暂时无法确认";
+    const title = "暂时无法查看发送结果";
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
     expect(requests).toHaveLength(2);
     expect(requests[1]).toEqual(requests[0]);
@@ -223,7 +221,7 @@ for (const [index, code] of (
     expect(saved.input).toEqual(JSON.parse(requests[0].input));
     await expect(
       page.getByRole("button", {
-        name: /查看发送结果|继续申请|重试本次申请|重新填写|重新完成/,
+        name: /重试获取验证码|继续获取验证码|重新填写|重新验证/,
       }),
     ).toHaveCount(0);
     expect(requests).toHaveLength(2);
@@ -237,18 +235,16 @@ test("normal supplier acceptance, terminal reload and real quota refusal", async
   await prepare(page, "13900000001");
   await submit(page);
   await expect(
-    page.getByRole("heading", { name: "短信已提交发送" }),
+    page.getByRole("heading", { name: "验证码已提交发送" }),
   ).toBeFocused();
-  await expect(
-    page.getByText("短信服务商已受理本次发送，请留意手机短信。"),
-  ).toBeVisible();
+  await expect(page.getByText("请查看手机短信。")).toBeVisible();
   expect(
     await page.evaluate(() => sessionStorage.getItem("halo.c1")),
   ).not.toContain("token");
   await page.screenshot({ path: "test-results/sent.png", fullPage: true });
   for (const width of [1440, 768, 390, 320]) {
     await page.setViewportSize({ width, height: 950 });
-    const title = page.getByRole("heading", { name: "短信已提交发送" });
+    const title = page.getByRole("heading", { name: "验证码已提交发送" });
     await expect(title).toHaveAttribute("data-result-title", "true");
     await expect(title).toHaveAttribute("tabindex", "-1");
     await expect(title).toBeFocused();
@@ -284,7 +280,7 @@ test("normal supplier acceptance, terminal reload and real quota refusal", async
   }
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "短信已提交发送" }),
+    page.getByRole("heading", { name: "验证码已提交发送" }),
   ).toBeVisible();
   const other = await context.newPage();
   await other.route(
@@ -294,10 +290,10 @@ test("normal supplier acceptance, terminal reload and real quota refusal", async
   await prepare(other, "13900000001");
   await submit(other);
   await expect(
-    other.getByRole("heading", { name: "暂时无法处理", exact: true }),
+    other.getByRole("heading", { name: "请稍后再试", exact: true }),
   ).toBeVisible();
   await expect(
-    other.getByRole("button", { name: /秒后重试本次申请/ }),
+    other.getByRole("button", { name: /秒后可重试/ }),
   ).toBeDisabled();
   await other.close();
 });
@@ -320,7 +316,7 @@ test("lost response and refresh reuse the exact input and original proof", async
   await prepare(page, "13900000002");
   await submit(page);
   await expect(
-    page.getByRole("heading", { name: "发送结果待确认" }),
+    page.getByRole("heading", { name: "暂时无法确认发送结果" }),
   ).toBeVisible();
   await page.evaluate(() => {
     const widgets = (window as any).__widgets;
@@ -332,7 +328,7 @@ test("lost response and refresh reuse the exact input and original proof", async
   );
   expect(saved.input.token).toBe(requests[0].operation);
   await expect(
-    page.getByText("查看结果只核对本次申请，不会另外发送一条短信。"),
+    page.getByText("请先查看手机短信，稍后可重试获取验证码。"),
   ).toBeVisible();
   await page.screenshot({ path: "test-results/pending.png", fullPage: true });
   const viewport = page.viewportSize()!;
@@ -348,7 +344,7 @@ test("lost response and refresh reuse the exact input and original proof", async
   });
   await page.setViewportSize(viewport);
   await expect(
-    page.getByRole("button", { name: "查看发送结果", exact: true }),
+    page.getByRole("button", { name: "重试获取验证码", exact: true }),
   ).toBeEnabled();
   await page.route("**/build.json", (route) =>
     route.fulfill({
@@ -362,9 +358,7 @@ test("lost response and refresh reuse the exact input and original proof", async
     document.dispatchEvent(new Event("visibilitychange"));
     return now;
   });
-  await expect(
-    page.getByRole("heading", { name: "请重新加载页面" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "请重新加载" })).toBeVisible();
   const postponed = await page.evaluate(
     () => JSON.parse(sessionStorage.getItem("halo.c1")!).retryAt,
   );
@@ -372,15 +366,15 @@ test("lost response and refresh reuse the exact input and original proof", async
   await page.unroute("**/build.json");
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "发送结果待确认" }),
+    page.getByRole("heading", { name: "暂时无法确认发送结果" }),
   ).toBeVisible();
   expect(requests.length).toBe(1);
   await expect(
-    page.getByRole("button", { name: /秒后查看发送结果/ }),
+    page.getByRole("button", { name: /秒后可重试/ }),
   ).toBeDisabled();
-  await page.getByRole("button", { name: "查看发送结果", exact: true }).click();
+  await page.getByRole("button", { name: "重试获取验证码", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "短信已提交发送" }),
+    page.getByRole("heading", { name: "验证码已提交发送" }),
   ).toBeVisible();
   expect(requests).toHaveLength(2);
   expect(requests[1]).toEqual(requests[0]);
@@ -392,7 +386,7 @@ test("PNVS refusal and unknown supplier outcome are distinct", async ({
   await prepare(page, "13900000003");
   await submit(page);
   await expect(
-    page.getByRole("heading", { name: "短信发送未成功" }),
+    page.getByRole("heading", { name: "验证码未能发送" }),
   ).toBeVisible();
   await expect(page.getByRole("link", { name: "输入短信验证码" })).toHaveCount(
     0,
@@ -414,7 +408,7 @@ test("PNVS refusal and unknown supplier outcome are distinct", async ({
   });
   await page.goto("/authentication/login");
   await expect(
-    page.getByRole("heading", { name: "短信发送未成功", exact: true }),
+    page.getByRole("heading", { name: "验证码未能发送", exact: true }),
   ).toBeFocused();
   await expect(page.getByRole("textbox")).toHaveCount(0);
   const resend = page.getByRole("link", {
@@ -429,7 +423,7 @@ test("PNVS refusal and unknown supplier outcome are distinct", async ({
   });
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "短信发送未成功", exact: true }),
+    page.getByRole("heading", { name: "验证码未能发送", exact: true }),
   ).toBeVisible();
   expect(loginPosts).toBe(0);
   await resend.click();
@@ -443,11 +437,11 @@ test("PNVS refusal and unknown supplier outcome are distinct", async ({
   await prepare(page, "13900000004");
   await submit(page);
   await expect(
-    page.getByRole("heading", { name: "发送结果待确认" }),
+    page.getByRole("heading", { name: "暂时无法确认发送结果" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "查看发送结果", exact: true }).click();
+  await page.getByRole("button", { name: "重试获取验证码", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "短信发送情况未确认" }),
+    page.getByRole("heading", { name: "暂时无法确认发送结果" }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: /获取|重发/ })).toHaveCount(0);
 });
@@ -481,21 +475,21 @@ for (const [index, fault] of ["media", "shape", "code"].entries()) {
     await prepare(page, `1390000000${index + 5}`);
     await submit(page);
     await expect(
-      page.getByRole("heading", { name: "请重新加载页面" }),
+      page.getByRole("heading", { name: "请重新加载" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "短信已提交发送" }),
+      page.getByRole("heading", { name: "验证码已提交发送" }),
     ).toHaveCount(0);
-    await page.getByRole("button", { name: "重新加载页面" }).click();
+    await page.getByRole("button", { name: "重新加载" }).click();
     await expect(
-      page.getByRole("heading", { name: "发送结果待确认" }),
+      page.getByRole("heading", { name: "暂时无法确认发送结果" }),
     ).toBeVisible();
     expect(requests).toBe(1);
     await page
-      .getByRole("button", { name: "查看发送结果", exact: true })
+      .getByRole("button", { name: "重试获取验证码", exact: true })
       .click();
     await expect(
-      page.getByRole("heading", { name: "短信已提交发送" }),
+      page.getByRole("heading", { name: "验证码已提交发送" }),
     ).toBeVisible();
     expect(requests).toBe(2);
   });
@@ -533,7 +527,7 @@ test("a held send expires after full-document navigation home without another SM
   );
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "发送结果待确认" }),
+    page.getByRole("heading", { name: "暂时无法确认发送结果" }),
   ).toBeVisible();
   const recovered = await page.evaluate(() =>
     JSON.parse(sessionStorage.getItem("halo.c1")!),
@@ -560,14 +554,12 @@ test("a held send expires after full-document navigation home without another SM
   release();
   await page.getByRole("link", { name: "手机号登录" }).click();
   await expect(
-    page.getByRole("heading", { name: "暂时无法查看本次发送结果" }),
+    page.getByRole("heading", { name: "暂时无法查看发送结果" }),
   ).toBeVisible();
   await page.reload();
+  await expect(page.getByText("请先查看手机短信。")).toBeVisible();
   await expect(
-    page.getByText("这不表示短信没有发送。请先查看手机短信，避免反复申请。"),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: /查看发送结果|获取短信验证码/ }),
+    page.getByRole("button", { name: /重试获取验证码|获取验证码/ }),
   ).toHaveCount(0);
   expect(requests).toBe(1);
 });
@@ -686,11 +678,11 @@ test("storage failure, expired or missing materials never initiate a send", asyn
   });
   await submit(page);
   await expect(
-    page.getByRole("heading", { name: "无法保存本次申请信息" }),
+    page.getByRole("heading", { name: "暂时无法获取验证码" }),
   ).toBeVisible();
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "申请短信验证码" }),
+    page.getByRole("heading", { name: "获取短信验证码" }),
   ).toBeVisible();
   await page.evaluate(() => {
     const now = Date.now();
@@ -709,14 +701,10 @@ test("storage failure, expired or missing materials never initiate a send", asyn
   });
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "暂时无法查看本次发送结果" }),
+    page.getByRole("heading", { name: "暂时无法查看发送结果" }),
   ).toBeVisible();
-  await expect(
-    page.getByText("本页保存的申请信息已超过可查询期限。"),
-  ).toBeVisible();
-  await expect(
-    page.getByText("这不表示短信没有发送。请先查看手机短信，避免反复申请。"),
-  ).toBeVisible();
+  await expect(page.getByText("请先查看手机短信。")).toBeVisible();
+  await expect(page.getByText("请先查看手机短信。")).toBeVisible();
   await page.screenshot({ path: "test-results/expired.png", fullPage: true });
   expect(
     await page.evaluate(() => sessionStorage.getItem("halo.c1")),
@@ -724,9 +712,9 @@ test("storage failure, expired or missing materials never initiate a send", asyn
   await page.evaluate(() => sessionStorage.clear());
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "暂时无法查看本次发送结果" }),
+    page.getByRole("heading", { name: "暂时无法查看发送结果" }),
   ).toBeVisible();
-  await expect(page.getByText("本页保存的申请信息不完整。")).toBeVisible();
+  await expect(page.getByText("请先查看手机短信。")).toBeVisible();
   await page.screenshot({ path: "test-results/missing.png", fullPage: true });
   await page.setViewportSize({ width: 390, height: 950 });
   expect(
@@ -762,9 +750,7 @@ test("failed supplier script stays in widget recovery without sending", async ({
   await page.getByLabel("手机号", { exact: true }).fill("13900000000");
   await page.getByRole("button", { name: "重新加载安全验证" }).click();
   await page.getByRole("button", { name: "完成安全验证（测试替身）" }).click();
-  await expect(
-    page.getByRole("button", { name: "获取短信验证码" }),
-  ).toBeEnabled();
+  await expect(page.getByRole("button", { name: "获取验证码" })).toBeEnabled();
   await expect(page.getByLabel("手机号", { exact: true })).toHaveValue(
     "13900000000",
   );
@@ -795,7 +781,7 @@ test("replacement verification refreshes settings and ignores the old callback",
   await expect(
     page.getByRole("heading", { name: "安全验证未通过" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "重新完成安全验证" }).click();
+  await page.getByRole("button", { name: "重新验证" }).click();
   await expect(page.getByLabel("手机号", { exact: true })).toBeFocused();
   await expect(
     page.getByRole("button", { name: "完成安全验证（测试替身）" }),
@@ -807,9 +793,7 @@ test("replacement verification refreshes settings and ignores the old callback",
   await page.evaluate(() =>
     (window as any).__widgets[0].options.callback("late-old-candidate"),
   );
-  await expect(
-    page.getByRole("button", { name: "获取短信验证码" }),
-  ).toBeDisabled();
+  await expect(page.getByRole("button", { name: "获取验证码" })).toBeDisabled();
   expect(
     await page.evaluate(() => (window as any).__widgets.at(-1).options.cData),
   ).not.toBe(operation);
@@ -831,10 +815,12 @@ test("desktop, intermediate and narrow keyboard layouts, with real CSP", async (
     );
   });
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: /承草木之意/ })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /个人账户与员工服务/ }),
+  ).toBeVisible();
   await page.getByRole("link", { name: /手机号登录/ }).click();
   await expect(
-    page.getByRole("heading", { name: "申请短信验证码" }),
+    page.getByRole("heading", { name: "获取短信验证码" }),
   ).toBeVisible();
   for (const [width, name] of [
     [1440, "desktop"],
@@ -847,7 +833,7 @@ test("desktop, intermediate and narrow keyboard layouts, with real CSP", async (
     await page
       .getByRole("button", { name: "完成安全验证（测试替身）" })
       .click();
-    await page.getByRole("button", { name: "获取短信验证码" }).focus();
+    await page.getByRole("button", { name: "获取验证码" }).focus();
     await page.keyboard.press("Enter");
     await expect(input).toBeFocused();
     await expect(input).toHaveAttribute("aria-invalid", "true");
@@ -895,7 +881,7 @@ test("Nginx routing, nonce, manifest, cache and Cookie isolation", async ({
   expect(home.headers()["content-security-policy"]).not.toContain(
     "https://challenges.cloudflare.com",
   );
-  expect(await home.text()).toContain("承草木之意");
+  expect(await home.text()).toContain("个人账户与员工服务");
   const direct = await request.get(
     `${process.env.HALO_TEST_NODE}/authentication/codes`,
     { headers: { Cookie: "fixture=private" } },
@@ -968,13 +954,13 @@ test("reentered missing or corrupt material cannot turn into a new application o
   await page.goto("/");
   await page.goto("/authentication/codes");
   await expect(
-    page.getByRole("heading", { name: "发送结果待确认" }),
+    page.getByRole("heading", { name: "暂时无法确认发送结果" }),
   ).toBeVisible();
   expect(await page.evaluate(() => history.state?.haloC1)).toBe(true);
   await page.evaluate(() => sessionStorage.removeItem("halo.c1"));
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "暂时无法查看本次发送结果" }),
+    page.getByRole("heading", { name: "暂时无法查看发送结果" }),
   ).toBeVisible();
   for (const bytes of [
     "{",
@@ -986,7 +972,7 @@ test("reentered missing or corrupt material cannot turn into a new application o
     }, bytes);
     await page.reload();
     await expect(
-      page.getByRole("heading", { name: "暂时无法查看本次发送结果" }),
+      page.getByRole("heading", { name: "暂时无法查看发送结果" }),
     ).toBeVisible();
     expect(
       await page.evaluate(() => JSON.parse(sessionStorage.getItem("halo.c1")!)),
@@ -995,15 +981,15 @@ test("reentered missing or corrupt material cannot turn into a new application o
     await page.evaluate(() => sessionStorage.removeItem("halo.c1"));
     await page.goBack();
     await expect(
-      page.getByRole("heading", { name: "暂时无法查看本次发送结果" }),
+      page.getByRole("heading", { name: "暂时无法查看发送结果" }),
     ).toBeVisible();
     await page.reload();
     await expect(
-      page.getByRole("heading", { name: "暂时无法查看本次发送结果" }),
+      page.getByRole("heading", { name: "暂时无法查看发送结果" }),
     ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "获取短信验证码" }),
-    ).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "获取验证码" })).toHaveCount(
+      0,
+    );
   }
   expect(writes).toBe(0);
 });
@@ -1023,9 +1009,7 @@ test("changed build stops new writes and preserves already saved material", asyn
     }),
   );
   await submit(page);
-  await expect(
-    page.getByRole("heading", { name: "请重新加载页面" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "请重新加载" })).toBeVisible();
   expect(writes).toBe(0);
   const saved = await page.evaluate(() =>
     JSON.parse(sessionStorage.getItem("halo.c1")!),
@@ -1049,23 +1033,23 @@ test("an unsent application remains correctable after the required build reload"
     }),
   );
   await submit(page);
-  await expect(
-    page.getByRole("heading", { name: "请重新加载页面" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "请重新加载" })).toBeVisible();
   await page.unroute("**/build.json");
-  await page.getByRole("button", { name: "重新加载页面" }).click();
+  await page.getByRole("button", { name: "重新加载" }).click();
   await expect(
-    page.getByRole("heading", { name: "本次申请尚未发出" }),
+    page.getByRole("heading", { name: "尚未发送验证码" }),
   ).toBeVisible();
   expect(writes).toBe(0);
   await expect(
-    page.getByRole("button", { name: "查看发送结果", exact: true }),
+    page.getByRole("button", { name: "重试获取验证码", exact: true }),
   ).toHaveCount(0);
   await page.screenshot({
     path: "test-results/unsubmitted.png",
     fullPage: true,
   });
-  await page.getByRole("button", { name: "继续申请", exact: true }).click();
+  await page
+    .getByRole("button", { name: "继续获取验证码", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: "重新填写并验证" }),
   ).toBeVisible();
@@ -1086,10 +1070,13 @@ for (const body of ["{", "null"]) {
     );
     await submit(page);
     await expect(
-      page.getByRole("heading", { name: "请重新加载页面" }),
+      page.getByRole("heading", { name: "请重新加载" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: /查看发送结果|继续申请/, exact: true }),
+      page.getByRole("button", {
+        name: /重试获取验证码|继续获取验证码/,
+        exact: true,
+      }),
     ).toHaveCount(0);
     const saved = await page.evaluate(() =>
       JSON.parse(sessionStorage.getItem("halo.c1")!),
@@ -1105,12 +1092,8 @@ test("missing bootstrap resources leave a reloadable shell and no write controls
 }) => {
   await page.route("**/assets/**/*.js", (route) => route.abort("failed"));
   await page.goto("/authentication/codes");
-  await expect(
-    page.getByRole("link", { name: "重新加载办理页" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "获取短信验证码" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "重新加载" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "获取验证码" })).toHaveCount(0);
 });
 
 test("a hydration mismatch is retained before the form mounts", async ({
@@ -1123,19 +1106,15 @@ test("a hydration mismatch is retained before the form mounts", async ({
   await page.route("**/authentication/codes", async (route) => {
     const response = await route.fetch();
     const original = await response.text();
-    expect(original).toContain("正在准备办理页面…");
+    expect(original).toContain("正在打开验证码页面…");
     await route.fulfill({
       response,
-      body: original.replace("正在准备办理页面…", "过期的页面内容"),
+      body: original.replace("正在打开验证码页面…", "过期的页面内容"),
     });
   });
   await page.goto("/authentication/codes");
-  await expect(
-    page.getByRole("heading", { name: "请重新加载页面" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: "获取短信验证码" }),
-  ).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "请重新加载" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "获取验证码" })).toHaveCount(0);
   expect(writes).toBe(0);
 });
 
@@ -1167,11 +1146,11 @@ for (const resource of [
     );
     await page.goto("/authentication/codes");
     await expect(
-      page.getByRole("heading", { name: "请重新加载页面" }),
+      page.getByRole("heading", { name: "请重新加载" }),
     ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: "获取短信验证码" }),
-    ).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "获取验证码" })).toHaveCount(
+      0,
+    );
     expect(failures).toBeGreaterThan(0);
     expect(writes).toBe(0);
   });
