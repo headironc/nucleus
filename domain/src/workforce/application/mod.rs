@@ -2,6 +2,7 @@
 
 mod badge;
 mod cancellation;
+mod capacity;
 mod database;
 pub mod photo;
 pub mod render;
@@ -18,7 +19,7 @@ use tokio::{
 };
 use tokio_postgres::Client;
 
-pub use self::{settings::Settings, value::*};
+pub use self::{capacity::Limits, settings::Settings, value::*};
 use crate::{
     access::{
         grant::{self, member},
@@ -134,8 +135,9 @@ impl Service {
             let photo = photo::prepare(&media_type, &bytes)?;
             settings.photo_limits.publish(
                 &settings.directory,
+                "photos",
                 prepared_person,
-                resource_id,
+                &resource_id.to_string(),
                 &photo.bytes,
             )?;
             Ok::<_, Error>((photo.width, photo.height, photo.bytes.len()))
@@ -561,8 +563,8 @@ pub enum Error {
     Encoding(#[from] serde_json::Error),
     #[error("application processing is busy")]
     Busy,
-    #[error("retained photograph capacity is exhausted")]
-    PhotoCapacity,
+    #[error("retained application file capacity is exhausted")]
+    Capacity,
     #[error("application processing failed")]
     Worker,
     #[error("application read timed out")]
@@ -651,6 +653,7 @@ pub fn fixture_settings(storage: platform::files::Settings) -> Settings {
         include_bytes!("../../../tests/fixtures/fonts/SourceSans3-Regular.ttf").to_vec(),
         vec!["Fixture reception".to_owned()],
         photo::Limits::new(100, 1 << 30, 1000, 10 << 30).expect("fixture capacity"),
+        Limits::new(100, 1 << 30, 1000, 10 << 30).expect("fixture badge capacity"),
         render::Resolution::try_from(300).expect("fixture resolution"),
     )
     .expect("legal fixture settings")
@@ -1308,7 +1311,7 @@ mod tests {
                     let storage=platform::files::Settings::new(root,mount,device).expect("storage");
                     let mut background=Cursor::new(Vec::new());
                     image::DynamicImage::new_rgb8(85,54).write_to(&mut background,image::ImageFormat::Png).expect("background");
-                    let settings=Settings::new(storage,fixture_template(),"image/png",background.into_inner(),include_bytes!("../../../tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(),vec!["Fixture reception".to_owned()],photo::Limits::new(1,1 << 30,2,2 << 30).expect("limits"),render::Resolution::try_from(300).expect("resolution")).expect("settings");
+                    let settings=Settings::new(storage,fixture_template(),"image/png",background.into_inner(),include_bytes!("../../../tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(),vec!["Fixture reception".to_owned()],photo::Limits::new(1,1 << 30,2,2 << 30).expect("limits"),Limits::new(100,1 << 30,1000,10 << 30).expect("badge limits"),render::Resolution::try_from(300).expect("resolution")).expect("settings");
                     let proxy=fixture::database_proxy::Proxy::start(&server).await;
                     let context=Context::new(authentication::proxied(&database,&proxy)).await.expect("context");
                     let services=application_services(&context,ServicesSettings::new(4,crate::identity::message::Limits::default(),authentication::session_settings(),crate::registration::Limits::default(),authentication::avatar_settings()).expect("services settings").with_application(settings),&supplier).await;
@@ -1883,6 +1886,10 @@ mod tests {
     ) {
         let id = Id::allocate();
         client.execute("INSERT INTO workforce.applications (id,person_id,kind,snapshot) SELECT $1,person_id,kind,snapshot FROM workforce.applications WHERE id=$2", &[&id,&source]).await.expect("isolated retained-input fixture");
+        let person = database::owner(client, id)
+            .await
+            .expect("stable applicant")
+            .to_string();
         assert!(matches!(
             Box::pin(service.render(outsider, id)).await,
             Err(Error::Grant(grant::Error::Denied))
@@ -1958,10 +1965,53 @@ mod tests {
             .expect("owner GET")
             .bytes;
         assert_eq!(&bytes[12..16], b"VP8L");
-        let head = service
+        let mut exhausted = service.clone();
+        let mut settings = service.settings().expect("settings").clone();
+        settings.badge_limits = Limits::new(1, 1, 1, 1).expect("exhausted budget");
+        exhausted.settings = Some(Arc::new(settings));
+        let before = storage
+            .exclusive(&["workforce", "badges"])
+            .expect("usage lock")
+            .usage(&[])
+            .expect("before usage");
+        assert!(matches!(
+            Box::pin(exhausted.render(applicant, source)).await,
+            Err(Error::Capacity)
+        ));
+        assert_eq!(
+            storage
+                .exclusive(&["workforce", "badges"])
+                .expect("usage lock")
+                .usage(&[])
+                .expect("after usage"),
+            before
+        );
+        assert_eq!(client.query_one("SELECT (SELECT count(*) FROM workforce.badges WHERE application_id=$1),(SELECT count(*) FROM audit.events WHERE action='workforce.application.ready' AND target_id=$1)", &[&source]).await.expect("rejected generation has no adopted facts").get::<_, i64>(0), 0);
+        assert_eq!(client.query_one("SELECT count(*) FROM audit.events WHERE action='workforce.application.ready' AND target_id=$1", &[&source]).await.expect("no ready audit").get::<_, i64>(0), 0);
+        let failed = serde_json::to_value(
+            exhausted
+                .detail(applicant, source)
+                .await
+                .expect("capacity failure detail"),
+        )
+        .expect("safe failure");
+        assert_eq!(failed["application"]["status"], "approved");
+        assert_eq!(
+            failed["application"]["renderError"],
+            "dependency_unavailable"
+        );
+        assert_eq!(
+            exhausted
+                .badge(applicant, badge.id, read_capacity(), false)
+                .await
+                .expect("GET remains available at capacity")
+                .bytes,
+            bytes
+        );
+        let head = exhausted
             .badge(applicant, badge.id, read_capacity(), true)
             .await
-            .expect("owner HEAD");
+            .expect("HEAD remains available at capacity");
         assert!(head.bytes.is_empty());
         assert_eq!(head.size, bytes.len() as u64);
         assert!(matches!(
@@ -2022,7 +2072,7 @@ mod tests {
         );
         let directory = &service.settings().expect("settings").directory;
         directory
-            .remove(&["workforce", "badges"], &badge.id.to_string())
+            .remove(&["workforce", "badges", &person], &badge.id.to_string())
             .expect("isolated loss injection");
         assert!(matches!(
             service
@@ -2032,7 +2082,7 @@ mod tests {
         ));
         directory
             .publish(
-                &["workforce", "badges"],
+                &["workforce", "badges", &person],
                 &badge.id.to_string(),
                 &uuid::Uuid::new_v4().to_string(),
                 &bytes[..bytes.len() - 1],
@@ -2045,11 +2095,11 @@ mod tests {
             Err(Error::File(_))
         ));
         directory
-            .remove(&["workforce", "badges"], &badge.id.to_string())
+            .remove(&["workforce", "badges", &person], &badge.id.to_string())
             .expect("remove isolated corrupt restore");
         directory
             .publish(
-                &["workforce", "badges"],
+                &["workforce", "badges", &person],
                 &badge.id.to_string(),
                 &uuid::Uuid::new_v4().to_string(),
                 &bytes,
@@ -2326,7 +2376,7 @@ mod tests {
                     service
                         .prepare_photo(manager, "image/webp".to_owned(), original_file.clone())
                         .await,
-                    Err(Error::PhotoCapacity)
+                    Err(Error::Capacity)
                 ),
                 "new preparation stops at the retained-file limit"
             );
@@ -2828,7 +2878,7 @@ mod tests {
                 let held = service.settings().expect("settings").directory.exclusive(&["workforce", "photos"]).expect("recount");
                 assert_eq!(held.usage(&[]).expect("orphan counted").files, 1);
                 drop(held);
-                assert!(matches!(service.prepare_photo(&manager, "image/png".into(), image).await, Err(Error::PhotoCapacity)));
+                assert!(matches!(service.prepare_photo(&manager, "image/png".into(), image).await, Err(Error::Capacity)));
                 let observer = database.connections(&database.user).recover().await.expect("observer");
                 assert_eq!(observer.client().query_one("SELECT count(*) FROM workforce.photos", &[]).await.expect("no accepted metadata").get::<_, i64>(0), 0);
                 assert_eq!(observer.client().query_one("SELECT count(*) FROM audit.events WHERE action='workforce.photo.prepared'", &[]).await.expect("no success audit").get::<_, i64>(0), 0);
@@ -2855,7 +2905,7 @@ mod tests {
                 image::DynamicImage::new_rgb8(85,54).write_to(&mut background,image::ImageFormat::Png).expect("background");
                 let mut template = fixture_template();
                 template.font_id = ResourceId::allocate();
-                let settings = Settings::new(storage,template,"image/png",background.into_inner(),include_bytes!("../../../tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(),vec!["Fixture reception".to_owned()], photo::Limits::new(1, 1 << 30, 2, 2 << 30).expect("fixture capacity"),render::Resolution::try_from(300).expect("resolution")).expect("CJK fixture");
+                let settings = Settings::new(storage,template,"image/png",background.into_inner(),include_bytes!("../../../tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(),vec!["Fixture reception".to_owned()], photo::Limits::new(1, 1 << 30, 2, 2 << 30).expect("fixture capacity"),Limits::new(100,1 << 30,1000,10 << 30).expect("badge limits"),render::Resolution::try_from(300).expect("resolution")).expect("CJK fixture");
                 let proxy=fixture::database_proxy::Proxy::start(&server).await;
                 let context = Context::new(authentication::proxied(&database,&proxy)).await.expect("context");
                 let services = application_services(&context,ServicesSettings::new(4,crate::identity::message::Limits::default(),authentication::session_settings(),crate::registration::Limits::default(),authentication::avatar_settings()).expect("settings").with_application(settings),&supplier).await;
@@ -2935,7 +2985,7 @@ mod tests {
                 let storage = platform::files::Settings::new(root, mount, device).expect("storage");
                 let mut background = Cursor::new(Vec::new());
                 image::DynamicImage::new_rgb8(85,54).write_to(&mut background,image::ImageFormat::Png).expect("background");
-                let settings = Settings::new(storage, fixture_template(), "image/png", background.into_inner(), include_bytes!("../../../tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(), vec!["Fixture reception".to_owned()], photo::Limits::new(1,1 << 30,2,2 << 30).expect("limits"),render::Resolution::try_from(300).expect("resolution")).expect("settings");
+                let settings = Settings::new(storage, fixture_template(), "image/png", background.into_inner(), include_bytes!("../../../tests/fixtures/fonts/NotoSansSC-Regular.otf").to_vec(), vec!["Fixture reception".to_owned()], photo::Limits::new(1,1 << 30,2,2 << 30).expect("limits"),Limits::new(100,1 << 30,1000,10 << 30).expect("badge limits"),render::Resolution::try_from(300).expect("resolution")).expect("settings");
                 let proxy = fixture::database_proxy::Proxy::start(&server).await;
                 let context = Context::new(authentication::proxied(&database,&proxy)).await.expect("context");
                 let services = application_services(&context,ServicesSettings::new(4,crate::identity::message::Limits::default(),authentication::session_settings(),crate::registration::Limits::default(),authentication::avatar_settings()).expect("services settings").with_application(settings),&supplier).await;

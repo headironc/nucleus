@@ -579,6 +579,10 @@ mod tests {
                 "NUCLEUS_WORKFORCE__APPLICATION__PHOTO_LIMITS".into(),
                 r#"{"person_files":100,"person_bytes":1073741824,"total_files":1000,"total_bytes":10737418240}"#.into(),
             ),
+            (
+                "NUCLEUS_WORKFORCE__APPLICATION__BADGE_LIMITS".into(),
+                r#"{"person_files":100,"person_bytes":1073741824,"total_files":1000,"total_bytes":10737418240}"#.into(),
+            ),
             ("NUCLEUS_WORKFORCE__APPLICATION__PIXELS_PER_INCH".into(), "300".into()),
             (
                 "NUCLEUS_WORKFORCE__APPLICATION__TEMPLATE".into(),
@@ -613,6 +617,7 @@ mod tests {
             "TEMPLATE",
             "PICKUPS",
             "PHOTO_LIMITS",
+            "BADGE_LIMITS",
             "PIXELS_PER_INCH",
         ] {
             let missing = format!("NUCLEUS_WORKFORCE__APPLICATION__{field}");
@@ -630,6 +635,11 @@ mod tests {
             ("PICKUPS", "[]"),
             ("PICKUPS", r#"[" "]"#),
             ("PHOTO_LIMITS", "{}"),
+            ("BADGE_LIMITS", "{}"),
+            (
+                "BADGE_LIMITS",
+                r#"{"person_files":2,"person_bytes":1,"total_files":1,"total_bytes":1}"#,
+            ),
             (
                 "PHOTO_LIMITS",
                 r#"{"person_files":1,"person_bytes":0,"total_files":1,"total_bytes":1}"#,

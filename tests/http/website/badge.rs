@@ -32,6 +32,8 @@ pub(super) fn settings() -> (domain::workforce::application::Settings, Directory
         vec!["Fixture reception".to_owned()],
         domain::workforce::application::photo::Limits::new(4, 1 << 30, 8, 2 << 30)
             .expect("isolated photo limits"),
+        domain::workforce::application::Limits::new(4, 1 << 30, 8, 2 << 30)
+            .expect("isolated badge limits"),
         domain::workforce::application::render::Resolution::try_from(300)
             .expect("fixture resolution"),
     )

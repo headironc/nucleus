@@ -14,6 +14,7 @@ pub struct Settings {
     pub(super) font: Arc<Vec<u8>>,
     pub(super) pickups: Vec<String>,
     pub(super) photo_limits: photo::Limits,
+    pub(super) badge_limits: super::Limits,
     pub(super) resolution: super::render::Resolution,
     pub(super) resources: [(ResourceId, &'static str, &'static str, i64); 2],
     text: Arc<Mutex<Text>>,
@@ -62,6 +63,7 @@ impl Settings {
         font: Vec<u8>,
         pickups: Vec<String>,
         photo_limits: photo::Limits,
+        badge_limits: super::Limits,
         resolution: super::render::Resolution,
     ) -> Result<Self, Error> {
         Self::validate(&template, &pickups, background_media)?;
@@ -100,6 +102,7 @@ impl Settings {
             font,
             pickups,
             photo_limits,
+            badge_limits,
             resolution,
             resources,
             text,
@@ -313,6 +316,8 @@ mod tests {
             font.to_vec(),
             vec!["Fixture pickup".to_owned()],
             super::photo::Limits::new(100, 1 << 30, 1000, 10 << 30).expect("fixture capacity"),
+            super::super::Limits::new(100, 1 << 30, 1000, 10 << 30)
+                .expect("fixture badge capacity"),
             super::super::render::Resolution::try_from(300).expect("fixture resolution"),
         )
         .expect("valid isolated template");
