@@ -92,6 +92,7 @@ function actions(source: string, page: NativePage) {
 test.each(["current", "all"] as const)("native %s unknown exposes only the original-result action across page reopening", async scope => {
   const h = await native(scope);
   expect(actions(h.source, h.page)).toEqual([{ binding: "recover", text: "查看退出结果" }]);
+  expect(h.page.data.message).toBe("请查看退出结果。");
   const count = h.platform.requests.length;
   h.page.onHide(); h.page.onShow(); await tick();
   expect(h.platform.requests).toHaveLength(count);
@@ -100,6 +101,7 @@ test.each(["current", "all"] as const)("native %s unknown exposes only the origi
   expect(request.method).toBe("GET"); expect(request.url).toEndWith(`/revocations?operation_id=${h.original.operation}`);
   h.platform.reply(count, { code: "ok", original: null, count: 0, revocations: [] }); await tick();
   expect(actions(h.source, h.page)).toEqual([{ binding: "recover", text: "查看退出结果" }]);
+  expect(h.page.data.message).toBe("请查看退出结果。");
 });
 
 test.each(["current", "all"] as const)("native %s offers current-login checking only when original recovery expires or cannot be read", async scope => {
@@ -133,6 +135,7 @@ test.each([
   const h = await native(scope, true, { path, status });
   expect(actions(h.source, h.page)).toEqual([{ binding: "recover", text: "查看退出结果" }]);
   expect(h.page.data.sessionsReady ?? false).toBe(false);
+  expect(h.page.data.message).toBe(scope === "all" ? "登录列表暂时无法加载，可先查看退出结果。" : "请查看退出结果。");
   const index = h.platform.requests.length;
   h.page.recover(); const request = await h.platform.next(index);
   expect(request.url).toEndWith(`/revocations?operation_id=${h.original.operation}`);

@@ -21,7 +21,7 @@ Page({
     identity.subscribe((view: View) => {
       this.setData({ phase: view.phase, busy: view.busy, canCheck: view.canCheck, canLogin: view.canLogin,
         canRecover: view.canRecover, logoutPending: view.logoutPending, sessionsReady: view.sessionsReady,
-        message: view.message, homeAction: view.homeAction, recoveryKind: view.recoveryKind, ...selfPresentation(view, "sessions"),
+        homeAction: view.homeAction, recoveryKind: view.recoveryKind, ...selfPresentation(view, "sessions"),
         sessions: view.sessions.map(item => ({ id: item.id, sourceLabel: item.source === "website" ? "网站" : "小程序",
           date: loginDate(item.createdAt), current: item.current })) });
     });

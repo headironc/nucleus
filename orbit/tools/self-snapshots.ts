@@ -237,7 +237,9 @@ try {
     const page = await browser.newPage({ viewport: { width, height: 844 }, deviceScaleFactor: 2 });
     await page.route("**/*", route => route.abort());
     for (const variant of selectedVariants) {
-      const view = variant.view, own = variant.page === "account", home = variant.page === "home", { heading } = selfPresentation(view, own ? "account" : "sessions");
+      const own = variant.page === "account", home = variant.page === "home";
+      const presentation = selfPresentation(variant.view, own ? "account" : "sessions");
+      const view = { ...variant.view, message: presentation.message }, { heading } = presentation;
       const emblem = `<view class="self-status-emblem ${view.busy ? "self-spinner" : ""}">${view.busy ? "" : view.phase === "complete" ? "✓" : "!"}</view>`;
       const notice = view.message && !view.busy ? `<view class="notice">${escape(view.message)}</view>` : "";
       const statusCopy = view.message && !view.busy ? `<view class="body-copy self-status-copy">${escape(view.message)}</view>` : "";
