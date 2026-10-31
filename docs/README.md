@@ -20,6 +20,7 @@
 | 个人 main 固定发布候选与可信晋级工具      | 已退役   | [历史晋级契约](engineering/review-gate.md#个人-main-固定发布候选)；自动程序和专属回归已移除；历史源码与外部原操作材料保留                                                  |
 | 个人 dev 独立 PR 准入与可信 squash        | 已退役   | [历史 dev 契约](engineering/review-gate.md#个人-dev-严格同步-pr)；自动程序和专属回归已移除；历史源码与外部原操作材料保留                                                   |
 | 普通开发 PR 审查自动核验与 App 批准       | 目标     | [机器合同与源码](engineering/review-approval.md)已具备本地模拟；真实凭据、批准、撤回及部署待验收，不恢复旧控制器                                                           |
+| Cladiron App 与安装身份元数据读取         | 目标     | [独立读取入口](engineering/app-metadata.md)提供无秘密模拟；真实凭据使用与工作流执行待验收                                                                                  |
 | 网站当前身份、本人资料与账户会话封印      | 已交付   | [当前身份](identity/current.md)、[账户](identity/account.md)、[会话事实](identity/session.md)                                                                              |
 | Halo 网站本人姓名与身份证尾号摘要         | 已交付   | [当前身份](identity/current.md#本人账户投影)、[页面](client/pages.md#网站本人账户设计稿)                                                                                   |
 | Halo 网站本人微信绑定事实摘要             | 已交付   | [当前身份](identity/current.md#本人账户投影)、[页面](client/pages.md#网站本人账户设计稿)                                                                                   |
@@ -98,6 +99,7 @@
 | [业务交付顺序](engineering/delivery.md)                 | 实施切片、开发循环、持续授权、审查与 App 批准目标、分支提升、剩余范围与依赖及验收       |
 | [审查关卡契约](engineering/review-gate.md)              | 退役部署的身份、候选及基线绑定，以及保留的原操作历史与恢复解释                          |
 | [Cladiron 批准机器合同](engineering/review-approval.md) | 普通开发 PR 的机器证据、额度选择输入、批准原操作及未知结果恢复                          |
+| [App 安装元数据](engineering/app-metadata.md)           | 固定 App 与安装身份读取、来源、权限投影及安全失败边界                                   |
 | [模型选择与协作](engineering/models.md)                 | 模型默认值与升级、运行限制、委派接纳和上下文接续                                        |
 | [模型行为场景](engineering/model-scenarios.md)          | 模型与交付流程的验收输入、可观察预期与失败条件                                          |
 | [Claude Code 调用](engineering/claude-code.md)          | 经官方 DeepSeek 或 OpenCode 的只读、有界执行调用、工具审批、输出与失败恢复边界          |
