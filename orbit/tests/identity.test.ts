@@ -117,12 +117,36 @@ test("R2 unknown recovery outlives fill-proof expiry and never exchanges another
   expect(h.platform.requests.filter(value => value.url.endsWith("/sessions"))).toHaveLength(0);
 });
 
-test("R2 mobile_taken offers a reachable fresh phone entry", async () => {
+test.each(["login", "registration"] as const)("original R2 mobile_taken offers fresh verification and the current result selects %s", async next => {
   const h = setup({ version: 1, registration: { proof: proof(), createdAt: epoch, deadline: epoch + 600000 } });
   await h.controller.show(); const work = h.controller.register("张宁", "11010519491231002X");
-  await h.platform.next(0); h.platform.reply(0, { code: "mobile_taken" }, 409); await work;
+  await h.platform.next(0); h.platform.disconnect(0); await work;
+  h.time(epoch + 5000);
+  const recovery = h.controller.recover(); await h.platform.next(1);
+  expect(h.platform.requests[1].header["Operation-Id"]).toBe(h.platform.requests[0].header["Operation-Id"]);
+  h.platform.reply(1, { code: "mobile_taken" }, 409); await recovery;
+  expect(h.controller.snapshot().message).toBe("本次注册未完成。请重新验证手机号，再按页面提示继续。");
   expect(h.controller.snapshot().canLogin).toBe(true);
   expect(h.platform.records().registration).toBeUndefined();
+  const verification = h.controller.authorize("fresh-phone-event"); await h.platform.next(2);
+  expect(JSON.parse(h.platform.requests[2].data!).credential).toEqual({ type: "mobile", code: "fresh-phone-event" });
+  expect(h.platform.requests[2].header["Operation-Id"]).not.toBe(h.platform.requests[0].header["Operation-Id"]);
+  h.platform.reply(2, next === "login" ? { code: "ok", session: session() } : { code: "ok", registration: proof() });
+  if (next === "login") { await h.platform.next(3); h.platform.reply(3, { code: "ok", account: account() }); }
+  await verification;
+  expect(h.controller.snapshot().phase).toBe(next === "login" ? "account" : "registration");
+});
+
+test("original R2 id_number_taken describes the original registration without asserting current ownership", async () => {
+  const h = setup({ version: 1, registration: { proof: proof(), createdAt: epoch, deadline: epoch + 600000 } });
+  await h.controller.show(); const work = h.controller.register("张宁", "11010519491231002X");
+  await h.platform.next(0); h.platform.disconnect(0); await work; h.time(epoch + 5000);
+  const recovery = h.controller.recover(); await h.platform.next(1);
+  h.platform.reply(1, { code: "id_number_taken" }, 409); await recovery;
+  expect(h.controller.snapshot()).toMatchObject({ phase: "registration", canLogin: false,
+    message: "本次注册时，该身份证号已被使用。请核对填写的号码。" });
+  expect(h.platform.records().registration?.pending).toBeUndefined();
+  expect(h.platform.records().registration?.proof).toEqual(proof());
 });
 
 test("onHide and switching reject ignored-abort late responses; onShow verifies before displaying", async () => {

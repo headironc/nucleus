@@ -53,7 +53,7 @@ for (const kind of ["authentication", "registration"] as const) {
       await (kind === "authentication" ? h.controller.authorize("phone-code") : h.controller.register("张宁", "11010519491231002X"));
       expect(fault.attempts()).toBe(2);
       expect(h.platform.requests).toHaveLength(0);
-      expect(h.controller.snapshot().message).toBe("设备暂时无法保存办理信息，本次操作尚未发送。");
+      expect(h.controller.snapshot().message).toBe("本次尚未提交，请重新检查。");
       expect(pending(h, kind)?.uncertain).toBe(false);
     } finally { fault.spy.mockRestore(); }
   });
@@ -73,11 +73,29 @@ for (const kind of ["authentication", "registration"] as const) {
         expect(h.platform.requests).toHaveLength(1);
         expect(pending(h, kind)).toEqual(before);
         expect(h.controller.snapshot().message).toBe(unknown ?
-          "设备暂时无法保存办理结果，请重新检查。此前办理结果仍待确认。" :
-          "设备暂时无法保存办理信息，本次操作尚未发送。");
+          `暂时无法确认${kind === "authentication" ? "登录" : "注册"}结果，请重新检查。` :
+          "本次尚未提交，请重新检查。");
       } finally { fault.spy.mockRestore(); }
     });
   }
+
+  test(`${kind}: a failed current-account save after session handoff does not call the completed POST unsent`, async () => {
+    const { h, work } = await begin(kind);
+    h.platform.reply(0, { code: "ok", session: session() }, kind === "registration" ? 201 : 200);
+    await h.platform.next(1);
+    h.platform.storageWriteFails = true;
+    h.platform.reply(1, { code: "ok", account: account() });
+    await work;
+    expect(h.controller.snapshot()).toMatchObject({ phase: "unavailable", name: "", canLogin: false, canCheck: true,
+      message: "个人资料暂时无法加载，请重新检查。" });
+    h.platform.storageWriteFails = false;
+    expect(h.platform.records().session?.id).toBe(ids.session);
+    const check = h.controller.check(); await h.platform.next(2);
+    expect(h.platform.requests[2].method).toBe("GET");
+    h.platform.reply(2, { code: "ok", account: account() }); await check;
+    expect(h.controller.snapshot().phase).toBe("account");
+    expect(h.platform.requests.filter(request => request.method === "POST")).toHaveLength(1);
+  });
 
   for (const exit of ["hide", "crash"] as const) {
     test(`${kind}: rate limit, recovery, ${exit} and reopening preserve an unknown attempt`, async () => {
@@ -185,6 +203,14 @@ test("background stops a pending local cleanup retry and resume cleans without H
   h.platform.storageReadFails = false; h.time(epoch + 610000); h.controller.resume();
   expect(pending(h, "registration")).toBeUndefined();
   expect(h.platform.requests).toHaveLength(1);
+});
+
+test.each(["authentication", "registration"] as const)("expired unresolved %s names the actual earlier operation", async kind => {
+  const h = setup({ version: 1, unresolved: kind });
+  await h.controller.show();
+  expect(h.controller.snapshot()).toMatchObject({ phase: "login", canLogin: true, canRecover: false,
+    message: `暂时无法确认此前的${kind === "authentication" ? "登录" : "注册"}结果。可重新验证手机号后打开个人账户。` });
+  expect(h.platform.requests).toHaveLength(0);
 });
 
 test("GET cancellation leaves no authentication backoff", async () => {
