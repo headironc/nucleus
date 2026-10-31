@@ -53,6 +53,7 @@
 | 工牌模板读取、照片准备、本人提交与历史    | 已交付   | [模板与照片](workforce/media.md)、[申请](workforce/applications.md)                                                                                                        |
 | Halo 网站工牌审核与本人审核结果           | 待验收   | [工牌审核页面](client/pages.md#网站工牌审核)、[网站检查](../halo/README.md#工牌审核)；客户端源码与受控检查随本片交付，真实后端组合另验                                     |
 | 工牌管理审批与附理由驳回                  | 已交付   | [申请](workforce/applications.md)；后端管理查询、审批及本人审核结果，网站兼容与页面组合验收由客户端集成覆盖                                                                |
+| Halo 网站工牌审核与本人审核结果           | 待验收   | [工牌审核页面](client/pages.md#网站工牌审核)、[网站检查](../halo/README.md#工牌审核)；客户端源码与受控检查随本片交付，真实后端组合另验                                     |
 | 工牌取消、成品与发放                      | 目标     | [申请](workforce/applications.md)、[成品与发放](workforce/fulfillment.md)                                                                                                  |
 | 栏目创建领域组件                          | 已交付   | [栏目](content/columns.md)；含永久原结果、导航顺序与封印核验；尚未装配栏目 HTTP 入口                                                                                       |
 | 网站栏目管理与 HTTP 接入                  | 目标     | [栏目](content/columns.md)、[内容 HTTP](content/http.md)                                                                                                                   |
