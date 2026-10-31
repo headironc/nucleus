@@ -6,9 +6,13 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 use uuid::Uuid;
 
-use crate::workforce::{
-    directory::{department, roster, title},
-    number::Number,
+use crate::{
+    identity::person,
+    pagination::Pagination,
+    workforce::{
+        directory::{department, roster, title},
+        number::Number,
+    },
 };
 
 macro_rules! identifier {
@@ -57,6 +61,136 @@ pub enum Kind {
 #[schema(as = application::Status)]
 pub enum Status {
     Submitted,
+    Approved,
+    Rejected,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(tag = "status", rename_all = "snake_case")]
+#[schema(as = application::Decision)]
+pub enum Decision {
+    Submitted,
+    Approved {
+        #[serde(rename = "reviewerId")]
+        reviewer_id: person::Id,
+        #[serde(rename = "reviewerName")]
+        reviewer_name: String,
+        #[serde(rename = "reviewedAt")]
+        reviewed_at: DateTime<Utc>,
+    },
+    Rejected {
+        #[serde(rename = "reviewerId")]
+        reviewer_id: person::Id,
+        #[serde(rename = "reviewerName")]
+        reviewer_name: String,
+        #[serde(rename = "reviewedAt")]
+        reviewed_at: DateTime<Utc>,
+        #[serde(rename = "rejectionReason")]
+        rejection_reason: Reason,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema, ToSql)]
+#[serde(transparent)]
+#[postgres(transparent)]
+#[schema(as = application::Reason, value_type = String, min_length = 1)]
+pub struct Reason(String);
+
+impl<'de> Deserialize<'de> for Reason {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        Self::try_from(value).map_err(serde::de::Error::custom)
+    }
+}
+
+impl TryFrom<String> for Reason {
+    type Error = &'static str;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let value = value.trim();
+        if value.is_empty() || value.contains('\0') {
+            return Err("a nonempty rejection reason without NUL is required");
+        }
+        Ok(Self(value.to_owned()))
+    }
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(tag = "decision", rename_all = "snake_case", deny_unknown_fields)]
+#[schema(as = application::ReviewInput)]
+pub enum ReviewInput {
+    Approve {},
+    Reject { reason: Reason },
+}
+
+#[derive(Clone, Copy, Deserialize)]
+#[serde(try_from = "ManagementInput")]
+pub struct ManagementQuery {
+    pub(super) pagination: Pagination,
+    pub(super) status: Status,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "camelCase")]
+struct ManagementInput {
+    page: Option<String>,
+    size: Option<String>,
+    status: Option<Status>,
+}
+
+impl TryFrom<ManagementInput> for ManagementQuery {
+    type Error = &'static str;
+    fn try_from(input: ManagementInput) -> Result<Self, Self::Error> {
+        let page = match input.page {
+            Some(value) => match value.parse() {
+                Ok(page) => page,
+                Err(_) => return Err("invalid page"),
+            },
+            None => 1,
+        };
+        let size = match input.size {
+            Some(value) => match value.parse() {
+                Ok(size) => size,
+                Err(_) => return Err("invalid size"),
+            },
+            None => 20,
+        };
+        let pagination = match Pagination::new(page, size) {
+            Ok(pagination) => pagination,
+            Err(_) => return Err("invalid pagination"),
+        };
+        Ok(Self {
+            pagination,
+            status: input.status.unwrap_or(Status::Submitted),
+        })
+    }
+}
+
+#[cfg(test)]
+mod review_input_tests {
+    use super::*;
+
+    #[test]
+    fn decisions_require_their_exact_fields_and_a_real_reason() {
+        for value in [
+            r#"{"decision":"approve"}"#,
+            r#"{"decision":"reject","reason":" Correct the name "}"#,
+        ] {
+            assert!(serde_json::from_str::<ReviewInput>(value).is_ok());
+        }
+        for value in [
+            r#"{"decision":"approve","reason":"unexpected"}"#,
+            r#"{"decision":"reject"}"#,
+            r#"{"decision":"reject","reason":null}"#,
+            r#"{"decision":"reject","reason":"\u3000\n"}"#,
+            r#"{"decision":"reject","reason":"\u0000"}"#,
+            r#"{"decision":"rejected","reason":"text"}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<ReviewInput>(value).is_err(),
+                "{value}"
+            );
+        }
+    }
 }
 
 /// Coordinates and dimensions are integer micrometres, relative to the top-left canvas.
@@ -287,10 +421,62 @@ pub struct Summary {
 #[derive(Debug, Clone, Serialize, ToSchema)]
 #[schema(as = application::Application)]
 pub struct Application {
+    pub(super) id: Id,
+    pub(super) kind: Kind,
+    #[serde(rename = "submittedAt")]
+    pub(super) submitted_at: DateTime<Utc>,
     #[serde(flatten)]
-    pub(super) summary: Summary,
+    pub(super) decision: Decision,
     pub(super) snapshot: Snapshot,
     pub(super) photo: Photo,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[schema(as = application::ManagedSummary)]
+pub struct ManagedSummary {
+    #[serde(flatten)]
+    pub(super) summary: Summary,
+    pub(super) name: String,
+    pub(super) printed_number: String,
+    pub(super) department: Department,
+}
+
+#[derive(Serialize, ToSchema)]
+#[schema(as = application::ManagedList)]
+pub struct ManagedList {
+    pub(super) count: i64,
+    pub(super) applications: Vec<ManagedSummary>,
+}
+
+#[derive(Serialize, ToSchema)]
+#[schema(as = application::DirectoryValue)]
+pub struct DirectoryValue {
+    pub(super) name: String,
+    pub(super) enabled: bool,
+}
+
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[schema(as = application::Current)]
+pub struct Current {
+    pub(super) name: String,
+    #[schema(required)]
+    pub(super) number: Option<Number>,
+    pub(super) account_active: bool,
+    pub(super) participation_active: bool,
+    pub(super) department: DirectoryValue,
+    #[schema(required)]
+    pub(super) position: Option<DirectoryValue>,
+    #[schema(required)]
+    pub(super) title: Option<DirectoryValue>,
+}
+
+#[derive(Serialize, ToSchema)]
+#[schema(as = application::ManagedDetail)]
+pub struct ManagedDetail {
+    pub(super) application: Application,
+    pub(super) current: Current,
 }
 
 #[derive(Serialize, ToSchema)]
