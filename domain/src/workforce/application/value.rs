@@ -257,6 +257,8 @@ mod review_input_tests {
 
 #[cfg(test)]
 mod cancellation_tests {
+    #![allow(clippy::expect_used)]
+
     use super::*;
 
     #[test]

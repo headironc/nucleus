@@ -692,6 +692,8 @@ pub fn fixture_template() -> Template {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
+    mod cancellation;
+
     use std::{io::Cursor, sync::Arc, time::Duration};
 
     use serde_json::json;
