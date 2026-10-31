@@ -1,8 +1,11 @@
 //! Loopback supplier stubs for Siteverify and PNVS.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    collections::HashMap,
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 
 use axum::{Router, body::Bytes, http::header, routing::post};
@@ -104,11 +107,25 @@ impl Drop for Supplier {
     }
 }
 
+impl Supplier {
+    /// Abort and join the unused captcha stub before reporting a clean native fixture stop.
+    pub(crate) async fn stop(mut self) -> Result<(), String> {
+        self.task.abort();
+        match (&mut self.task).await {
+            Err(error) if error.is_cancelled() => Ok(()),
+            Ok(()) => Err("captcha supplier stopped before the explicit stop request".into()),
+            Err(error) => Err(format!("captcha supplier task did not stop: {error}")),
+        }
+    }
+}
+
 pub(crate) struct Mini {
     port: u16,
     task: JoinHandle<()>,
     pub(crate) calls: Arc<AtomicUsize>,
     pub(crate) tokens: Arc<AtomicUsize>,
+    codes: Arc<Mutex<HashMap<String, usize>>>,
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
 }
 
 impl Mini {
@@ -119,8 +136,10 @@ impl Mini {
         let port = listener.local_addr().expect("mini address").port();
         let calls = Arc::new(AtomicUsize::new(0));
         let tokens = Arc::new(AtomicUsize::new(0));
+        let codes = Arc::new(Mutex::new(HashMap::new()));
         let token_calls = Arc::clone(&tokens);
         let phone_calls = Arc::clone(&calls);
+        let code_calls = Arc::clone(&codes);
         let router = Router::new()
             .route("/cgi-bin/stable_token", post(move |axum::Json(input): axum::Json<serde_json::Value>| {
                 token_calls.fetch_add(1, Ordering::SeqCst);
@@ -129,16 +148,24 @@ impl Mini {
             }))
             .route("/wxa/business/getuserphonenumber", post(move |axum::Json(input): axum::Json<serde_json::Value>| {
                 phone_calls.fetch_add(1, Ordering::SeqCst);
+                let code = input["code"].as_str().expect("phone code").to_owned();
+                *code_calls.lock().expect("fixture code counts").entry(code.clone()).or_default() += 1;
+                let response = match code.as_str() {
+                    "invalid" => serde_json::json!({"errcode":40029}),
+                    "unsupported" => serde_json::json!({"errcode":0,"phone_info":{"phoneNumber":"12025550100","purePhoneNumber":"2025550100","countryCode":"1","watermark":{"appid":"mini-fixture"}}}),
+                    value if value.starts_with("b-") => serde_json::json!({"errcode":0,"phone_info":{"phoneNumber":"8613700000000","purePhoneNumber":"13700000000","countryCode":"86","watermark":{"appid":"mini-fixture"}}}),
+                    _ => serde_json::json!({"errcode":0,"phone_info":{"phoneNumber":"8613800000000","purePhoneNumber":"13800000000","countryCode":"86","watermark":{"appid":"mini-fixture"}}}),
+                };
                 async move {
-                    match input["code"].as_str().expect("phone code") {
-                        "invalid" => axum::Json(serde_json::json!({"errcode":40029})),
-                        "unsupported" => axum::Json(serde_json::json!({"errcode":0,"phone_info":{"phoneNumber":"12025550100","purePhoneNumber":"2025550100","countryCode":"1","watermark":{"appid":"mini-fixture"}}})),
-                        _ => axum::Json(serde_json::json!({"errcode":0,"phone_info":{"phoneNumber":"8613800000000","purePhoneNumber":"13800000000","countryCode":"86","watermark":{"appid":"mini-fixture"}}})),
-                    }
+                    axum::Json(response)
                 }
             }));
+        let (stop, stopped) = tokio::sync::oneshot::channel();
         let task = tokio::spawn(async move {
             axum::serve(listener, router)
+                .with_graceful_shutdown(async {
+                    let _ = stopped.await;
+                })
                 .await
                 .expect("mini supplier server");
         });
@@ -147,6 +174,31 @@ impl Mini {
             task,
             calls,
             tokens,
+            codes,
+            stop: Some(stop),
+        }
+    }
+
+    /// Number of distinct fictional exchanges without exposing their code values.
+    pub(crate) fn distinct_codes(&self) -> usize {
+        self.codes.lock().expect("fixture code counts").len()
+    }
+
+    /// Drain the loopback supplier and prove its serving task ended.
+    pub(crate) async fn stop(mut self) -> Result<(), String> {
+        self.stop
+            .take()
+            .ok_or("mini supplier already stopped")?
+            .send(())
+            .map_err(|_| "mini supplier ended before stop")?;
+        match tokio::time::timeout(std::time::Duration::from_secs(5), &mut self.task).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Err("mini supplier task failed".into()),
+            Err(_) => {
+                self.task.abort();
+                let _ = (&mut self.task).await;
+                Err("mini supplier drain timed out".into())
+            }
         }
     }
 
