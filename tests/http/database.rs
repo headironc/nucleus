@@ -32,31 +32,34 @@ pub(crate) fn server() -> Arc<fixture::Server> {
         return server;
     }
     let server = Arc::new(fixture::Server::start());
-    Runtime::new().expect("runtime").block_on(async {
-        let session = connections(&server, "postgres", "postgres")
-            .recover()
-            .await
-            .expect("admin");
-        for user in ["steward", "clerk"] {
-            let sql: String = session
-                .client()
-                .query_one(
-                    "SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', $1::text, $2::text)",
-                    &[&user, &fixture::PASSWORD],
-                )
-                .await
-                .expect("quote role")
-                .get(0);
-            session
-                .client()
-                .batch_execute(&sql)
-                .await
-                .expect("fictional role");
-        }
-        session.terminate().await.expect("end admin");
-    });
+    Runtime::new().expect("runtime").block_on(roles(&server));
     *shared = Arc::downgrade(&server);
     server
+}
+
+/// Prepare the same fictional roles for a supervisor-owned, unshared server.
+pub(crate) async fn roles(server: &fixture::Server) {
+    let session = connections(server, "postgres", "postgres")
+        .recover()
+        .await
+        .expect("admin");
+    for user in ["steward", "clerk"] {
+        let sql: String = session
+            .client()
+            .query_one(
+                "SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', $1::text, $2::text)",
+                &[&user, &fixture::PASSWORD],
+            )
+            .await
+            .expect("quote role")
+            .get(0);
+        session
+            .client()
+            .batch_execute(&sql)
+            .await
+            .expect("fictional role");
+    }
+    session.terminate().await.expect("end admin");
 }
 
 pub(crate) fn connections(server: &fixture::Server, name: &str, user: &str) -> Connections {
