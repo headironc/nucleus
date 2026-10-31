@@ -297,8 +297,9 @@ impl Write for Bounded {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::expect_used)]
-    use super::*;
     use serde_json::json;
+
+    use super::*;
 
     #[test]
     fn resolution_uses_physical_units_and_checks_before_allocation() {
