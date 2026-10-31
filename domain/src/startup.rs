@@ -433,6 +433,7 @@ impl Services {
                 app.clone(),
                 current.clone(),
                 number.clone(),
+                Arc::clone(&keys),
                 settings.application,
             ));
             let appointment =

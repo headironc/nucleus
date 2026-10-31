@@ -63,7 +63,7 @@ pub(super) const MANIFEST: Manifest = Manifest {
 const TABLES: &[Table] = &[
     table("workforce.resources", &[Select, Insert], "", ""),
     table("workforce.photos", &[Select, Insert], "", ""),
-    table("workforce.applications", &[Select, Insert], "", ""),
+    table("workforce.applications", &[Select, Insert, Update], "", ""),
     table("audit.events", &[Select, Insert], "", ""),
     table(
         crate::content::column::COLUMNS,

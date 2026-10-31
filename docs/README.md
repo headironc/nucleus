@@ -52,8 +52,9 @@
 | 工号生命周期与封印状态                    | 已交付   | [工号](workforce/numbers.md)                                                                                                                                               |
 | Workforce 目录、分类规则与配置完成        | 已交付   | [目录](workforce/directories.md)、[配置完成](workforce/completions.md)                                                                                                     |
 | 工牌模板读取、照片准备、本人提交与历史    | 已交付   | [模板与照片](workforce/media.md)、[申请](workforce/applications.md)                                                                                                        |
+| 工牌管理审批与附理由驳回                  | 已交付   | [申请](workforce/applications.md)；后端管理查询、审批及本人审核结果，网站兼容与页面组合验收由客户端集成覆盖                                                                |
 | Halo 网站工牌审核与本人审核结果           | 待验收   | [工牌审核页面](client/pages.md#网站工牌审核)、[网站检查](../halo/README.md#工牌审核)；客户端源码与受控检查随本片交付，真实后端组合另验                                     |
-| 工牌取消、管理审批、成品与发放            | 目标     | [申请](workforce/applications.md)、[成品与发放](workforce/fulfillment.md)                                                                                                  |
+| 工牌取消、成品与发放                      | 目标     | [申请](workforce/applications.md)、[成品与发放](workforce/fulfillment.md)                                                                                                  |
 | 栏目创建领域组件                          | 已交付   | [栏目](content/columns.md)；含永久原结果、导航顺序与封印核验；尚未装配栏目 HTTP 入口                                                                                       |
 | 网站栏目管理与 HTTP 接入                  | 目标     | [栏目](content/columns.md)、[内容 HTTP](content/http.md)                                                                                                                   |
 | 网站内容管理与发布                        | 目标     | [草稿、版本与上线](content/publication.md)、[文章](content/articles.md)、[首页编排](content/home.md)、[内容图片](content/images.md)                                        |
@@ -78,11 +79,11 @@
 | Orbit 小程序本人登录管理                  | 受控验证 | [小程序会话](client/session.md)、[客户端恢复](client/recovery.md)；正式协议列表与所选其他登录退出、当前及全部退出连接已受控验证，微信平台与真实组合待验                    |
 | 网站及小程序其余页面                      | 目标     | [页面](client/pages.md)、[网站工程](client/website.md)                                                                                                                     |
 | 真实部署、Nginx 与 systemd 验收           | 目标     | [业务交付顺序](engineering/delivery.md#里程碑与生产准备)                                                                                                                   |
-| 工牌照片准备与提交的统一审计接入          | 已交付   | [审计](architecture.md#审计)                                                                                                                                               |
+| 工牌照片准备、提交与审批的统一审计接入    | 已交付   | [审计](architecture.md#审计)                                                                                                                                               |
 | 既有能力迁入统一审计表                    | 目标     | [审计](architecture.md#审计)                                                                                                                                               |
 | 每日备份与恢复演练                        | 目标     | [备份与恢复](operations/backup.md)                                                                                                                                         |
 
-统一审计表当前只接入工牌照片准备与申请提交，既有能力保留原历史。栏目创建领域组件不代表完整内容管理已经交付。首版公开内容的管理、发布和两端展示仍待实施。小程序公开读取不依赖手机号认证或微信身份，也不扩大工牌办理范围。旧内容设计的取舍见[网站公开内容](engineering/delivery.md#网站公开内容)。
+统一审计表当前接入工牌照片准备、申请提交与审批，既有能力保留原历史。栏目创建领域组件不代表完整内容管理已经交付。首版公开内容的管理、发布和两端展示仍待实施。小程序公开读取不依赖手机号认证或微信身份，也不扩大工牌办理范围。旧内容设计的取舍见[网站公开内容](engineering/delivery.md#网站公开内容)。
 
 后续范围与依赖见[剩余交付清单](engineering/delivery.md#剩余交付清单)。检查时机与连续交付见[开发协作与交接](engineering/delivery.md#开发协作与交接)，委派和上下文恢复见[模型政策](engineering/models.md)。[里程碑与生产准备](engineering/delivery.md#里程碑与生产准备)区分功能完成、隔离验收和真实部署证据。尚需业务决定的事项集中在[待确认事项](engineering/delivery.md#待确认事项)。
 
