@@ -1132,6 +1132,7 @@
     font-size: clamp(36px, 4.3vw, 58px);
     letter-spacing: 3px;
     line-height: 1.5;
+    text-wrap: balance;
   }
   .home-description {
     margin: 30px 0 36px;
@@ -1513,6 +1514,9 @@
   .result h1 {
     font-size: 26px;
   }
+  .result [data-result-title] {
+    text-wrap: balance;
+  }
   .result-icon {
     width: 62px;
     height: 62px;
@@ -1661,6 +1665,9 @@
     }
     .authentication-card h1 {
       font-size: 25px;
+    }
+    .result [data-result-title] {
+      font-size: 22px;
     }
     .home {
       display: flex;

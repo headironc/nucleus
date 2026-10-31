@@ -1,4 +1,5 @@
 import { CSPProvider } from "@base-ui/react/csp-provider";
+import { Button } from "@base-ui/react/button";
 import { useEffect } from "react";
 import {
   Links,
@@ -106,7 +107,6 @@ export function Footer() {
   return (
     <footer className="site-footer">
       <span>司籍处</span>
-      <span>一事一记 · 办理有据</span>
     </footer>
   );
 }
@@ -120,20 +120,23 @@ export function ErrorBoundary() {
   const missing = isRouteErrorResponse(error) && error.status === 404;
   return (
     <>
-      <title>{`${missing ? "页面未找到" : "暂时无法加载"} · 司籍处`}</title>
+      <title>{`${missing ? "找不到这个页面" : "页面暂时无法加载"} · 司籍处`}</title>
       <meta name="robots" content="noindex" />
       <Header />
       <main id="main" className="error-page">
         <p className="eyebrow">司籍处 · 网站</p>
-        <h1>{missing ? "这里还没有页面" : "页面暂时无法加载"}</h1>
-        <p>
-          {missing
-            ? "请检查链接，或返回首页。"
-            : "请稍后重新加载。已保存的办理信息仍留在当前标签页。"}{" "}
-        </p>
-        <a className="primary" href="/">
-          返回首页
-        </a>
+        <h1>{missing ? "找不到这个页面" : "页面暂时无法加载"}</h1>
+        <p>{missing ? "请检查链接，或返回首页。" : "请重新加载后再试。"}</p>
+        <div className="result-actions">
+          {!missing && (
+            <Button className="primary" onClick={() => location.reload()}>
+              重新加载
+            </Button>
+          )}
+          <a className={missing ? "primary" : "quiet-link"} href="/">
+            返回首页
+          </a>
+        </div>
       </main>
       <Footer />
     </>

@@ -158,7 +158,7 @@ test("paste replaces a full code or overwrites a shorter segment and rejects inv
     await value(page, "019945");
   }
   await paste(page, 4, "12345");
-  await expect(page.getByRole("alert")).toContainText("不能超过 6 位");
+  await expect(page.getByRole("alert")).toContainText("6 位数字");
   await value(page, "019945");
   await paste(page, 5, "001234");
   await value(page, "001234");
@@ -184,7 +184,7 @@ test("composition waits for its complete result and validates it without filteri
     }));
   });
   await value(page, "012345");
-  await expect(page.getByRole("alert")).toContainText("其他字符");
+  await expect(page.getByRole("alert")).toContainText("6 位数字");
   await first.dispatchEvent("compositionstart");
   await inputEvent(page, "#login-code", "654321", true);
   await expect(page.getByLabel("受控值")).toHaveText("012345");
@@ -222,13 +222,13 @@ test("labels, hints, errors and disabled state describe all six slots", async ({
     await expect(slots.nth(index)).toHaveAttribute("aria-invalid", "false");
   }
   await page.getByLabel("缺位", { exact: true }).check();
-  await expect(page.getByRole("alert")).toHaveText("请输入完整的 6 位验证码。");
+  await expect(page.getByRole("alert")).toHaveText("请输入 6 位短信验证码。");
   await page.getByLabel("缺位", { exact: true }).uncheck();
   await page.getByLabel("错码", { exact: true }).check();
-  await expect(page.getByRole("alert")).toContainText("验证码不正确");
+  await expect(page.getByRole("alert")).toContainText("请检查本次短信中的验证码");
   for (const input of await slots.all()) {
     await expect(input).toHaveAttribute("aria-invalid", "true");
-    await expect(input).toHaveAccessibleDescription(/验证码不正确/);
+    await expect(input).toHaveAccessibleDescription(/请检查本次短信中的验证码/);
   }
   await page.getByLabel("错码", { exact: true }).uncheck();
   await page.getByRole("button", { name: "设置示例值" }).click();
@@ -290,10 +290,10 @@ for (const replacement of ["012345", ""] as const) {
     const original = replacement === "" ? "012345" : "";
     await paste(page, 0, "12 345");
     await value(page, original);
-    await expect(page.getByRole("alert")).toContainText("其他字符");
+    await expect(page.getByRole("alert")).toContainText("6 位数字");
     await page.getByLabel("缺位", { exact: true }).check();
     await page.getByLabel("缺位", { exact: true }).uncheck();
-    await expect(page.getByRole("alert")).toContainText("其他字符");
+    await expect(page.getByRole("alert")).toContainText("6 位数字");
     await page.getByRole("button", {
       name: replacement === "" ? "清空" : "设置示例值", exact: true,
     }).click();
@@ -302,7 +302,7 @@ for (const replacement of ["012345", ""] as const) {
     for (const input of await page.locator(".code-slots input").all())
       await expect(input).toHaveAttribute("aria-invalid", "false");
     await page.getByLabel("错码", { exact: true }).check();
-    await expect(page.getByRole("alert")).toContainText("验证码不正确");
+    await expect(page.getByRole("alert")).toContainText("请检查本次短信中的验证码");
     await expect(page.getByLabel("输入变更次数")).toHaveText("0");
   });
 }
@@ -332,7 +332,7 @@ for (const width of [1440, 768, 390, 320]) {
     await expect(slots.nth(1)).toBeFocused();
     await expect(slots.nth(1)).toHaveCSS("outline-style", "solid");
     await page.screenshot({
-      path: `test-results/code-input-${width}.png`, fullPage: true,
+      path: test.info().outputPath(`code-input-${width}.png`), fullPage: true,
     });
   });
 }
