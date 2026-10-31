@@ -1692,7 +1692,7 @@
 
 @layer components {
   .logout-layout {
-    max-width: 1080px;
+    max-width: 784px;
     min-height: 680px;
     margin: auto;
     padding: 48px 32px 72px;
@@ -1705,7 +1705,8 @@
   }
   .logout-columns {
     display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 720px;
     gap: 28px;
     align-items: start;
   }
@@ -1719,26 +1720,16 @@
     font-size: 27px;
     margin: 18px 0;
     overflow-wrap: anywhere;
+    text-wrap: balance;
   }
   .logout-panel .result-actions {
     align-items: stretch;
   }
+  .logout-panel .result-copy {
+    text-wrap: balance;
+  }
   .logout-panel .result-actions > * {
     text-align: center;
-  }
-  .logout-guide {
-    border-top: 2px solid var(--accent);
-    padding: 24px 8px;
-  }
-  .logout-guide h2 {
-    font-size: 22px;
-    margin: 8px 0 16px;
-  }
-  .logout-guide ul {
-    padding-left: 20px;
-  }
-  .logout-guide li {
-    margin-bottom: 14px;
   }
   .logout-leave {
     width: min(480px, calc(100% - 32px));
@@ -1804,10 +1795,6 @@
   .logout-consequences p {
     font-size: 15px;
   }
-  .logout-preserved {
-    color: var(--sub);
-    font-size: 14px;
-  }
   .result-meta {
     margin: 24px 0 0;
     padding-top: 20px;
@@ -1827,24 +1814,6 @@
   .result-meta dd {
     margin: 0;
     color: var(--ink);
-  }
-  .current-login {
-    margin-top: 24px;
-    padding: 16px 20px;
-    background: var(--ok-soft);
-    border-left: 3px solid var(--ok-rule);
-  }
-  .current-login strong {
-    display: block;
-  }
-  .current-login p {
-    font-size: 14px;
-    margin-top: 4px;
-  }
-  .logout-panel .minor {
-    color: var(--sub);
-    font-size: 14px;
-    margin-top: 18px;
   }
   .logout-leave {
     position: fixed;
@@ -1876,9 +1845,6 @@
     }
     .logout-panel h2 {
       font-size: 24px;
-    }
-    .logout-guide {
-      padding: 20px 4px;
     }
     .logout-person {
       align-items: flex-start;

@@ -1540,10 +1540,10 @@ test("long names and both binding statuses fit every width and keep keyboard acc
     await expectAvatarReady(page);
     await expect(page.locator(".correction-panel")).toBeVisible();
     await expect(
-      page.getByRole("link", { name: "退出全部设备", exact: true }),
+      page.getByRole("link", { name: "退出全部登录", exact: true }),
     ).toBeVisible();
     await expect(
-      page.getByRole("link", { name: "退出本次登录", exact: true }),
+      page.getByRole("link", { name: "退出登录", exact: true }),
     ).toBeVisible();
     const summary = page.locator(".current-summary");
     const snapshot = await summary.ariaSnapshot();
@@ -1665,11 +1665,11 @@ test("long names and both binding statuses fit every width and keep keyboard acc
   ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(
-    page.getByRole("link", { name: "退出全部设备", exact: true }),
+    page.getByRole("link", { name: "退出全部登录", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(
-    page.getByRole("link", { name: "退出本次登录", exact: true }),
+    page.getByRole("link", { name: "退出登录", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Tab");
   await expect(

@@ -313,10 +313,10 @@ function Account({
                 更换手机号
               </a>
               <a className="quiet-link" href="/sessions/logout-all">
-                退出全部设备
+                退出全部登录
               </a>
               <a className="quiet-link" href="/sessions/logout">
-                退出本次登录
+                退出登录
               </a>
               <a className="quiet-link danger-link" href="/account/cancellation">
                 注销账户

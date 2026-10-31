@@ -155,10 +155,10 @@ test("own history reads, pagination, refresh, accessibility and responsive long 
     if (!["GET", "HEAD"].includes(request.method())) writes.push(request.url());
   });
   await expect(
-    page.getByRole("link", { name: "退出本次登录", exact: true }),
+    page.getByRole("link", { name: "退出登录", exact: true }),
   ).toHaveAttribute("href", "/sessions/logout");
   await expect(
-    page.getByRole("link", { name: "退出全部设备", exact: true }),
+    page.getByRole("link", { name: "退出全部登录", exact: true }),
   ).toHaveAttribute("href", "/sessions/logout-all");
   await expect(
     page.getByRole("link", { name: "注销账户", exact: true }),
