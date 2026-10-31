@@ -129,26 +129,31 @@ export async function reviewBadgeApplications(page: Page, context: Context) {
         value.request().method() === method &&
         value.request().headers()["session-id"] === session &&
         value.request().headers()["operation-id"] === operation,
+      { timeout: 35_000 },
     );
-    await page.evaluate(
+    const consumed = page.evaluate(
       async ({ session, path, method, input, operation }) => {
         const headers: Record<string, string> = {
           "Session-Id": session,
           "Operation-Id": operation,
         };
         if (input !== undefined) headers["Content-Type"] = "application/json";
-        await fetch(path, {
+        const response = await fetch(path, {
           method,
           headers,
           credentials: "same-origin",
           redirect: "error",
           cache: "no-store",
+          signal: AbortSignal.timeout(35_000),
           ...(input === undefined ? {} : { body: JSON.stringify(input) }),
         });
+        // Finish the browser body before Playwright inspects its retained bytes.
+        await response.arrayBuffer();
       },
       { session, path, method, input, operation },
     );
-    return response;
+    const [received] = await Promise.all([response, consumed]);
+    return received;
   };
   const setup = async (
     session: string,
@@ -746,9 +751,12 @@ export async function reviewBadgeApplications(page: Page, context: Context) {
       }),
     );
   } finally {
-    await page.unroute(routePattern, reviewRoute);
-    await page.emulateMedia({ colorScheme: theme });
-    await selectActor(manager);
-    if (viewport) await page.setViewportSize(viewport);
+    // Playwright closes timed-out pages; retain the original request failure.
+    if (!page.isClosed()) {
+      await page.unroute(routePattern, reviewRoute);
+      await page.emulateMedia({ colorScheme: theme });
+      await selectActor(manager);
+      if (viewport) await page.setViewportSize(viewport);
+    }
   }
 }
