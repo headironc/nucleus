@@ -436,8 +436,8 @@ export class Controller {
       (["invalid_input", "permission_denied"].includes(result?.value.code ?? "") && !previouslyUnknown)) {
       this.retain({ ...this.records, registration: result?.value.code === "mobile_taken" ? undefined : { ...registration, pending: undefined } });
       this.presentAnonymous();
-      this.publish({ message: result?.value.code === "id_number_taken" ? "该身份证号已用于注册，请检查填写的号码。" :
-        result?.value.code === "mobile_taken" ? "该手机号已有账户，请重新验证手机号后登录。" :
+      this.publish({ message: result?.value.code === "id_number_taken" ? "本次注册时，该身份证号已被使用。请核对填写的号码。" :
+        result?.value.code === "mobile_taken" ? "本次注册未完成。请重新验证手机号，再按页面提示继续。" :
         result?.value.code === "permission_denied" ? "目前无法创建账户。" : "请检查姓名和居民身份证号。" });
     } else if (result?.value.code === "verification_required") {
       this.retain({ ...this.records, registration: undefined, unresolved: "registration" });
