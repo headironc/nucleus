@@ -28,6 +28,7 @@
 /halo/playwright-report
 /orbit/node_modules
 /orbit/build
+/orbit/build-*/
 /orbit/.generated
 /orbit/project.private.config.json
 /.cache/nucleus-tools/

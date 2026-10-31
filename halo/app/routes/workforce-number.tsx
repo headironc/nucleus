@@ -14,7 +14,7 @@ import { AllocationController, type State } from "../workforce/allocation";
 
 export function meta() {
   return [
-    { title: "领取工号 · 司籍处" },
+    { title: "申请工号 · 司籍处" },
     { name: "robots", content: "noindex" },
   ];
 }
@@ -77,104 +77,89 @@ function copy(state: State): [string, string] {
   switch (state.kind) {
     case "entry":
       return [
-        "领取我的工号",
-        "请选择本人的人员类别。系统将按本年度分配工号，无需审批。",
+        "申请工号",
+        "请选择本人的人员类别。工号由系统自动分配，无需审批。",
       ];
     case "reading":
-      return ["正在读取员工服务", "请稍候。"];
+      return ["正在加载员工服务…", "请稍候。"];
     case "busy":
-      return ["正在确认领取结果", "请稍候。暂时离开不会取消已经提交的申请。"];
+      return ["正在办理工号申请", "请稍候。"];
     case "ineligible":
       return [
-        "暂时不能领取工号",
-        "员工服务开通且未暂停时，才可首次领取工号。请返回员工服务查看当前状态。",
+        "暂时无法申请工号",
+        "尚未加入员工服务，或服务已暂停、结束时，无法申请工号。可返回员工服务查看当前状态。",
       ];
     case "present":
-      return ["你已有工号", "请返回员工服务查看。工号无需重复领取。"];
+      return ["当前已有工号", "可返回员工服务查看。"];
     case "unavailable":
-      return ["暂时无法读取工号信息", "请稍后重试，或返回员工服务。"];
+      return ["工号信息暂时无法加载", "请重试，或返回员工服务。"];
     case "other":
       return [
         "当前账户已变化",
-        "本标签页保留了另一账户的领取申请。请切换回原账户后查看，当前账户不会继续提交。",
+        "请登录原账户后查看此前申请。当前账户不会继续办理原申请。",
       ];
     case "missing":
       return [
-        "无法继续查看本次申请",
-        "本标签页的申请信息已缺失或损坏。请返回员工服务查看当前工号，仍有疑问时联系医院管理员。",
+        "无法查看申请结果",
+        "请返回员工服务查看当前工号。此前申请的结果仍无法确认。",
       ];
     case "storage":
       return [
-        "暂时无法保存申请信息",
-        "请检查浏览器是否允许本网站保存信息，然后重新检查。已有申请的结果仍待确认，请勿重复领取。",
+        "申请信息暂时无法使用",
+        "请重新检查。申请结果未确认前，暂时不要重新申请。",
       ];
     case "reload":
-      return [
-        "请重新加载页面",
-        "本页暂时无法继续处理。申请信息会保留，重新加载后请查看本次领取结果。",
-      ];
+      return ["请重新加载", "重新加载后，请按页面提示继续。"];
     case "current": {
       switch (state.current.kind) {
         case "anonymous":
-          return [
-            "请先登录",
-            "登录后可领取本人首个工号，或查看此前的领取结果。",
-          ];
+          return ["请先登录", "登录后可申请工号，或继续查看此前申请结果。"];
         case "expired":
           return [
             "请重新登录",
-            "当前登录已失效。请登录原账户，再返回本页查看申请。",
+            "当前登录已失效。请使用原账户登录，再返回本页。",
           ];
         case "denied":
-          return ["暂时无法读取本人信息", "请返回个人账户或首页。"];
+          return ["目前无法查看本人信息", "可返回个人账户或首页。"];
         case "reload":
-          return ["请重新加载页面", "重新加载后再查看本次领取结果。"];
+          return ["请重新加载", "重新加载后，请按页面提示继续。"];
         case "storage":
-          return [
-            "暂时无法检查登录状态",
-            "请检查浏览器是否允许本网站保存信息，然后重试。",
-          ];
+          return ["登录信息暂时无法使用", "请重新检查。"];
         case "limited":
           return ["请稍后再检查", "暂时无法检查登录状态，请等待后重试。"];
         case "unavailable":
           return ["暂时无法检查登录状态", "请稍后重试。"];
         default:
-          return ["正在检查登录状态", "请稍候。"];
+          return ["正在检查登录状态…", "请稍候。"];
       }
     }
     case "result": {
       const result = state.allocation;
       if (result.outcome === "complete")
-        return ["工号已领取", "本次领取已完成。请保存或查看下方工号。"];
+        return ["工号已分配", "本次申请已完成。"];
       if (result.outcome === "mismatch")
         return [
           "无法继续提交本次申请",
-          "本次申请信息与此前记录不一致。请返回员工服务查看当前工号，仍有疑问时联系医院管理员。",
+          "请返回员工服务查看当前工号。此前申请的信息无法继续使用。",
         ];
       if (result.code === "number_present")
         return [
-          "无法重复领取工号",
-          "你已经领取过工号。请返回员工服务查看；当前没有工号时，请联系医院管理员。",
+          "本次申请未完成",
+          "你已取得过工号，不能再次申请。可返回员工服务查看当前工号。",
         ];
       if (result.code === "number_pool_exhausted")
         return [
-          "本年度该类别的工号已用完",
-          "请联系医院管理员。只有人员类别选错时，才重新选择。",
+          "本次申请未完成",
+          "本次申请时，所选类别没有可分配的工号。只有人员类别选错时，才重新选择。",
         ];
       if (result.outcome === "refused")
-        return [
-          "本次领取未完成",
-          "申请未被接纳。请返回员工服务查看，仍有疑问时联系医院管理员。",
-        ];
+        return ["本次申请未完成", "请返回员工服务查看当前状态。"];
       if (result.code === "permission_denied")
         return [
-          "暂时无法确认领取结果",
-          "当前无法办理本次领取。请查看员工服务状态；恢复办理条件后，可继续查看本次申请。",
+          "暂时无法确认申请结果",
+          "当前无法继续办理。请先查看员工服务状态；恢复后，可继续查看本次申请结果。",
         ];
-      return [
-        "领取结果待确认",
-        "暂时无法确认本次领取是否完成。请稍后点击“查看本次领取结果”，不要重复申请。",
-      ];
+      return ["申请结果尚不确定", "请稍后查看申请结果，暂时不要重新申请。"];
     }
   }
 }
@@ -243,7 +228,7 @@ function AllocationPanel({ controller }: { controller: AllocationController }) {
             {description}
           </p>
           {fixed && (
-            <section className="workforce-number" aria-label="本次领取的工号">
+            <section className="workforce-number" aria-label="本次分配的工号">
               <p className="number-subtype">{fixed.subtype}</p>
               <p className="employee-number">{fixed.display}</p>
             </section>
@@ -252,7 +237,7 @@ function AllocationPanel({ controller }: { controller: AllocationController }) {
             state.allocation.outcome === "complete" &&
             !state.persisted && (
               <p role="alert">
-                领取结果已确认，但浏览器未能保存。请记下工号，或返回员工服务查看。
+                本页未能保存申请结果。请记下工号，或返回员工服务查看。
               </p>
             )}
           {state.kind === "entry" && (
@@ -282,10 +267,10 @@ function AllocationPanel({ controller }: { controller: AllocationController }) {
                 ))}
               </select>
               <p className="field-hint">
-                类别用于分配工号，不表示正式任职关系。不确定时请先联系医院管理员。
+                仅限从未领过工号的本人申请。
               </p>
               <Button type="submit" className="primary" disabled={!choice}>
-                领取工号
+                下一步
               </Button>
             </form>
           )}
@@ -297,7 +282,7 @@ function AllocationPanel({ controller }: { controller: AllocationController }) {
                   disabled={seconds > 0}
                   onClick={() => void controller.query()}
                 >
-                  {seconds ? `${seconds} 秒后可查看结果` : "查看本次领取结果"}
+                  {seconds ? `${seconds} 秒后可查看结果` : "查看申请结果"}
                 </Button>
               )}
             {state.kind === "result" &&
@@ -315,7 +300,7 @@ function AllocationPanel({ controller }: { controller: AllocationController }) {
                 disabled={seconds > 0}
                 onClick={() => void controller.refresh()}
               >
-                {seconds ? `${seconds} 秒后可重试` : "重新读取"}
+                {seconds ? `${seconds} 秒后可重试` : "重新加载"}
               </Button>
             )}
             {(state.kind === "storage" ||
@@ -335,7 +320,7 @@ function AllocationPanel({ controller }: { controller: AllocationController }) {
               (state.kind === "current" &&
                 state.current.kind === "reload")) && (
               <Button className="primary" onClick={() => location.reload()}>
-                重新加载页面
+                重新加载
               </Button>
             )}
             {state.kind === "current" &&
@@ -369,7 +354,7 @@ function AllocationPanel({ controller }: { controller: AllocationController }) {
           <Dialog.Portal>
             <Dialog.Backdrop className="number-backdrop" />
             <Dialog.Popup className="number-dialog" initialFocus={cancel}>
-              <Dialog.Title>确认领取工号？</Dialog.Title>
+              <Dialog.Title>确认申请工号？</Dialog.Title>
               <Dialog.Description>
                 人员类别：
                 {
@@ -377,11 +362,11 @@ function AllocationPanel({ controller }: { controller: AllocationController }) {
                     (subtype) => String(subtype.value) === choice,
                   )?.name
                 }
-                。系统将分配本年度工号；领取后不能自行重新选择。
+                。工号分配后，不能自行更改人员类别。
               </Dialog.Description>
               <div className="dialog-actions">
                 <Dialog.Close ref={cancel} className="button primary">
-                  暂不领取
+                  返回修改
                 </Dialog.Close>
                 <Button
                   className="button"
@@ -390,7 +375,7 @@ function AllocationPanel({ controller }: { controller: AllocationController }) {
                     void controller.submit(Number(choice));
                   }}
                 >
-                  确认领取
+                  确认申请
                 </Button>
               </div>
             </Dialog.Popup>
@@ -411,7 +396,7 @@ export default function WorkforceNumberPage() {
           <AllocationPanel controller={controller} />
         ) : (
           <div className="loading-shell">
-            <p>正在打开工号领取…</p>
+            <p>正在打开工号申请…</p>
           </div>
         )}
       </main>

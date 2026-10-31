@@ -109,25 +109,26 @@ function stamp(value: string | number | null) {
 }
 
 const NOTICE: Record<Reason, string> = {
-  limited: "本次申请尚未受理，请等待后再试。",
+  limited: "暂时无法继续，请稍后再试。",
   invalid: "请检查填写内容。",
-  refused: "本次请求未被接纳，请检查填写内容。",
-  challenge: "安全验证未通过，请重新完成验证。",
-  wrong_code: "验证码不正确，请查看该号码最新收到的短信。",
-  verification_required: "验证码或本次办理已不再适用，请重新开始。",
-  mobile_taken: "新手机号已被使用，请使用其他号码并重新获取新号验证码。",
-  state_conflict: "新手机号与当前手机号相同，请填写其他号码。",
-  mismatch: "本次请求与先前填写内容不一致，已停止继续提交。",
-  denied: "你无权进行此操作。",
-  unavailable: "暂时无法完成本次请求，请稍后再试。",
-  expired: "本次验证已不能继续，请重新获取验证码。",
+  refused: "填写内容暂时无法使用。",
+  challenge: "请重新完成安全验证。",
+  wrong_code: "请检查该手机号本次收到的验证码。",
+  verification_required: "暂时无法继续本次验证。",
+  mobile_taken:
+    "本次更换时，新手机号已被其他账户使用。请重新填写新手机号并验证。",
+  state_conflict: "本次更换时，新手机号与原手机号相同。请核对后重新填写。",
+  mismatch: "暂时无法继续本次更换，请打开个人账户查看当前状态。",
+  denied: "目前无法更换手机号。",
+  unavailable: "暂时无法继续，请稍后再试。",
+  expired: "本次验证已无法继续。",
 };
 
 const DELIVERY: Record<string, string> = {
-  sent: "短信已提交发送，请查看该号码收到的短信。受理不代表已送达。",
-  sending: "短信仍在发送，请先留意手机短信。",
-  unknown: "暂时无法确认短信是否已发送，请先查看手机短信。",
-  failed: "本次短信发送已确认未成功，请重新获取验证码。",
+  sent: "验证码已提交发送，请查看该手机号收到的短信。",
+  sending: "验证码正在发送，请留意手机短信。",
+  unknown: "验证码发送结果尚不确定，请先查看手机短信。",
+  failed: "验证码未能发送，请重新获取。",
 };
 
 function title(state: State): [string, string] {
@@ -136,191 +137,162 @@ function title(state: State): [string, string] {
       switch (state.current.kind) {
         case "checking":
         case "changed":
-          return ["正在检查登录状态", "请稍候，检查完成后再继续。"];
+          return ["正在检查登录状态…", "请稍候。"];
         case "anonymous":
         case "expired":
           return [
-            "请先登录",
-            state.pending
-              ? "此前办理的结果仍待确认。请使用原账户登录，再查看原办理。"
-              : "登录后再管理本人账户。",
+            state.current.kind === "expired"
+              ? "请重新登录"
+              : "请使用手机号登录",
+            state.transfer
+              ? "请使用原账户的手机号登录，继续查看更换结果。"
+              : state.pending
+                ? "本次操作结果尚未确认。请登录后查看当前账户状态。"
+                : "请验证手机号后继续。",
           ];
         case "denied":
-          return [
-            "无法查看这项内容",
-            "本次读取未能完成，你可以返回个人账户或首页。",
-          ];
+          return ["目前无法更换手机号", "可以返回个人账户或首页。"];
         case "storage":
-          return [
-            "暂时无法检查登录状态",
-            "浏览器无法读取登录信息，请先重新检查；仍无法确认时可在新标签页重新登录。",
-          ];
+          return ["登录信息暂时无法使用", "请重新检查，或使用手机号登录。"];
         case "reload":
-          return ["请重新加载页面", "页面暂时无法继续，请重新加载。"];
-        case "limited":
-          return ["请稍后再检查", "暂时无法检查登录状态，请稍后重试。"];
+          return ["请重新加载", "页面暂时无法继续，请重新加载后再试。"];
         default:
-          return ["暂时无法读取当前账户", "请稍后重新检查。"];
+          return ["暂时无法检查登录状态", "请稍后重新检查。"];
       }
     case "other":
-      return [
-        "当前账户已更新",
-        "这里不再显示此前账户的办理信息。可以返回个人账户继续。",
-      ];
+      return ["当前账户已变化", "请打开个人账户，查看当前登录的账户资料。"];
     case "closed":
       if (state.known)
+        return ["此前的手机号更换已完成", "可打开个人账户查看当前资料。"];
+      if (state.why === "expired" && state.canRestart)
+        return ["本次更换无法继续", "请重新验证当前手机号。"];
+      if (state.why === "unknown" || state.why === "expired")
         return [
-          "本次手机号更换已完成",
-          "暂时无法读取本次办理记录，已确认的完成结果仍然有效。",
-        ];
-      if (state.why === "expired")
-        return [
-          "本次办理已不能继续",
-          "这份办理已失效。重新更换时，请从验证当前手机号开始。",
-        ];
-      if (state.why === "missing")
-        return [
-          "暂时无法查看本次更换结果",
-          "目前无法读取这项办理。这不表示更换已经失败。",
+          "此前操作仍待确认",
+          state.transfer
+            ? "可查看此前的更换结果，或打开个人账户查看当前状态。"
+            : "请打开个人账户，查看当前状态。",
         ];
       return [
-        "暂时无法查看本次更换结果",
-        "本页保存的办理信息已不可用，结果仍不能确定。这不表示更换失败。",
+        "无法查看更换结果",
+        state.transfer
+          ? "请查看此前的更换结果，或打开个人账户查看当前状态。"
+          : "请打开个人账户，查看当前状态。",
       ];
     case "editing":
       return state.stage === "current"
-        ? ["填写当前手机号", "请输入本账户目前使用的中国大陆手机号。"]
-        : ["填写新手机号", "请输入准备使用的新手机号。"];
+        ? ["填写当前手机号", "填写此账户现在使用的手机号。"]
+        : ["填写新手机号", "填写本人能接收短信的新手机号。"];
     case "limited":
-      return ["请稍后重试发送", "本次申请尚未受理，请等待后再试。"];
+      return ["请稍后重试", "暂时无法获取验证码，请稍后再试。"];
     case "coding":
-      return state.stage === "current"
-        ? [
-            "输入当前手机号验证码",
-            "验证码仅用于本次更换手机号，登录验证码不能用于此处。",
-          ]
-        : [
-            "输入新手机号验证码",
-            "验证码仅用于绑定新手机号，登录验证码不能用于此处。",
-          ];
+      return [
+        state.stage === "current"
+          ? "输入当前手机号收到的验证码"
+          : "输入新手机号收到的验证码",
+        "请输入本次短信中的 6 位验证码。",
+      ];
     case "confirm":
       return ["确认更换手机号", "请核对新手机号及更换后的影响。"];
     case "busy":
-      return state.action === "send"
-        ? ["正在申请发送验证码", "请稍候，暂时不用重复操作。"]
-        : state.action === "establish"
-          ? ["正在验证当前手机号", "请稍候。"]
-          : state.action === "complete"
-            ? [
-                "正在提交更换申请",
-                "请稍候。离开页面或停止等待不会取消已提交的申请。",
-              ]
-            : ["正在查询本次更换", "只查询本次办理，不会重新提交。"];
-    case "unknown":
-      if (state.sending)
-        return [
-          "短信仍在发送",
-          "请先留意手机短信，稍后查看本次发送结果。暂时不用重新获取验证码。",
-        ];
-      return state.step === "current-send" || state.step === "new-send"
-        ? [
-            "暂时无法确认验证码是否已发送",
-            "请先查看手机短信。当前尚未取得可用于验证的发送结果，请勿再次获取验证码。",
-          ]
-        : state.step === "establish"
-          ? [
-              "暂时无法确认当前号验证结果",
-              "请先查看本次验证结果，暂时不要修改验证码或重新获取短信。",
-            ]
-          : [
-              "暂时无法确认更换结果",
-              "请先查询本次办理。返回个人账户或离开页面不会取消已提交的申请。",
-            ];
-    case "known":
       return [
-        "手机号已更换",
-        "所有设备上的原登录已退出。请使用新手机号重新登录。",
+        state.action === "send"
+          ? "正在获取验证码…"
+          : state.action === "establish"
+            ? "正在验证当前手机号…"
+            : state.action === "complete"
+              ? "正在更换手机号…"
+              : "正在查看更换结果…",
+        "请稍候。",
       ];
+    case "unknown":
+      if (state.step === "current-send" || state.step === "new-send")
+        return [
+          state.sending ? "验证码正在发送" : "验证码发送待确认",
+          state.canRetry
+            ? "请先查看手机短信，稍后可重试获取验证码。"
+            : "请先查看手机短信。",
+        ];
+      if (state.step === "establish")
+        return [
+          "验证结果尚不确定",
+          state.canRetry
+            ? "可继续本次验证，暂时不要修改验证码或重新获取短信。"
+            : state.canQuery
+              ? "请查看更换结果。"
+              : "请打开个人账户，查看当前状态。",
+        ];
+      return [
+        "更换结果尚不确定",
+        state.canQuery
+          ? "请先查看更换结果。"
+          : state.canRetry
+            ? "可继续本次更换，暂时不要修改填写内容。"
+            : "请打开个人账户，查看当前状态。",
+      ];
+    case "known":
+      return state.showAccount
+        ? ["此前的手机号更换已完成", "可打开个人账户查看当前资料。"]
+        : ["手机号已更换", "请使用新手机号重新登录。"];
     case "query":
       switch (state.status) {
         case "idle":
-          return [
-            "现在可以查询原办理",
-            "登录成功不代表换号已经完成，请查询本次办理。",
-          ];
+          return ["查看更换结果", "本次更换无法在当前登录中继续。"];
         case "pending":
           return state.unknown
-            ? [
-                "本次更换状态尚未确认",
-                "读取时办理仍未完成。这不表示此前的提交已经失败或不再执行，请不要重新提交。",
-              ]
+            ? ["更换结果尚不确定", "请稍后查看更换结果，暂时不要重新办理。"]
             : state.canContinue
-              ? [
-                  "本次更换尚未完成",
-                  "请在有效期内，在本次登录中继续验证新手机号。",
-                ]
+              ? ["手机号尚未更换", "请继续验证新手机号。"]
               : [
                   "本次更换尚未完成",
-                  "当前登录可以查询记录，无法继续此前登录建立的办理。",
+                  "本次更换无法在当前登录中继续。可以查看更换结果，或返回个人账户。",
                 ];
         case "expired":
-          return [
-            "本次办理已不能继续",
-            "这份办理已失效，不能据此认为更换已经完成。",
-          ];
+          return state.unknown
+            ? ["更换结果尚不确定", "请稍后查看更换结果。"]
+            : ["本次更换无法继续", "请重新验证当前手机号。"];
         case "limited":
-          return [
-            "暂时无法查询本次更换",
-            "请稍后再查询，不要重新提交更换申请。",
-          ];
+          return ["暂时无法查看更换结果", "请稍后再试。"];
         case "denied":
-          return [
-            "无法查看这项内容",
-            "本次查询未能完成，你可以返回个人账户或首页。",
-          ];
+          return ["无法查看更换结果", "可以返回个人账户或首页。"];
         case "authentication":
-          return [
-            "请重新登录后继续查询",
-            "当前登录已失效，请使用原账户登录后再查询。",
-          ];
-        case "unavailable":
-          return [
-            "暂时无法查看本次更换结果",
-            "目前无法读取这项办理，这不表示更换已经失败。",
-          ];
+          return ["请重新登录", "请使用原账户的手机号登录，继续查看更换结果。"];
         default:
-          return ["更换结果查询失败", "暂时无法查询本次办理，请稍后再试。"];
+          return [
+            "暂时无法查看更换结果",
+            "请稍后再试，或打开个人账户查看当前状态。",
+          ];
       }
     case "storage":
       return [
-        state.pending ? "暂时无法继续" : "本次申请尚未提交",
-        state.pending
-          ? "浏览器暂时无法读取或保存本页信息，请重新检查。"
-          : "浏览器无法保存办理信息，因此没有发出申请。请重新检查。",
+        state.pending ? "本次结果尚不确定" : "暂时无法继续",
+        "请重新检查。",
       ];
     case "reload":
       return [
-        "请重新加载页面",
+        "请重新加载",
         state.pending
-          ? "本次办理结果仍未确定，请重新加载后继续查询。"
-          : "页面暂时无法继续，请重新加载。",
+          ? "本次结果尚未确认，请重新加载后按页面提示继续。"
+          : "页面暂时无法继续，请重新加载后再试。",
       ];
     case "random":
-      return [
-        "暂时无法安全地办理",
-        "浏览器暂时无法准备本次申请，请重新加载页面。",
-      ];
+      return ["本次尚未提交", "请重新加载后再试。"];
   }
 }
 
 function Steps({ index }: { index: number }) {
   return (
     <ol className="mobile-change-steps" aria-label="办理步骤">
-      {["1 验证当前号", "2 验证新号", "3 确认更换"].map((label, position) => (
-        <li key={label} aria-current={position === index ? "step" : undefined}>
-          {label}
-        </li>
-      ))}
+      {["1 验证当前手机号", "2 验证新手机号", "3 确认更换"].map(
+        (label, position) => (
+          <li
+            key={label}
+            aria-current={position === index ? "step" : undefined}
+          >
+            {label}
+          </li>
+        ),
+      )}
     </ol>
   );
 }
@@ -399,8 +371,8 @@ function AddressForm({
       <h2>{state.stage === "current" ? "填写当前手机号" : "填写新手机号"}</h2>
       <p className="mobile-change-lead">
         {state.stage === "current"
-          ? "先验证本账户目前使用的手机号。"
-          : "当前手机号已验证。请在有效期内验证新手机号。"}
+          ? "填写此账户现在使用的手机号。"
+          : "填写本人能接收短信的新手机号。"}
       </p>
       <Notice reason={state.notice} />
       <form
@@ -410,7 +382,7 @@ function AddressForm({
           event.preventDefault();
           if (seconds > 0) return;
           if (!validSendInput({ mobile, token: "fixture" })) {
-            setError("请输入正确的中国大陆手机号，不含空格或区号。");
+            setError("请输入 11 位中国大陆手机号，不含空格或区号。");
             input.current?.focus();
             return;
           }
@@ -444,24 +416,29 @@ function AddressForm({
         />
         <p id="mobile-change-hint" className="field-hint">
           {state.stage === "current"
-            ? "填写后，系统会核对是否为本账户的当前手机号。当前号码无法接收短信时，本人换号无法继续，请联系管理员。"
-            : "请使用本人能接收短信的号码。新号验证码在最后确认时才校验。"}
+            ? "当前手机号无法接收短信时，无法在此更换。"
+            : "请填写 11 位中国大陆手机号，不含空格或区号。"}
         </p>
         <p id="mobile-change-error" className="field-error" role="alert">
           {error}
         </p>
+        {state.stage === "new" && (
+          <p className="field-hint">
+            请在当前手机号验证后的 10 分钟有效期内完成更换。
+          </p>
+        )}
         {!siteKey && (
           <div className="notice" role="status">
             <p>
               {settingsFailed
-                ? "暂时无法加载安全验证设置，请重新加载页面。"
-                : "正在加载安全验证设置…"}
+                ? "安全验证暂时无法加载，请重新加载。"
+                : "正在加载安全验证…"}
             </p>
           </div>
         )}
         {settingsFailed && (
           <Button className="text-button" onClick={() => location.reload()}>
-            重新加载页面
+            重新加载
           </Button>
         )}
         {siteKey && (
@@ -483,7 +460,11 @@ function AddressForm({
           type="submit"
           disabled={!siteKey || !token || seconds > 0}
         >
-          {seconds > 0 ? `${seconds} 秒后可继续` : `获取${label}验证码`}
+          {seconds > 0
+            ? `${seconds} 秒后可获取`
+            : state.stage === "current"
+              ? "获取验证码"
+              : "获取新手机号验证码"}
         </Button>
       </form>
       <div className="mobile-change-actions">
@@ -519,10 +500,15 @@ function CodeForm({
       <Steps index={state.stage === "current" ? 0 : 1} />
       <h2>
         {state.stage === "current"
-          ? "输入当前手机号验证码"
-          : "输入新手机号验证码"}
+          ? "输入当前手机号收到的验证码"
+          : "输入新手机号收到的验证码"}
       </h2>
       <p className="mobile-change-lead">{DELIVERY[state.delivery]}</p>
+      {state.stage === "new" && (
+        <p className="field-hint">
+          请在当前手机号验证后的 10 分钟有效期内完成更换。
+        </p>
+      )}
       <Notice reason={state.notice} />
       <form
         autoComplete="off"
@@ -593,16 +579,14 @@ function ConfirmPanel({
       <p className="mobile-change-lead">本账户今后将使用以下号码登录：</p>
       <p className="mobile-change-number">{state.mobile}</p>
       <ul className="mobile-change-consequences">
-        <li>完成后，所有设备上的本账户登录都会退出。</li>
-        <li>
-          请用新手机号重新登录。姓名、头像、微信绑定和已有业务记录会保留。
-        </li>
+        <li>更换后，网站和小程序的全部登录将退出。</li>
+        <li>请使用新手机号重新登录，原账户资料和业务记录保留。</li>
       </ul>
       <Notice reason={state.notice} />
       <p className="field-hint">
         {deadline
-          ? `点击确认后，系统将验证新号验证码并办理更换。请在 ${deadline} 前完成。`
-          : "点击确认后，系统将验证新号验证码并办理更换。"}
+          ? `请在 ${deadline}（北京时间）前完成。`
+          : "请确认后完成更换。"}
       </p>
       <div className="mobile-change-actions">
         <Button
@@ -640,9 +624,6 @@ function Content({ controller }: { controller: MobileChange }) {
       ? "个人账户"
       : headingTitle
     : "更换手机号";
-  const pageDescription = maskedPage
-    ? description
-    : "先验证当前手机号，再验证新手机号。";
   const operation =
     state.kind === "editing"
       ? state.stage === "current"
@@ -668,7 +649,6 @@ function Content({ controller }: { controller: MobileChange }) {
     (unknown ||
       transfer ||
       ((state.kind === "editing" || state.kind === "coding") && dirty));
-  const masked = state.kind === "current" || state.kind === "other";
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -747,7 +727,9 @@ function Content({ controller }: { controller: MobileChange }) {
           : "/authentication/codes"
       }
     >
-      手机号登录
+      {state.kind === "known" && !state.showAccount
+        ? "使用新手机号登录"
+        : "手机号登录"}
     </a>
   );
   const account = (primary = false) => (
@@ -779,11 +761,15 @@ function Content({ controller }: { controller: MobileChange }) {
         ← 返回个人账户
       </a>
       <div className="mobile-change-heading">
-        <p className="eyebrow">个人账户 · 本人办理</p>
+        <p className="eyebrow">个人账户</p>
         <h1 ref={heading} tabIndex={-1}>
           {pageTitle}
         </h1>
-        <p>{pageDescription}</p>
+        {(state.kind === "editing" ||
+          state.kind === "coding" ||
+          state.kind === "confirm") && (
+          <p>先验证当前手机号，再验证新手机号。</p>
+        )}
       </div>
       <div className="mobile-change-columns">
         <section
@@ -814,7 +800,6 @@ function Content({ controller }: { controller: MobileChange }) {
           )}
           {state.kind === "busy" && (
             <>
-              <p className="mobile-change-status">本次办理</p>
               <h2>{headingTitle}</h2>
               <p className="mobile-change-lead">{description}</p>
               {actions(
@@ -829,12 +814,8 @@ function Content({ controller }: { controller: MobileChange }) {
           )}
           {state.kind === "limited" && (
             <>
-              <p className="mobile-change-status">本次申请 · 等待重试</p>
               <h2>{headingTitle}</h2>
               <p className="mobile-change-lead">{description}</p>
-              <p className="field-hint">
-                重试使用本次已填写的信息，无需再次完成安全验证。
-              </p>
               {actions(
                 <>
                   <Button
@@ -844,7 +825,9 @@ function Content({ controller }: { controller: MobileChange }) {
                   >
                     {retrySeconds > 0
                       ? `${retrySeconds} 秒后可重试`
-                      : "重试发送验证码"}
+                      : state.stage === "current"
+                        ? "重试获取当前手机号验证码"
+                        : "重试获取新手机号验证码"}
                   </Button>
                   {account()}
                   {home()}
@@ -854,24 +837,20 @@ function Content({ controller }: { controller: MobileChange }) {
           )}
           {state.kind === "unknown" && (
             <>
-              <p className="mobile-change-status">本次办理 · 待确认</p>
               <h2>{headingTitle}</h2>
               <p className="mobile-change-lead">{description}</p>
               {state.notice === "limited" ? (
                 <p className="field-hint" role="status">
-                  本次查询过于频繁，请等待后再试。此前办理的结果仍待确认。
+                  暂时无法继续，请稍后再试。本次结果仍未确认。
                 </p>
               ) : (
                 <Notice reason={state.notice} />
               )}
               {!state.persisted && (
                 <p className="field-hint">
-                  本次办理信息未能保存在本页，离开后可能无法再次查询。
+                  本页暂时无法保存办理信息，离开后可能无法继续。
                 </p>
               )}
-              <p className="field-hint">
-                查看结果只处理本次申请，不会另外发送短信或再次提交更换。
-              </p>
               {actions(
                 <>
                   {state.canRetry && (
@@ -881,12 +860,14 @@ function Content({ controller }: { controller: MobileChange }) {
                       onClick={() => void controller.retry()}
                     >
                       {retrySeconds > 0
-                        ? `${retrySeconds} 秒后可查看`
+                        ? `${retrySeconds} 秒后可${state.step === "current-send" || state.step === "new-send" ? "重试" : "继续"}`
                         : state.step === "establish"
-                          ? "查看验证结果"
+                          ? "继续本次验证"
                           : state.step === "complete"
-                            ? "查看提交结果"
-                            : "查看发送结果"}
+                            ? "继续本次更换"
+                            : state.step === "current-send"
+                              ? "重试获取当前手机号验证码"
+                              : "重试获取新手机号验证码"}
                     </Button>
                   )}
                   {state.canQuery && (
@@ -896,8 +877,8 @@ function Content({ controller }: { controller: MobileChange }) {
                       onClick={() => void controller.query()}
                     >
                       {retrySeconds > 0
-                        ? `${retrySeconds} 秒后可查询`
-                        : "查询更换结果"}
+                        ? `${retrySeconds} 秒后可查看`
+                        : "查看更换结果"}
                     </Button>
                   )}
                   {account(!state.canRetry && !state.canQuery)}
@@ -908,28 +889,23 @@ function Content({ controller }: { controller: MobileChange }) {
           )}
           {state.kind === "known" && (
             <>
-              <p className="mobile-change-status">已确认完成</p>
               <h2>{headingTitle}</h2>
               <p className="mobile-change-lead">{description}</p>
               <p className="mobile-change-time">
-                完成时间：{stamp(state.known.completedAt) ?? "已记录"}
-              </p>
-              <p className="field-hint">
-                账户、实名和业务记录保留。重新登录或查看记录不会再次更换手机号，也不会改变本次完成时间。
+                完成时间（北京时间）：
+                {stamp(state.known.completedAt) ?? "暂时无法显示"}
               </p>
               {!state.persisted && (
                 <p className="field-hint">
-                  本次结果未能保存在本页，离开后可能无法再次查看。
+                  本页暂时无法保存结果，离开后可能无法再次查看本次结果。
                 </p>
               )}
               {state.queryFailed && (
-                <p className="field-hint">
-                  暂时无法再次读取办理记录，已确认的完成结果仍然有效。
-                </p>
+                <p className="field-hint">更换记录暂时无法加载。</p>
               )}
               {actions(
                 <>
-                  {login(true)}
+                  {state.showAccount ? account(true) : login(true)}
                   {state.canRestart && (
                     <Button
                       className="secondary"
@@ -938,7 +914,7 @@ function Content({ controller }: { controller: MobileChange }) {
                       再次更换手机号
                     </Button>
                   )}
-                  {account()}
+                  {state.showAccount ? login(false) : account()}
                   {home()}
                 </>,
               )}
@@ -946,21 +922,15 @@ function Content({ controller }: { controller: MobileChange }) {
           )}
           {state.kind === "query" && (
             <>
-              <p className="mobile-change-status">
-                {state.unknown ? "此前办理 · 待确认" : "此前办理"}
-              </p>
               <h2>{headingTitle}</h2>
               <p className="mobile-change-lead">{description}</p>
-              {state.unknown && (
-                <p className="field-hint">
-                  此前提交的结果仍未确认。查询只读取办理状态，不会重新提交。
-                </p>
-              )}
-              {state.status === "pending" && state.expiresAt && (
-                <p className="mobile-change-time">
-                  请在 {stamp(state.expiresAt) ?? "有效期内"} 前完成。
-                </p>
-              )}
+              {state.canContinue &&
+                state.status === "pending" &&
+                state.expiresAt && (
+                  <p className="mobile-change-time">
+                    请在 {stamp(state.expiresAt) ?? "有效期内"} 前完成。
+                  </p>
+                )}
               {actions(
                 <>
                   {state.canContinue && (
@@ -980,8 +950,8 @@ function Content({ controller }: { controller: MobileChange }) {
                       onClick={() => void controller.query()}
                     >
                       {retrySeconds > 0
-                        ? `${retrySeconds} 秒后可查询`
-                        : "查询更换结果"}
+                        ? `${retrySeconds} 秒后可查看`
+                        : "查看更换结果"}
                     </Button>
                   ) : null}
                   {state.canRetry && (
@@ -993,8 +963,8 @@ function Content({ controller }: { controller: MobileChange }) {
                       onClick={() => void controller.retry()}
                     >
                       {retrySeconds > 0
-                        ? `${retrySeconds} 秒后可查看`
-                        : "查看提交结果"}
+                        ? `${retrySeconds} 秒后可继续`
+                        : "继续本次更换"}
                     </Button>
                   )}
                   {state.status === "expired" && !state.unknown && (
@@ -1013,14 +983,13 @@ function Content({ controller }: { controller: MobileChange }) {
           )}
           {state.kind === "closed" && (
             <>
-              <p className="mobile-change-status">本次办理</p>
               <h2>{headingTitle}</h2>
               <p className="mobile-change-lead">{description}</p>
               {actions(
                 <>
                   {state.why === "expired" && state.canRestart && (
                     <Button
-                      className="primary"
+                      className={state.known ? "secondary" : "primary"}
                       onClick={() => controller.restart()}
                     >
                       重新验证当前手机号
@@ -1028,16 +997,22 @@ function Content({ controller }: { controller: MobileChange }) {
                   )}
                   {state.transfer && (
                     <Button
-                      className={state.canRestart ? "quiet-link" : "primary"}
+                      className={
+                        state.canRestart || state.known
+                          ? "quiet-link"
+                          : "primary"
+                      }
                       disabled={retrySeconds > 0}
                       onClick={() => void controller.query()}
                     >
                       {retrySeconds > 0
-                        ? `${retrySeconds} 秒后可查询`
-                        : "查询更换结果"}
+                        ? `${retrySeconds} 秒后可查看`
+                        : "查看更换结果"}
                     </Button>
                   )}
-                  {account(!state.transfer)}
+                  {account(
+                    !!state.known || (!state.transfer && !state.canRestart),
+                  )}
                   {home()}
                 </>,
               )}
@@ -1045,7 +1020,6 @@ function Content({ controller }: { controller: MobileChange }) {
           )}
           {state.kind === "other" && (
             <>
-              <p className="mobile-change-status">个人账户</p>
               <h2>{headingTitle}</h2>
               <p className="mobile-change-lead">{description}</p>
               {actions(
@@ -1058,7 +1032,6 @@ function Content({ controller }: { controller: MobileChange }) {
           )}
           {state.kind === "current" && (
             <>
-              <p className="mobile-change-status">个人账户</p>
               <p className="mobile-change-lead">{description}</p>
               {actions(
                 <>
@@ -1067,7 +1040,7 @@ function Content({ controller }: { controller: MobileChange }) {
                       className="primary"
                       onClick={() => location.reload()}
                     >
-                      重新加载页面
+                      重新加载
                     </Button>
                   ) : ["checking", "changed"].includes(state.current.kind) ? (
                     <Button className="primary" disabled>
@@ -1095,7 +1068,6 @@ function Content({ controller }: { controller: MobileChange }) {
           )}
           {state.kind === "storage" && (
             <>
-              <p className="mobile-change-status">本次办理</p>
               <h2>{headingTitle}</h2>
               <p className="mobile-change-lead">{description}</p>
               {actions(
@@ -1114,13 +1086,12 @@ function Content({ controller }: { controller: MobileChange }) {
           )}
           {state.kind === "reload" && (
             <>
-              <p className="mobile-change-status">本次办理</p>
               <h2>{headingTitle}</h2>
               <p className="mobile-change-lead">{description}</p>
               {actions(
                 <>
                   <Button className="primary" onClick={() => location.reload()}>
-                    重新加载页面
+                    重新加载
                   </Button>
                   {home()}
                 </>,
@@ -1129,13 +1100,12 @@ function Content({ controller }: { controller: MobileChange }) {
           )}
           {state.kind === "random" && (
             <>
-              <p className="mobile-change-status">本次办理</p>
               <h2>{headingTitle}</h2>
               <p className="mobile-change-lead">{description}</p>
               {actions(
                 <>
                   <Button className="primary" onClick={() => location.reload()}>
-                    重新加载页面
+                    重新加载
                   </Button>
                   {home()}
                 </>,
@@ -1149,35 +1119,6 @@ function Content({ controller }: { controller: MobileChange }) {
               </p>
             )}
         </section>
-        {!masked && (
-          <aside className="mobile-change-guide">
-            {state.kind === "known" ? (
-              <>
-                <h2>本次办理已完成</h2>
-                <p>今后请使用新手机号登录原账户。</p>
-                <p>重新登录或查看记录不会再次更换手机号。</p>
-              </>
-            ) : state.kind === "query" ? (
-              <>
-                <h2>本次登录只查询记录</h2>
-                <p>此前登录建立的办理，不能在本次登录中继续。</p>
-                <p>查询不会发送短信或再次更换手机号。</p>
-              </>
-            ) : (
-              <>
-                <h2>更换后，用新号登录</h2>
-                <p>完成更换后，所有设备上的本账户登录都会退出。</p>
-                <p>姓名、头像、微信绑定和已有业务记录会保留。</p>
-                <hr />
-                <h2>在本次登录中完成</h2>
-                <p>
-                  当前号验证通过后，请在 10
-                  分钟内完成。中途重新登录时，只能查询原办理。
-                </p>
-              </>
-            )}
-          </aside>
-        )}
       </div>
       {guarded && leaving && (
         <dialog
@@ -1192,17 +1133,17 @@ function Content({ controller }: { controller: MobileChange }) {
         >
           <h2 id="mobile-change-leave-title">
             {unknown
-              ? "离开前，请留意办理结果"
+              ? "本次操作结果尚未确认"
               : transfer
                 ? "暂时离开换号办理？"
                 : "放弃当前填写？"}
           </h2>
           <p>
             {unknown
-              ? "本次结果尚未确认。离开不会取消已发送的申请，返回后请先查看原结果。"
+              ? "离开不会撤回已发出的请求。"
               : transfer
-                ? "离开不会撤销已经建立的办理，有效期仍继续计算。请在同一次登录中及时完成。"
-                : "当前填写尚未提交，离开后需要重新填写。"}
+                ? "离开后有效期仍继续，请在本次登录中完成。"
+                : "离开后需要重新填写。"}
           </p>
           <div className="mobile-change-actions">
             <Button
@@ -1225,7 +1166,7 @@ function Content({ controller }: { controller: MobileChange }) {
                 if (target) location.assign(target);
               }}
             >
-              离开此页
+              仍然离开
             </Button>
           </div>
         </dialog>
@@ -1244,7 +1185,7 @@ export default function MobileChangePage() {
           <Content controller={controller} />
         ) : (
           <div className="loading-shell">
-            <p>正在打开换号页面…</p>
+            <p>正在打开更换手机号页面…</p>
           </div>
         )}
       </main>
