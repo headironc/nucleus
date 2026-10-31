@@ -1965,6 +1965,8 @@ dependencies = [
  "fixture",
  "governor",
  "http-body-util",
+ "hyper",
+ "hyper-util",
  "image",
  "ipnet",
  "nonempty",
