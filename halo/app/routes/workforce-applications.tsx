@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useLayoutEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { useParams } from "react-router";
 import { Button } from "@base-ui/react/button";
@@ -20,8 +14,14 @@ import { Workforce } from "../workforce/status";
 import { Applications, type ApplicationMode } from "../workforce/applications";
 import { ApplicationFields } from "../workforce/application-fields";
 import { ApplicationPhotoPanel } from "../workforce/photo-panel";
-import type { ApplicationArtwork } from "../workforce/artwork";
-import type { ApplicationSnapshot } from "../protocol/applications";
+import {
+  APPLICATION_KINDS as KINDS,
+  APPLICATION_STATUSES as STATUSES,
+  applicationDate as date,
+  SnapshotDetails,
+  PreviewFigure,
+  ReviewFacts,
+} from "../workforce/application-display";
 
 export function meta() {
   return [
@@ -93,18 +93,6 @@ function useApplications(mode: ApplicationMode) {
   }, [key]);
   return controllers?.key === key ? controllers.value : undefined;
 }
-const KINDS = { issuance: "新办", duplication: "增办", replacement: "换证" };
-const dateFormat = new Intl.DateTimeFormat("zh-CN", {
-  timeZone: "Asia/Shanghai",
-  year: "numeric",
-  month: "2-digit",
-  day: "2-digit",
-  hour: "2-digit",
-  minute: "2-digit",
-});
-function date(value: string) {
-  return dateFormat.format(new Date(value));
-}
 function IdentityMessage({ state }: { state: CurrentState }) {
   const copy =
     state.kind === "anonymous"
@@ -122,74 +110,6 @@ function IdentityMessage({ state }: { state: CurrentState }) {
     <p role="status" className="application-notice">
       {copy}
     </p>
-  );
-}
-
-function SnapshotDetails({ snapshot }: { snapshot: ApplicationSnapshot }) {
-  return (
-    <dl className="application-snapshot">
-      <div>
-        <dt>姓名</dt>
-        <dd>{snapshot.name}</dd>
-      </div>
-      <div>
-        <dt>工号</dt>
-        <dd>{snapshot.printedNumber}</dd>
-      </div>
-      <div>
-        <dt>科室与职务</dt>
-        <dd>{snapshot.department.printed}</dd>
-      </div>
-      <div>
-        <dt>职称</dt>
-        <dd>{snapshot.printedTitle}</dd>
-      </div>
-      <div>
-        <dt>领取地点</dt>
-        <dd>{snapshot.pickup}</dd>
-      </div>
-    </dl>
-  );
-}
-function PreviewFigure({
-  artwork,
-  failed,
-}: {
-  artwork: ApplicationArtwork;
-  failed(): void;
-}) {
-  const canvas = useRef<HTMLCanvasElement>(null);
-  useLayoutEffect(() => {
-    const node = canvas.current;
-    if (!node) return;
-    let live = true;
-    const paint = () => {
-      if (!live) return;
-      const width = node.getBoundingClientRect().width;
-      if (!width) return;
-      try {
-        artwork.paint(node, Math.min(1600, width * devicePixelRatio));
-      } catch {
-        failed();
-      }
-    };
-    const observer = new ResizeObserver(paint);
-    observer.observe(node);
-    paint();
-    return () => {
-      live = false;
-      observer.disconnect();
-      node.width = 0;
-      node.height = 0;
-    };
-  }, [artwork]);
-  return (
-    <figure className="application-preview">
-      <canvas ref={canvas} role="img" aria-label="本次工牌完整预览" />
-      <figcaption>
-        请核对完整文字、照片和牌面。预览用于确认申请内容。
-      </figcaption>
-    </figure>
   );
 }
 
@@ -239,7 +159,7 @@ export function ApplicationsPanel({
       heading.current?.focus();
     previous.current = state.kind;
   }, [state.kind, account.kind]);
-  const retryAt = "retryAt" in state ? state.retryAt : 0;
+  const retryAt = "retryAt" in state ? (state.retryAt ?? 0) : 0;
   const wait = Math.max(0, Math.ceil((retryAt - now) / 1000));
   const title =
     controller.mode.kind === "new"
@@ -254,10 +174,17 @@ export function ApplicationsPanel({
   const modal =
     state.kind === "preview" || state.kind === "submitting" ? state : undefined;
   return (
-    <div className="application-layout">
+    <div
+      className={
+        controller.mode.kind === "detail"
+          ? "application-layout review-layout"
+          : "application-layout"
+      }
+    >
       <nav className="application-navigation" aria-label="工牌申请导航">
         <a href="/workforce">员工服务</a>
         <a href="/workforce/applications">我的申请</a>
+        <a href="/workforce/reviews">工牌审核</a>
         <a href="/account">个人账户</a>
       </nav>
       <p className="eyebrow">员工服务 / 工牌申请</p>
@@ -383,7 +310,10 @@ export function ApplicationsPanel({
               aria-labelledby="application-created"
             >
               <h2 id="application-created">工牌申请已提交</h2>
-              <p>{KINDS[state.application.kind]} · 待审核</p>
+              <p>
+                {KINDS[state.application.kind]} ·{" "}
+                {STATUSES[state.application.status]}
+              </p>
               <p>提交时间：{date(state.application.submittedAt)}</p>
               <a
                 className="primary"
@@ -399,8 +329,8 @@ export function ApplicationsPanel({
               className="application-result"
               aria-labelledby="application-unknown"
             >
-              <h2 id="application-unknown">未能确认，请刷新查看</h2>
-              <p>申请可能已保存。请先查看我的申请，避免重复提交。</p>
+              <h2 id="application-unknown">暂时无法确认申请是否已提交</h2>
+              <p>请先查看我的申请，暂时不要重复提交。</p>
               <a className="primary" href="/workforce/applications">
                 刷新申请列表
               </a>
@@ -416,19 +346,16 @@ export function ApplicationsPanel({
                 )}
               {state.result.access === "restricted" && (
                 <p className="application-notice">
-                  当前仅显示未发放的申请摘要，工牌内容和照片暂不开放。
-                </p>
-              )}
-              {state.uncertain && (
-                <p className="application-notice">
-                  列表显示当前申请状态，不能据此确定某次未收到回执的提交是否完成。
+                  当前仅可查看未发放申请的类型、状态和提交时间。
                 </p>
               )}
               {!state.result.applications.length ? (
                 <p className="application-empty">
                   {state.result.count === 0
-                    ? "暂无申请"
-                    : "当前页没有申请，请返回第一页查看。"}
+                    ? state.result.access === "restricted"
+                      ? "暂无可查看的工牌申请。"
+                      : "暂无工牌申请。"
+                    : "找不到这一页，请返回第一页。"}
                 </p>
               ) : (
                 <ul className="application-list">
@@ -436,7 +363,7 @@ export function ApplicationsPanel({
                     <li key={item.id}>
                       <div>
                         <h2>{KINDS[item.kind]}工牌申请</h2>
-                        <p>待审核</p>
+                        <p>{STATUSES[item.status]}</p>
                         <time dateTime={item.submittedAt}>
                           {date(item.submittedAt)}
                         </time>
@@ -465,38 +392,68 @@ export function ApplicationsPanel({
                   下一页
                 </Button>
                 <Button onClick={() => void controller.load(1)}>
-                  刷新列表
+                  {!state.result.applications.length && state.result.count > 0
+                    ? "返回第一页"
+                    : "刷新列表"}
                 </Button>
               </div>
             </>
           )}
           {state.kind === "detail" && (
-            <section className="application-detail">
-              <p>{KINDS[state.result.application.kind]} · 待审核</p>
+            <section className="application-detail own-application-detail">
+              <p>
+                {KINDS[state.result.application.kind]} ·{" "}
+                {STATUSES[state.result.application.status]}
+              </p>
               <p>提交时间：{date(state.result.application.submittedAt)}</p>
-              {state.result.access === "full" && state.artwork ? (
-                <>
-                  <PreviewFigure
-                    artwork={state.artwork}
-                    failed={() => controller.previewFailed()}
-                  />
-                  <SnapshotDetails
-                    snapshot={state.result.application.snapshot}
-                  />
-                  <p className="field-hint">
-                    这里展示提交时保存的内容，当前资料变化不会改写本申请。
-                  </p>
-                </>
+              {state.result.access === "full" ? (
+                <div className="review-columns">
+                  <section className="review-panel">
+                    <div className="review-panel-heading">
+                      <h2>申请内容</h2>
+                    </div>
+                    <div className="review-panel-content">
+                      {state.artwork ? (
+                        <PreviewFigure
+                          artwork={state.artwork}
+                          failed={() => controller.previewFailed()}
+                          caption="申请提交时确认的工牌内容。"
+                        />
+                      ) : (
+                        <p className="application-notice" role="status">
+                          {state.media === "loading"
+                            ? "正在加载工牌预览…"
+                            : "工牌预览暂时无法显示，请重新加载。"}
+                        </p>
+                      )}
+                      <SnapshotDetails
+                        snapshot={state.result.application.snapshot}
+                      />
+                    </div>
+                  </section>
+                  <aside
+                    className="review-panel review-panel-content review-decision"
+                    aria-label="审核结果"
+                  >
+                    <h2>
+                      {state.result.application.status === "submitted"
+                        ? "审核进度"
+                        : "审核结果"}
+                    </h2>
+                    <ReviewFacts application={state.result.application} />
+                  </aside>
+                </div>
               ) : (
                 <p className="application-notice">
-                  当前仅能查看申请摘要，工牌内容和照片暂不开放。
+                  当前仅可查看申请类型、状态和提交时间。
                 </p>
               )}
               <Button
                 className="secondary"
+                disabled={wait > 0}
                 onClick={() => void controller.load()}
               >
-                刷新详情
+                {wait > 0 ? `${wait} 秒后可刷新详情` : "刷新详情"}
               </Button>
             </section>
           )}
