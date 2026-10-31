@@ -460,10 +460,8 @@ async function open(
   await chooseSession(page);
 }
 async function prepare(page: Page) {
-  await expect(page.getByLabel("实际科室", { exact: true })).toBeVisible();
-  await page
-    .getByRole("checkbox", { name: "我确认本次工牌使用上述科室" })
-    .check();
+  await expect(page.getByLabel("科室", { exact: true })).toBeVisible();
+  await page.getByRole("checkbox", { name: "本次工牌使用以上科室。" }).check();
   await page.getByLabel("领取地点", { exact: true }).selectOption({ index: 1 });
   const image = await page.evaluate(() => {
     const canvas = document.createElement("canvas");
@@ -545,7 +543,7 @@ test("all kinds confirm the actual snapshot, submit once, and read it unchanged 
     await page.getByRole("radio", { name: label, exact: true }).check();
     await preview(page);
     await expect(
-      page.getByRole("heading", { name: "确认本次工牌申请" }),
+      page.getByRole("heading", { name: "确认提交工牌申请" }),
     ).toBeFocused();
     await page
       .getByRole("button", { name: "确认并提交申请", exact: true })
@@ -554,11 +552,21 @@ test("all kinds confirm the actual snapshot, submit once, and read it unchanged 
       page.getByRole("heading", { name: "工牌申请已提交" }),
     ).toBeVisible();
     expect(state.submissions.at(-1)?.kind).toBe(kind);
-    await page.getByRole("link", { name: "查看已保存的申请" }).click();
+    if (kind === "issuance")
+      await page.screenshot({
+        path: test.info().outputPath("application-submitted.png"),
+        fullPage: true,
+      });
+    await page.getByRole("link", { name: "查看申请详情" }).click();
     await expect(page.getByRole("img", { name: "工牌预览" })).toBeVisible();
     await expect(
       page.getByText("阿依古丽·买买提", { exact: true }),
     ).toBeVisible();
+    if (kind === "issuance")
+      await page.screenshot({
+        path: test.info().outputPath("application-detail.png"),
+        fullPage: true,
+      });
   }
   expect(state.submissions).toHaveLength(3);
   expect(state.saved).toHaveLength(3);
@@ -577,6 +585,8 @@ test("an uncertain committed submission offers only a list refresh and never res
 }) => {
   const state = control();
   state.loseSubmitResponse = true;
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.emulateMedia({ colorScheme: "dark" });
   await open(page, state);
   await prepare(page);
   await preview(page);
@@ -587,7 +597,11 @@ test("an uncertain committed submission offers only a list refresh and never res
     page.getByRole("heading", { name: "暂时无法确认申请是否已提交" }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: /提交/ })).toHaveCount(0);
-  await page.getByRole("link", { name: "刷新申请列表" }).click();
+  await page.screenshot({
+    path: test.info().outputPath("application-unknown-320-dark.png"),
+    fullPage: true,
+  });
+  await page.getByRole("link", { name: "查看我的申请" }).click();
   await expect(
     page.getByRole("link", { name: "查看详情", exact: true }),
   ).toHaveCount(1);
@@ -598,6 +612,7 @@ test("data_changed discards the accepted preview and requires a fresh explicit p
 }) => {
   const state = control();
   state.changed = true;
+  await page.setViewportSize({ width: 320, height: 900 });
   await open(page, state);
   await prepare(page);
   await preview(page);
@@ -608,6 +623,24 @@ test("data_changed discards the accepted preview and requires a fresh explicit p
   await expect(page.getByRole("dialog")).toHaveCount(0);
   expect(state.submissions).toHaveLength(1);
   expect(state.saved).toHaveLength(0);
+  await expect(
+    page.getByText("重新加载会清除尚未提交的选择和照片。", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: test.info().outputPath("application-content-changed-320.png"),
+    fullPage: true,
+  });
+  await page
+    .getByRole("button", { name: "重新加载申请表", exact: true })
+    .click();
+  await expect(
+    page.getByRole("checkbox", { name: "本次工牌使用以上科室。" }),
+  ).not.toBeChecked();
+  await expect(page.getByRole("img", { name: "工牌照片裁剪预览" })).toHaveCount(
+    0,
+  );
+  await expect(page.getByLabel("领取地点", { exact: true })).toHaveValue("");
+  expect(state.submissions).toHaveLength(1);
 });
 test("photo capacity refusal stays editable without preview, submission or automatic upload retry", async ({
   page,
@@ -672,7 +705,7 @@ test("missing fonts and invalid UTF-8 line ranges cannot become a confirmed prev
   state.badFont = true;
   await open(page, state);
   await expect(
-    page.getByText("工牌预览无法完整显示，请联系管理员检查字体、照片和模板。", {
+    page.getByText("工牌预览无法完整显示，请联系工牌管理人员处理。", {
       exact: true,
     }),
   ).toBeVisible();
@@ -690,6 +723,65 @@ test("missing fonts and invalid UTF-8 line ranges cannot become a confirmed prev
   ).toHaveCount(0);
   expect(state.submissions).toHaveLength(0);
 });
+for (const code of ["missing_glyph", "text_overflow"]) {
+  test(`${code} directs the applicant to badge staff without changing personal data`, async ({
+    page,
+  }) => {
+    const state = control();
+    state.previewFailure = code;
+    await open(page, state);
+    await prepare(page);
+    await page.getByRole("button", { name: "预览工牌", exact: true }).click();
+    await expect(page.getByRole("alert")).toHaveText(
+      "工牌文字无法完整显示，请联系工牌管理人员处理。",
+    );
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    expect(state.submissions).toHaveLength(0);
+  });
+}
+
+test("a missing current number offers the number page without promising a new allocation", async ({
+  page,
+}) => {
+  const state = control();
+  state.number = null;
+  await open(page, state);
+  await expect(
+    page.getByText("当前没有可用工号，暂时无法申请工牌。", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("link", { name: "查看工号", exact: true }),
+  ).toHaveAttribute("href", "/workforce/number");
+  await expect(
+    page.getByRole("button", { name: "预览工牌", exact: true }),
+  ).toHaveCount(0);
+  expect(state.submissions).toHaveLength(0);
+});
+
+test("a trusted missing detail names the unavailable application without claiming cancellation", async ({
+  page,
+}) => {
+  const state = control();
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await open(page, state, `/workforce/applications/${id(999)}`);
+  await expect(
+    page.getByText("目前无法查看这份申请。", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("img", { name: "工牌预览" })).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "取消申请", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "申请已取消" })).toHaveCount(
+    0,
+  );
+  await page.screenshot({
+    path: test.info().outputPath("application-detail-unavailable-320-dark.png"),
+    fullPage: true,
+  });
+  expect(state.submissions).toHaveLength(0);
+});
+
 test("no current number still permits full history; suspended service exposes summaries without resource reads", async ({
   page,
 }) => {
@@ -720,6 +812,36 @@ test("no current number still permits full history; suspended service exposes su
     ).toHaveCount(0);
     expect(state.mediaHeaders).toHaveLength(0);
   }
+  state.saved[0] = {
+    ...state.saved[0],
+    status: "approved",
+    reviewerId: id(400),
+    reviewerName: "审*",
+    reviewedAt: "2026-10-31T00:00:00Z",
+  };
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.goto(origin + "/workforce/applications");
+  await expect(
+    page.getByText("当前仅可查看待审核和审核通过的申请摘要。", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("审核通过", { exact: true })).toBeVisible();
+  await page.screenshot({
+    path: test.info().outputPath("application-restricted-list-320-dark.png"),
+    fullPage: true,
+  });
+  await page.getByRole("link", { name: "查看详情", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "取消申请", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("审*", { exact: true })).toHaveCount(0);
+  await expect(page.locator(".application-snapshot")).toHaveCount(0);
+  await expect(page.getByRole("img", { name: "工牌预览" })).toHaveCount(0);
+  await page.screenshot({
+    path: test.info().outputPath("application-restricted-detail-320-dark.png"),
+    fullPage: true,
+  });
+  expect(state.mediaHeaders).toHaveLength(0);
 });
 test("a failed list is not displayed as no applications", async ({ page }) => {
   const state = control();
@@ -789,7 +911,7 @@ for (const width of [320, 390, 768, 1440])
       });
       await preview(page);
       await expect(
-        page.getByRole("heading", { name: "确认本次工牌申请" }),
+        page.getByRole("heading", { name: "确认提交工牌申请" }),
       ).toBeFocused();
       await page.screenshot({
         path: `${process.env.HALO_APPLICATION_PNG ?? "test-results"}/application-confirm-${width}-${colorScheme}.png`,
@@ -890,17 +1012,18 @@ test("refreshing eligibility can reopen the form after service restoration", asy
   state.grant = "suspended";
   await open(page, state);
   await expect(
-    page.getByText(
-      "当前员工服务不可用于新申请。你仍可查看允许访问的申请记录。",
-      { exact: true },
-    ),
+    page.getByText("目前无法提交新的工牌申请。可在“我的申请”查看记录。", {
+      exact: true,
+    }),
   ).toBeVisible();
   await expect(
-    page.getByRole("link", { name: "申请工号", exact: true }),
+    page.getByRole("link", { name: "查看工号", exact: true }),
   ).toHaveCount(0);
   state.grant = "active";
-  await page.getByRole("button", { name: "刷新办理内容", exact: true }).click();
-  await expect(page.getByLabel("实际科室", { exact: true })).toBeVisible();
+  await page
+    .getByRole("button", { name: "重新加载申请表", exact: true })
+    .click();
+  await expect(page.getByLabel("科室", { exact: true })).toBeVisible();
   expect(state.submissions).toHaveLength(0);
 });
 
@@ -968,7 +1091,7 @@ test("session rejection removes the visible snapshot and clears only the selecte
   await expect(
     page.getByRole("heading", { name: "工牌申请已提交" }),
   ).toBeVisible();
-  await page.getByRole("link", { name: "查看已保存的申请" }).click();
+  await page.getByRole("link", { name: "查看申请详情" }).click();
   await expect(page.getByRole("img", { name: "工牌预览" })).toBeVisible();
   state.sessionInvalid = true;
   await page.getByRole("button", { name: "刷新详情", exact: true }).click();

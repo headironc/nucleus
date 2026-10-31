@@ -56,6 +56,9 @@ async function setup() {
     })),
     detail: vi.fn<API["detail"]>(async () => ({ kind: "ok", value: detail })),
     review: vi.fn<API["review"]>(async () => ({ kind: "disconnected" })),
+    cancellation: vi.fn<API["cancellation"]>(async () => ({
+      kind: "disconnected",
+    })),
     resource: vi.fn<API["resource"]>(async () => ({
       kind: "ok",
       value: {

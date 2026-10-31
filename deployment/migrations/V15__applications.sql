@@ -26,7 +26,7 @@ CREATE TABLE workforce.applications (
     id uuid PRIMARY KEY,
     person_id uuid NOT NULL REFERENCES identity.persons (id),
     kind text NOT NULL CHECK (kind IN ('issuance', 'duplication', 'replacement')),
-    status text NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted', 'approved', 'rejected')),
+    status text NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted', 'approved', 'rejected', 'cancelled')),
     submitted_at timestamptz NOT NULL DEFAULT transaction_timestamp(),
     reviewer_id uuid REFERENCES identity.persons (id),
     reviewed_at timestamptz,
@@ -37,7 +37,10 @@ CREATE TABLE workforce.applications (
             AND reviewed_at IS NOT NULL AND reviewed_at >= submitted_at
             AND ((status = 'approved' AND rejection_reason IS NULL)
                 OR (status = 'rejected' AND rejection_reason IS NOT NULL
-                    AND length(btrim(rejection_reason, U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000')) > 0)))),
+                    AND length(btrim(rejection_reason, U&'\0009\000A\000B\000C\000D\0020\0085\00A0\1680\2000\2001\2002\2003\2004\2005\2006\2007\2008\2009\200A\2028\2029\202F\205F\3000')) > 0)))
+        OR (status = 'cancelled' AND rejection_reason IS NULL
+            AND ((reviewer_id IS NULL AND reviewed_at IS NULL)
+                OR (reviewer_id IS NOT NULL AND reviewed_at IS NOT NULL AND reviewed_at >= submitted_at)))),
     snapshot jsonb NOT NULL,
     -- Projection columns give the JSON's one owned reference real database protection.
     department_id uuid GENERATED ALWAYS AS ((snapshot->'department'->>'id')::uuid) STORED NOT NULL
@@ -118,13 +121,21 @@ BEGIN
         RAISE EXCEPTION 'applications must be retained'
             USING ERRCODE = '23514', CONSTRAINT = 'applications_immutable_check';
     END IF;
-    IF OLD.status <> 'submitted' OR NEW.status NOT IN ('approved', 'rejected')
-        OR ROW(NEW.id, NEW.person_id, NEW.kind, NEW.submitted_at, NEW.snapshot)
+    IF ROW(NEW.id, NEW.person_id, NEW.kind, NEW.submitted_at, NEW.snapshot)
             IS DISTINCT FROM ROW(OLD.id, OLD.person_id, OLD.kind, OLD.submitted_at, OLD.snapshot) THEN
-        RAISE EXCEPTION 'only one review may change an application'
+        RAISE EXCEPTION 'fixed application facts cannot be changed'
             USING ERRCODE = '23514', CONSTRAINT = 'applications_transition_check';
     END IF;
-    RETURN NEW;
+    IF OLD.status = 'submitted' AND NEW.status IN ('approved', 'rejected') THEN
+        RETURN NEW;
+    END IF;
+    IF OLD.status IN ('submitted', 'approved') AND NEW.status = 'cancelled'
+        AND ROW(NEW.reviewer_id, NEW.reviewed_at, NEW.rejection_reason)
+            IS NOT DISTINCT FROM ROW(OLD.reviewer_id, OLD.reviewed_at, OLD.rejection_reason) THEN
+        RETURN NEW;
+    END IF;
+    RAISE EXCEPTION 'only one review or cancellation may change an application'
+        USING ERRCODE = '23514', CONSTRAINT = 'applications_transition_check';
 END
 $$;
 CREATE TRIGGER applications_immutable BEFORE INSERT OR UPDATE OR DELETE ON workforce.applications

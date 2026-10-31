@@ -82,7 +82,7 @@ export function ApplicationFields({
         ))}
       </fieldset>
       <div className="application-field">
-        <label htmlFor={`${id}-department`}>实际科室</label>
+        <label htmlFor={`${id}-department`}>科室</label>
         <select
           id={`${id}-department`}
           value={value.departmentId}
@@ -127,9 +127,9 @@ export function ApplicationFields({
               })
             }
           />
-          <span>我确认本次工牌使用上述科室</span>
+          <span>本次工牌使用以上科室。</span>
         </label>
-        <p className="field-hint">预选科室可以更换，请按本次需要确认。</p>
+        <p className="field-hint">请按本次工牌需要选择科室。</p>
       </div>
       {rule.position && (
         <div className="application-field">
@@ -209,7 +209,7 @@ export function ApplicationFields({
         {value.pickup && (
           <p className="application-selected">领取地点：{value.pickup}</p>
         )}
-        <p className="field-hint">领取地点用于办理和领取，不打印在工牌上。</p>
+        <p className="field-hint">领取地点不打印在工牌上。</p>
       </div>
     </fieldset>
   );

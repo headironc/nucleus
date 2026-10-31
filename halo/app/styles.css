@@ -2,6 +2,7 @@
 @import "../../design/assets/tokens.css";
 @import "./workforce/application.css";
 @import "./workforce/reviews.css";
+@import "./workforce/cancellation-dialog.css";
 
 @layer components {
   .admission-layout {
@@ -100,17 +101,6 @@
   .admission-pagination button:disabled {
     opacity: 0.45;
     cursor: default;
-  }
-  .admission-guide {
-    margin: 1.5rem 0;
-    padding: 1rem 0;
-    line-height: 1.9;
-    color: var(--sub);
-  }
-  .admission-guide h2 {
-    font-size: 1rem;
-    color: var(--ink);
-    margin-bottom: 0.5rem;
   }
   .admission-leave {
     margin-top: 1.5rem;
