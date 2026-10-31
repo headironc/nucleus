@@ -2711,7 +2711,7 @@ async function ownCancellation(page: Page, context: BrowserContext, manager: str
     ).toBeVisible();
     await expect(target.getByText(name, { exact: true })).toBeVisible();
     await expect(
-      target.getByRole("heading", { name: "这不是退出登录", exact: true }),
+      target.getByRole("heading", { name: "注销后会发生什么", exact: true }),
     ).toBeVisible();
   };
   const confirmOpen = async (target: Page) => {
