@@ -79,6 +79,41 @@ impl Observer {
         self.step == 16
     }
 
+    pub(super) fn verify_resources(&self) {
+        assert!(self.complete(), "submission observations precede reviews");
+        let (_, person, _) = self.owner.expect("bound photo owner");
+        for (id, original) in &self.photos {
+            let bytes = self
+                .directory
+                .open(
+                    &["workforce", "photos", &person.to_string()],
+                    &id.to_string(),
+                )
+                .expect("retained private directory")
+                .expect("retained photo")
+                .read(original.len() as u64)
+                .expect("retained photo bytes");
+            assert!(
+                bytes == *original,
+                "reviews retain exact original photo bytes"
+            );
+        }
+        let usage = self
+            .directory
+            .exclusive(&["workforce", "photos"])
+            .expect("photo accounting lock")
+            .usage(&[])
+            .expect("retained photo accounting");
+        assert_eq!(usage.files, 4, "reviews prepare no extra photos");
+    }
+
+    pub(super) fn original(&self, id: Uuid) -> &Value {
+        assert!(self.complete(), "complete submissions bind review targets");
+        self.applications
+            .get(&id)
+            .expect("an original submitted application")
+    }
+
     pub(super) fn evidence(&self) -> Value {
         let (account, person, _) = self.owner.expect("bound badge owner");
         json!({"accountId":account,"personId":person,"phases":self.step,
@@ -379,33 +414,7 @@ impl Observer {
         assert_eq!(counts.get::<_, i64>(0), photo_count as i64);
         assert_eq!(counts.get::<_, i64>(1), photo_count as i64);
         assert_eq!(counts.get::<_, i64>(2), count as i64);
-        let unchanged:String=client.query_one(
-            "SELECT jsonb_build_object(
-             'accounts',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM identity.accounts record),
-             'persons',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM identity.persons record),
-             'identities',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM identity.revisions record),
-             'sessions',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM identity.sessions record),
-             'revocations',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM identity.revocations record),
-             'grants',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM access.grants record),
-             'assignments',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM access.assignments record),
-             'roles',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM access.roles record),
-             'holders',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM access.holders record),
-             'access_completions',(SELECT jsonb_agg(to_jsonb(record) ORDER BY family,operation_id) FROM access.completions record),
-             'terminations',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM access.terminations record),
-             'numbers',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.numbers record),
-             'number_revisions',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.revisions record),
-             'allocations',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.allocations record),
-             'completions',(SELECT jsonb_agg(to_jsonb(record) ORDER BY family,operation_id) FROM workforce.completions record),
-             'groups',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.groups record),
-             'departments',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.departments record),
-             'rules',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.rules record),
-             'positions',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.positions record),
-             'rosters',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.rosters record),
-             'titles',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.titles record),
-             'resources',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.resources record),
-             'photos',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.photos record),
-             'other_audit',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM audit.events record WHERE action<>'workforce.application.submitted'))::text", &[],
-        ).await.expect("identity, permissions, number, directory and resource window").get(0);
+        let unchanged = related_facts(client, &["workforce.application.submitted"]).await;
         if position == "before" {
             self.unchanged = Some(unchanged);
         } else {
@@ -419,4 +428,34 @@ impl Observer {
             .await
             .expect("complete read-only badge window");
     }
+}
+
+pub(super) async fn related_facts(client: &Client, actions: &[&str]) -> String {
+    client.query_one(
+        "SELECT jsonb_build_object(
+         'accounts',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM identity.accounts record),
+         'persons',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM identity.persons record),
+         'identities',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM identity.revisions record),
+         'sessions',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM identity.sessions record),
+         'revocations',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM identity.revocations record),
+         'grants',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM access.grants record),
+         'assignments',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM access.assignments record),
+         'roles',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM access.roles record),
+         'holders',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM access.holders record),
+         'access_completions',(SELECT jsonb_agg(to_jsonb(record) ORDER BY family,operation_id) FROM access.completions record),
+         'terminations',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM access.terminations record),
+         'numbers',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.numbers record),
+         'number_revisions',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.revisions record),
+         'allocations',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.allocations record),
+         'completions',(SELECT jsonb_agg(to_jsonb(record) ORDER BY family,operation_id) FROM workforce.completions record),
+         'groups',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.groups record),
+         'departments',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.departments record),
+         'rules',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.rules record),
+         'positions',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.positions record),
+         'rosters',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.rosters record),
+         'titles',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.titles record),
+         'resources',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.resources record),
+         'photos',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM workforce.photos record),
+         'other_audit',(SELECT jsonb_agg(to_jsonb(record) ORDER BY id) FROM audit.events record WHERE NOT(action=ANY($1::text[]))))::text", &[&actions],
+    ).await.expect("identity, permissions, number, directory and resource window").get(0)
 }

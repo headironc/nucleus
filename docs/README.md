@@ -52,7 +52,7 @@
 | Workforce 目录、分类规则与配置完成        | 已交付   | [目录](workforce/directories.md)、[配置完成](workforce/completions.md)                                                                                                     |
 | 工牌模板读取、照片准备、本人提交与历史    | 已交付   | [模板与照片](workforce/media.md)、[申请](workforce/applications.md)                                                                                                        |
 | 工牌管理审批与附理由驳回                  | 已交付   | [申请](workforce/applications.md)；后端管理查询、审批及本人审核结果，网站兼容与页面组合验收由客户端集成覆盖                                                                |
-| Halo 网站工牌审核与本人审核结果           | 待验收   | [工牌审核页面](client/pages.md#网站工牌审核)、[网站检查](../halo/README.md#工牌审核)；客户端源码与受控检查随本片交付，真实后端组合另验                                     |
+| Halo 网站工牌审核与本人审核结果           | 已交付   | [工牌审核页面](client/pages.md#网站工牌审核)、[真实组合](../halo/README.md#真实审批组合)；批准、附理由驳回、未知结果刷新与受限历史已完成真实组合验收                       |
 | 工牌本人或管理者按确认状态取消            | 待验收   | [申请](workforce/applications.md)；后端取消、保留历史及审计，网站适配和真实组合由客户端集成覆盖                                                                            |
 | 工牌单面 WebP 生成与授权读取              | 待验收   | [成品与发放](workforce/fulfillment.md)；后端生成、永久保留、下载与 ready 取消，网站消费和真实组合另验                                                                      |
 | 工牌发放                                  | 目标     | [成品与发放](workforce/fulfillment.md#实际发放)                                                                                                                            |

@@ -58,7 +58,9 @@ export type BadgeObservation = {
   resourceId: string | null;
 };
 
-async function wire(response: APIResponse | PageResponse): Promise<Wire> {
+export async function wire(
+  response: APIResponse | PageResponse,
+): Promise<Wire> {
   const headers = response.headers();
   return {
     status: response.status(),
@@ -71,7 +73,7 @@ async function wire(response: APIResponse | PageResponse): Promise<Wire> {
 }
 
 /** Observer facts come from the same generated contract used by the real page. */
-async function trusted<T>(
+export async function trusted<T>(
   value: Wire,
   endpoint: keyof typeof contracts,
   status: number,
@@ -320,8 +322,8 @@ export async function ownBadgeApplications(
   const prepare = async (kind: PreviewInput["kind"]) => {
     const html = await page.goto("/workforce/applications/new");
     assertDocumentPolicy(html!.headers(), false);
-    await expect(page.getByLabel("实际科室", { exact: true })).toBeVisible();
-    const department = page.getByLabel("实际科室", { exact: true });
+    await expect(page.getByLabel("科室", { exact: true })).toBeVisible();
+    const department = page.getByLabel("科室", { exact: true });
     const departmentId = await department
       .locator("option")
       .evaluateAll(
@@ -333,7 +335,7 @@ export async function ownBadgeApplications(
     expect(departmentId).toBeTruthy();
     await department.selectOption(departmentId!);
     await page
-      .getByRole("checkbox", { name: "我确认本次工牌使用上述科室" })
+      .getByRole("checkbox", { name: "本次工牌使用以上科室。", exact: true })
       .check();
     for (const label of ["职务（选填）", "职称（选填）"]) {
       const field = page.getByLabel(label, { exact: true });
@@ -450,12 +452,12 @@ export async function ownBadgeApplications(
       ])
         await expect(details.getByText(text, { exact: true })).toBeVisible();
       await expect(
-        dialog.getByRole("img", { name: "本次工牌完整预览" }),
+        dialog.getByRole("img", { name: "工牌预览", exact: true }),
       ).toBeVisible();
       await expect
         .poll(() =>
           dialog
-            .getByRole("img", { name: "本次工牌完整预览" })
+            .getByRole("img", { name: "工牌预览", exact: true })
             .evaluate((node, layout) => {
               const canvas = node as HTMLCanvasElement;
               const x = Math.floor(
@@ -487,7 +489,8 @@ export async function ownBadgeApplications(
         .click();
       await expect(
         page.getByRole("heading", {
-          name: phase === "lost" ? "未能确认，请刷新查看" : "工牌申请已提交",
+          name:
+            phase === "lost" ? "暂时无法确认申请是否已提交" : "工牌申请已提交",
           exact: true,
         }),
       ).toBeVisible();
@@ -508,7 +511,7 @@ export async function ownBadgeApplications(
       "/api/v1/workforce/current/applications",
       owner.session.id,
     );
-    await page.getByRole("link", { name: "刷新申请列表", exact: true }).click();
+    await page.getByRole("link", { name: "查看我的申请", exact: true }).click();
     const list = await trusted<ApplicationList>(
       await wire(await listResponse),
       "GET /api/v1/workforce/current/applications",
@@ -538,7 +541,7 @@ export async function ownBadgeApplications(
       expect(detail.access).toBe("full");
       expect(detail.application).toEqual(expected);
       await expect(
-        page.getByRole("img", { name: "本次工牌完整预览" }),
+        page.getByRole("img", { name: "工牌预览", exact: true }),
       ).toBeVisible();
       await picture(page, `history-${index + 1}`);
     }
@@ -601,7 +604,9 @@ export async function ownBadgeApplications(
     );
     expect(empty.access).toBe("full");
     expect(empty.count).toBe(0);
-    await expect(page.getByText("暂无申请", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("暂无工牌申请。", { exact: true }),
+    ).toBeVisible();
     await picture(page, "foreign-own-history");
     await observe("foreign", "after", {
       accountId: other.account.id,
@@ -620,7 +625,10 @@ export async function ownBadgeApplications(
     );
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(
-      page.getByRole("heading", { name: "未能确认，请刷新查看", exact: true }),
+      page.getByRole("heading", {
+        name: "暂时无法确认申请是否已提交",
+        exact: true,
+      }),
     ).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "预览工牌", exact: true }),
@@ -671,7 +679,7 @@ export async function ownBadgeApplications(
       page.getByRole("link", { name: "查看详情", exact: true }),
     ).toHaveCount(4);
     await expect(
-      page.getByRole("img", { name: "本次工牌完整预览" }),
+      page.getByRole("img", { name: "工牌预览", exact: true }),
     ).toHaveCount(0);
     await picture(page, "restricted-history");
     const restrictedDetail = responseFor(
@@ -694,7 +702,7 @@ export async function ownBadgeApplications(
     ]);
     await expect(page.locator(".application-snapshot")).toHaveCount(0);
     await expect(
-      page.getByRole("img", { name: "本次工牌完整预览" }),
+      page.getByRole("img", { name: "工牌预览", exact: true }),
     ).toHaveCount(0);
     expect(resources).toBe(resourceCount);
     const denied = await trusted<{ code: string }>(
@@ -721,6 +729,7 @@ export async function ownBadgeApplications(
         previewRequests: previews,
       }),
     );
+    return { applications: records, grantId: grant.grant.id };
   } finally {
     await page.unroute("**/api/v1/workforce/applications", submit);
     await page.unroute("**/api/v1/workforce/application-photos", photo);

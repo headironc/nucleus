@@ -1837,13 +1837,6 @@
     color: var(--sub);
     overflow-wrap: anywhere;
   }
-  .termination-status {
-    display: inline-block;
-    margin-bottom: 14px;
-    color: var(--accent);
-    font-size: 12px;
-    letter-spacing: 0.08em;
-  }
   .termination-person {
     padding: 20px;
     margin-bottom: 24px;
@@ -1867,17 +1860,6 @@
   }
   .termination-consequences li + li {
     margin-top: 10px;
-  }
-  .termination-note {
-    margin-top: 20px;
-    padding: 16px 20px;
-    background: var(--muted);
-    border-left: 3px solid var(--line);
-  }
-  .termination-note h3 {
-    font-size: 16px;
-    line-height: 1.7;
-    margin-bottom: 6px;
   }
   .termination-note-copy,
   .termination-time {
