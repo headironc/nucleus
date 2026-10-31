@@ -34,7 +34,7 @@
     <view class="self-identity">
       <view class="self-identity-garden"><image class="self-garden" src="/assets/self-garden.jpg" mode="aspectFill" aria-hidden="true" /><view class="self-identity-shade"></view></view>
       <view class="self-identity-copy">
-        <image class="avatar" wx:if="{{avatar && !avatarFailed}}" src="{{avatar}}" mode="aspectFill" binderror="avatarError" />
+        <image class="avatar" wx:if="{{avatar && !avatarFailed}}" src="{{avatar}}" mode="aspectFill" webp="{{true}}" binderror="avatarError" />
         <view class="avatar avatar-placeholder" wx:else><view class="self-person-icon" aria-hidden="true"></view></view>
         <view class="profile-name">{{name}}</view>
       </view>

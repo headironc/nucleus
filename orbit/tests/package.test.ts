@@ -35,10 +35,19 @@ test.each(["login", "registration"])("the exported native package handles %s wit
   await platform.next(index + 1);
   platform.reply(index + 1, { code: "ok", account: account() }); await work;
   expect(page.data.name).toBe("张宁");
+  expect(page.data.avatar).toBe(account().avatar.href);
+  expect(page.data.avatarFailed).toBe(false);
   expect(page.data).not.toHaveProperty("token");
   expect(page.data).not.toHaveProperty("secret");
+  const requests = platform.requests.length;
+  page.avatarError();
+  expect(page.data.avatarFailed).toBe(true);
+  expect(platform.requests).toHaveLength(requests);
+  expect(platform.records().session?.id).toBe(session().id);
   page.onHide();
   expect(page.data.name).toBe("");
+  expect(page.data.avatar).toBe("");
+  expect(page.data.suffix).toBe("");
   expect(page.data.inputIdNumber).toBe("");
   application.onHide();
 });
@@ -90,6 +99,17 @@ test("all shipped WXML bindings preserve raw source bytes and pass a host expres
     }
   }
   expect(bindings).toBeGreaterThan(0);
+});
+
+test("the shipped account avatar enables network WebP and retains its signed source and failure placeholder", async () => {
+  const source = await readFile(packageFile("pages/account/index.wxml"), "utf8");
+  const avatar = source.match(/<image\b[^>]*class="avatar"[^>]*>/)![0];
+  expect(avatar).toContain('webp="{{true}}"');
+  expect(avatar).toContain('src="{{avatar}}"');
+  expect(avatar).toContain('wx:if="{{avatar && !avatarFailed}}"');
+  expect(avatar).toContain('binderror="avatarError"');
+  expect(source).toContain('<view class="avatar avatar-placeholder" wx:else>');
+  expect(source).toContain('wx:if="{{avatarFailed}}" role="status">头像暂时无法显示。</view>');
 });
 
 test("native sessions page binds delayed modal confirmations and exposes only safe display fields", async () => {
