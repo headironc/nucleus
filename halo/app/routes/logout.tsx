@@ -4,7 +4,7 @@ import * as root from "../root";
 
 export function meta() {
   return [
-    { title: `账户管理 · 司籍处` },
+    { title: `退出登录 · 司籍处` },
     { name: `robots`, content: `noindex` },
   ];
 }
