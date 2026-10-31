@@ -186,50 +186,86 @@ async function find(page: Page) {
   await page.getByLabel("同事的手机号").fill("13800000002");
   await page.getByRole("button", { name: "查找同事", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "确认开通", exact: true }),
+    page.getByRole("button", { name: "下一步", exact: true }),
   ).toBeVisible();
 }
 async function confirm(page: Page) {
-  await page.getByRole("button", { name: "确认开通", exact: true }).click();
+  await page.getByRole("button", { name: "下一步", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "取消", exact: true }),
+    page.getByRole("button", { name: "返回修改", exact: true }),
   ).toBeFocused();
-  await page.getByRole("button", { name: "开通员工服务", exact: true }).click();
+  await page.getByRole("button", { name: "确认开通", exact: true }).click();
+}
+async function capture(page: Page, prefix: string) {
+  for (const colorScheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme });
+    for (const width of [320, 1440]) {
+      await page.setViewportSize({ width, height: 1000 });
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: test.info().outputPath(`${prefix}-${width}-${colorScheme}.png`),
+        fullPage: true,
+      });
+    }
+  }
 }
 test("institution account entry, default role and keyboard confirmation", async ({
   page,
 }) => {
   await page.goto(origin + "/account");
-  await page.getByRole("link", { name: "为同事开通员工服务", exact: true }).click();
+  await page
+    .getByRole("link", { name: "为同事开通员工服务", exact: true })
+    .click();
+  await capture(page, "lookup");
+  let lookups = 0;
+  page.on("request", (request) => {
+    if (
+      new URL(request.url()).pathname === "/api/v1/workforce/grants/candidates"
+    )
+      lookups++;
+  });
+  await page.getByLabel("同事的手机号").fill("123");
+  await page.getByRole("button", { name: "查找同事", exact: true }).click();
+  await expect(
+    page.getByText("请输入 11 位中国大陆手机号。", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByLabel("同事的手机号")).toBeFocused();
+  expect(lookups).toBe(0);
+  await capture(page, "invalid-mobile");
   await find(page);
   await expect(
     page.getByRole("radio", { name: "普通成员 · 默认选择" }),
   ).toBeChecked();
   await expect(page.getByRole("radio", { name: /^管理员/ })).not.toBeChecked();
-  await page.getByRole("button", { name: "确认开通", exact: true }).click();
+  await page.getByRole("button", { name: "下一步", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "取消", exact: true }),
+    page.getByRole("button", { name: "返回修改", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await expect(
-    page.getByRole("button", { name: "确认开通", exact: true }),
+    page.getByRole("button", { name: "下一步", exact: true }),
   ).toBeFocused();
   await page.getByRole("radio", { name: /^管理员/ }).check();
-  await page.getByRole("button", { name: "确认开通", exact: true }).click();
+  await page.getByRole("button", { name: "下一步", exact: true }).click();
   await expect(
     page.getByRole("dialog").getByText("管理员", { exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Tab");
   await expect(
-    page.getByRole("button", { name: "开通员工服务", exact: true }),
+    page.getByRole("button", { name: "确认开通", exact: true }),
   ).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(
     page.getByText("本次员工服务已开通", { exact: true }),
   ).toBeVisible();
+  await capture(page, "complete");
   await page
-    .getByRole("button", { name: "继续办理另一人", exact: true })
+    .getByRole("button", { name: "为其他同事开通", exact: true })
     .click();
   await expect(page.getByLabel("同事的手机号")).toHaveValue("");
 });
@@ -259,17 +295,19 @@ test("lost response survives reload and replays the exact original without histo
   await find(page);
   await confirm(page);
   await expect(
-    page.getByRole("button", { name: /秒后可检查开通结果/ }),
+    page.getByRole("button", { name: /秒后可查看开通结果/ }),
   ).toBeDisabled();
+  await capture(page, "unknown");
   await page.reload();
   await expect(
-    page.getByText("此前开通结果尚未确认。", { exact: false }),
+    page.getByText("此前的开通结果尚不确定。", { exact: false }),
   ).toBeVisible();
+  await capture(page, "resumed-unknown");
   expect(calls).toHaveLength(1);
   await expect(
-    page.getByRole("button", { name: "检查开通结果", exact: true }),
+    page.getByRole("button", { name: "查看开通结果", exact: true }),
   ).toBeEnabled({ timeout: 8000 });
-  await page.getByRole("button", { name: "检查开通结果", exact: true }).click();
+  await page.getByRole("button", { name: "查看开通结果", exact: true }).click();
   await expect(
     page.getByText("本次员工服务已开通", { exact: true }),
   ).toBeVisible();
@@ -330,6 +368,7 @@ test("denies wrong permission, self and same-rank targets without inventing an e
     page.getByText("当前账户没有开通员工服务的权限。", { exact: false }),
   ).toBeVisible();
   await expect(page.getByLabel("同事的手机号")).not.toBeVisible();
+  await capture(page, "denied");
   await page.unroute("**/api/v1/accounts/current/role");
   await page.reload();
   await page.route("**/api/v1/workforce/grants/candidates?*", (route) =>
@@ -338,14 +377,15 @@ test("denies wrong permission, self and same-rank targets without inventing an e
   await page.getByLabel("同事的手机号").fill("13800000002");
   await page.getByRole("button", { name: "查找同事", exact: true }).click();
   await expect(
-    page.getByText("无法为该账户办理", { exact: false }),
+    page.getByText("暂时无法为该同事办理", { exact: false }),
   ).toBeVisible();
+  await capture(page, "target-unavailable");
 });
 test("switching account closes confirmation and prevents a late candidate from exposing old data", async ({
   page,
 }) => {
   await find(page);
-  await page.getByRole("button", { name: "确认开通", exact: true }).click();
+  await page.getByRole("button", { name: "下一步", exact: true }).click();
   await choose(page, target);
   await expect(page.getByRole("dialog")).not.toBeVisible();
   await expect(
@@ -366,11 +406,12 @@ test("dependency and rate-limit failures stay failures and respect Retry-After",
   await page.getByLabel("同事的手机号").fill("13800000002");
   await page.getByRole("button", { name: "查找同事", exact: true }).click();
   await expect(
-    page.getByText("暂时无法查找同事和可选角色", { exact: false }),
+    page.getByText("暂时无法查找同事", { exact: false }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: /秒后可重新查找/ }),
   ).toBeDisabled();
+  await capture(page, "candidate-limited");
 });
 for (const patch of [
   { suspensionId: target },
@@ -384,9 +425,276 @@ for (const patch of [
     );
     await find(page);
     await expect(
-      page.getByRole("button", { name: "确认开通", exact: true }),
+      page.getByRole("button", { name: "下一步", exact: true }),
     ).toBeDisabled();
+    await capture(
+      page,
+      patch.suspensionId ? "account-paused" : "service-present",
+    );
   });
+
+for (const [code, status, text] of [
+  [
+    "account_not_ready",
+    422,
+    "本次开通时，该账户处于暂停状态。请重新查找并查看当前状态。",
+  ],
+  [
+    "already_authorized",
+    409,
+    "本次开通时，该同事已有未结束的员工服务。请重新查找并查看当前状态。",
+  ],
+  [
+    "target_changed",
+    409,
+    "本次开通时，同事资料或员工服务状态已变化。请重新查找并核对。",
+  ],
+  ["role_changed", 409, "本次开通时，所选角色已变化。请重新查找并选择角色。"],
+] as const)
+  test(`original ${code} refusal stays historical until an explicit fresh candidate read`, async ({
+    page,
+  }) => {
+    const custom = {
+      ...admin,
+      id: target,
+      changeId: target,
+      kind: "custom",
+      name: "工牌办理员",
+      level: 500,
+    };
+    const original =
+      code === "role_changed"
+        ? { ...candidate, count: 3, roles: [admin, custom, member] }
+        : candidate;
+    let reads = 0;
+    let posts = 0;
+    await page.route("**/api/v1/workforce/grants/candidates?*", (route) => {
+      reads++;
+      return route.fulfill({ json: original });
+    });
+    await page.route("**/api/v1/workforce/grants", (route) => {
+      posts++;
+      return route.fulfill({ status, json: { code } });
+    });
+    await find(page);
+    if (code === "role_changed")
+      await page.getByRole("radio", { name: /^工牌办理员/ }).check();
+    await confirm(page);
+    await expect(page.getByText(text, { exact: true })).toBeVisible();
+    expect(posts).toBe(1);
+    expect(reads).toBe(1);
+    await capture(page, `refused-${code}`);
+    const refreshed =
+      code === "already_authorized"
+        ? { ...candidate, grant: { id: target, status: "terminated" } }
+        : code === "role_changed"
+          ? {
+              ...candidate,
+              count: 3,
+              roles: [
+                admin,
+                { ...custom, changeId: roleId, name: "工牌审核员" },
+                member,
+              ],
+            }
+          : code === "target_changed"
+            ? {
+                ...candidate,
+                identity: {
+                  ...candidate.identity,
+                  revisionId: roleId,
+                  name: "更正后姓名",
+                },
+              }
+            : candidate;
+    await page.unroute("**/api/v1/workforce/grants/candidates?*");
+    await page.route("**/api/v1/workforce/grants/candidates?*", (route) => {
+      reads++;
+      return route.fulfill({ json: refreshed });
+    });
+    await expect(page.getByText(text, { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "重新查找", exact: true }).click();
+    await find(page);
+    await expect(
+      page.getByRole("button", { name: "下一步", exact: true }),
+    ).toBeEnabled();
+    await expect(page.getByText(text, { exact: true })).toHaveCount(0);
+    if (code === "already_authorized")
+      await expect(
+        page.getByText("此前服务已结束", { exact: true }),
+      ).toBeVisible();
+    if (code === "role_changed")
+      await expect(
+        page.getByRole("radio", { name: /^工牌审核员/ }),
+      ).toBeVisible();
+    if (code === "target_changed")
+      await expect(page.getByText("更正后姓名", { exact: true })).toBeVisible();
+    expect(posts).toBe(1);
+    expect(reads).toBe(2);
+  });
+
+test("failure before saving an admission stays unsent and can return to lookup", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    const original = Storage.prototype.setItem;
+    Storage.prototype.setItem = function (key, value) {
+      if (key.startsWith("halo.workforce-admission:"))
+        throw new DOMException("Unavailable", "QuotaExceededError");
+      return original.call(this, key, value);
+    };
+  });
+  let posts = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/api/v1/workforce/grants") posts++;
+  });
+  await find(page);
+  await confirm(page);
+  await expect(
+    page.getByText("本次开通尚未提交。请重新检查。", { exact: true }),
+  ).toBeVisible();
+  expect(posts).toBe(0);
+  await capture(page, "unsent");
+  await page.getByRole("button", { name: "重新检查", exact: true }).click();
+  await expect(page.getByLabel("同事的手机号")).toBeVisible();
+  expect(posts).toBe(0);
+});
+
+test("an unreadable saved original never becomes an unsent or replacement admission", async ({
+  page,
+}) => {
+  let posts = 0;
+  await page.route("**/api/v1/workforce/grants", (route) => {
+    posts++;
+    return route.abort();
+  });
+  await find(page);
+  await confirm(page);
+  await expect(
+    page.getByText("开通结果尚不确定。", { exact: false }),
+  ).toBeVisible();
+  await page.evaluate(() => {
+    const original = Storage.prototype.getItem;
+    Storage.prototype.getItem = function (key) {
+      if (key.startsWith("halo.workforce-admission:"))
+        throw new DOMException("Unavailable", "SecurityError");
+      return original.call(this, key);
+    };
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(
+    page.getByText("办理信息暂时无法使用，请重新检查。", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("本次开通尚未提交。", { exact: false }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("同事的手机号")).toHaveCount(0);
+  await expect(
+    page.getByText(candidate.identity.name, { exact: true }),
+  ).toHaveCount(0);
+  expect(posts).toBe(1);
+  await capture(page, "storage-unknown");
+});
+
+test("a known completion stays complete when clearing the original fails", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    const original = Storage.prototype.removeItem;
+    Storage.prototype.removeItem = function (key) {
+      if (key.startsWith("halo.workforce-admission:"))
+        throw new DOMException("Unavailable", "SecurityError");
+      return original.call(this, key);
+    };
+  });
+  await find(page);
+  await confirm(page);
+  await expect(
+    page.getByText("本次员工服务已开通", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("暂时无法继续办理其他同事。可先返回个人账户。", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "为其他同事开通", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "重新检查", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("link", { name: "← 返回个人账户", exact: true }),
+  ).toHaveAttribute("href", "/account");
+  await capture(page, "complete-retained");
+});
+
+test("missing original data preserves uncertainty and provides the account return", async ({
+  page,
+}) => {
+  let posts = 0;
+  await page.route("**/api/v1/workforce/grants", (route) => {
+    posts++;
+    return route.abort();
+  });
+  await find(page);
+  await confirm(page);
+  await expect(
+    page.getByText("开通结果尚不确定。", { exact: false }),
+  ).toBeVisible();
+  await page.evaluate(
+    (id) => sessionStorage.removeItem(`halo.workforce-admission:${id}`),
+    id,
+  );
+  await page.reload();
+  await expect(
+    page.getByText(
+      "暂时无法确认此前的开通结果。可返回个人账户，暂时不要重复办理。",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "查看开通结果", exact: true }),
+  ).toHaveCount(0);
+  await expect(page.getByLabel("同事的手机号")).toHaveCount(0);
+  expect(posts).toBe(1);
+  await capture(page, "missing");
+});
+
+test("a blocked original stays uncertain without promising a result check", async ({
+  page,
+}) => {
+  let posts = 0;
+  await page.route("**/api/v1/workforce/grants", (route) => {
+    posts++;
+    return route.fulfill({ status: 409, json: { code: "request_mismatch" } });
+  });
+  await find(page);
+  await confirm(page);
+  const text = "暂时无法确认此前的开通结果。可返回个人账户，暂时不要重复办理。";
+  await expect(page.getByText(text, { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("返回后，请使用原办理账户查看结果。", { exact: false }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "暂时无法查看结果", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: /秒后可查看开通结果/ }),
+  ).toHaveCount(0);
+  await capture(page, "blocked");
+  await page.reload();
+  await expect(page.getByText(text, { exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "暂时无法查看结果", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: /秒后可查看开通结果/ }),
+  ).toHaveCount(0);
+  expect(posts).toBe(1);
+  await capture(page, "restored-blocked");
+});
+
 for (const width of [1440, 768, 390, 320])
   for (const theme of ["light", "dark"] as const)
     test(`actual admission page ${width} ${theme}`, async ({ page }) => {
@@ -402,12 +710,12 @@ for (const width of [1440, 768, 390, 320])
         ),
       ).toBe(true);
       await page.screenshot({
-        path: `test-results/admission-${width}-${theme}.png`,
+        path: test.info().outputPath(`admission-${width}-${theme}.png`),
         fullPage: true,
       });
-      await page.getByRole("button", { name: "确认开通", exact: true }).click();
+      await page.getByRole("button", { name: "下一步", exact: true }).click();
       await expect(
-        page.getByRole("button", { name: "取消", exact: true }),
+        page.getByRole("button", { name: "返回修改", exact: true }),
       ).toBeFocused();
       await expect(
         page.getByRole("link", { name: "跳到主要内容", exact: true }),
@@ -425,7 +733,7 @@ for (const width of [1440, 768, 390, 320])
           ),
       ).toBe(true);
       await page.screenshot({
-        path: `test-results/admission-dialog-${width}-${theme}.png`,
+        path: test.info().outputPath(`admission-dialog-${width}-${theme}.png`),
         fullPage: false,
       });
     });

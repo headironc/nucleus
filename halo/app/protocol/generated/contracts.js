@@ -1527,6 +1527,81 @@ export default {
       ]
     }
   },
+  "POST /api/v1/workforce/applications/{id}/cancellations": {
+    "200": {
+      "validator": "workforceApplicationCancellation_200",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "workforceApplicationCancellation_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "workforceApplicationCancellation_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "workforceApplicationCancellation_403",
+      "codes": [
+        "permission_denied"
+      ]
+    },
+    "404": {
+      "validator": "workforceApplicationCancellation_404",
+      "codes": [
+        "target_unavailable"
+      ]
+    },
+    "409": {
+      "validator": "workforceApplicationCancellation_409",
+      "codes": [
+        "state_changed"
+      ]
+    },
+    "413": {
+      "validator": "workforceApplicationCancellation_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "415": {
+      "validator": "workforceApplicationCancellation_415",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "422": {
+      "validator": "workforceApplicationCancellation_422",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "429": {
+      "validator": "workforceApplicationCancellation_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "workforceApplicationCancellation_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "workforceApplicationCancellation_503",
+      "codes": [
+        "dependency_unavailable",
+        "outcome_unknown"
+      ]
+    }
+  },
   "GET /api/v1/workforce/current/applications": {
     "200": {
       "validator": "workforceCurrentApplications_200",

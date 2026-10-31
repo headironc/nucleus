@@ -74,6 +74,7 @@ pub(crate) fn router(
                 .routes(routes!(detail))
                 .routes(routes!(managed_detail))
                 .routes(routes!(review).map(|router| router.layer(DefaultBodyLimit::max(8192))))
+                .routes(routes!(cancel).map(|router| router.layer(DefaultBodyLimit::max(8192))))
                 .route_layer(middleware::from_fn_with_state(
                     authentication.clone(),
                     identity::current::authenticate,
@@ -203,6 +204,28 @@ struct Created {
 }
 
 #[derive(Serialize, ToSchema)]
+#[schema(as = application::Cancelled, max_properties = 2)]
+struct Cancelled {
+    id: Id,
+    #[schema(schema_with = cancelled_status)]
+    status: &'static str,
+}
+
+fn cancelled_status() -> utoipa::openapi::RefOr<utoipa::openapi::Schema> {
+    utoipa::openapi::schema::ObjectBuilder::new()
+        .schema_type(utoipa::openapi::schema::Type::String)
+        .enum_values(Some(["cancelled"]))
+        .into()
+}
+
+#[derive(Serialize, ToSchema)]
+#[schema(as = application::Cancellation, max_properties = 2)]
+struct Cancellation {
+    code: &'static str,
+    application: Cancelled,
+}
+
+#[derive(Serialize, ToSchema)]
 #[schema(as = application::ListResponse)]
 struct Listed {
     code: &'static str,
@@ -299,6 +322,32 @@ async fn review(
         Json(Created {
             code: "ok",
             application,
+        })
+        .into_response()
+    })
+}
+
+#[utoipa::path(post, path = "/workforce/applications/{id}/cancellations", operation_id = "workforceApplicationCancellation",
+    params(("Operation-Id" = uuid::Uuid, Header, description = "Diagnostic only; refresh after an unknown outcome"), ("Session-Id" = uuid::Uuid, Header), ("Origin" = String, Header), ("id" = Id, Path)),
+    request_body(content = application::CancellationInput, description = "At most 8 KiB; explicit self or manager mode and the confirmed submitted or approved state; a manager reason is required"),
+    responses((status = 200, body = Cancellation, description = "Expected state cancelled and audited atomically; prior application facts remain retained"),
+        (status = 400, body = Failure, description = "invalid_input"), (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"), (status = 404, body = Failure, description = "target_unavailable"),
+        (status = 409, body = Failure, description = "state_changed; refresh and confirm again"), (status = 413, body = Failure, description = "invalid_input"), (status = 415, body = Failure, description = "invalid_input"), (status = 422, body = Failure, description = "invalid_input"),
+        (status = 429, body = Failure, description = "rate_limited", headers(("Retry-After" = u64, description = "Wait seconds"))), (status = 500, body = Failure, description = "internal_error"), (status = 503, body = Failure, description = "dependency_unavailable or outcome_unknown; only refresh current state without automatically resending")))]
+async fn cancel(
+    State(service): State<application::Service>,
+    Extension(actor): Extension<Actor>,
+    Extension(id): Extension<Id>,
+    Query(_): Query<Empty>,
+    Json(input): Json<application::CancellationInput>,
+) -> Response {
+    respond(service.cancel(&actor, id, input).await, |id| {
+        Json(Cancellation {
+            code: "ok",
+            application: Cancelled {
+                id,
+                status: "cancelled",
+            },
         })
         .into_response()
     })
