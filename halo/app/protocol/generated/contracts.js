@@ -1274,6 +1274,56 @@ export default {
       ]
     }
   },
+  "GET /api/v1/workforce/applications": {
+    "200": {
+      "validator": "workforceApplications_200",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "workforceApplications_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "workforceApplications_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "workforceApplications_403",
+      "codes": [
+        "permission_denied"
+      ]
+    },
+    "413": {
+      "validator": "workforceApplications_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "429": {
+      "validator": "workforceApplications_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "workforceApplications_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "workforceApplications_503",
+      "codes": [
+        "dependency_unavailable"
+      ]
+    }
+  },
   "POST /api/v1/workforce/applications": {
     "201": {
       "validator": "workforceApplicationSubmit_201",
@@ -1346,6 +1396,132 @@ export default {
     },
     "503": {
       "validator": "workforceApplicationSubmit_503",
+      "codes": [
+        "dependency_unavailable",
+        "outcome_unknown"
+      ]
+    }
+  },
+  "GET /api/v1/workforce/applications/{id}": {
+    "200": {
+      "validator": "workforceApplication_200",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "workforceApplication_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "workforceApplication_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "workforceApplication_403",
+      "codes": [
+        "permission_denied"
+      ]
+    },
+    "404": {
+      "validator": "workforceApplication_404",
+      "codes": [
+        "target_unavailable"
+      ]
+    },
+    "413": {
+      "validator": "workforceApplication_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "429": {
+      "validator": "workforceApplication_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "workforceApplication_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "workforceApplication_503",
+      "codes": [
+        "dependency_unavailable"
+      ]
+    }
+  },
+  "POST /api/v1/workforce/applications/{id}/reviews": {
+    "200": {
+      "validator": "workforceApplicationReview_200",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "workforceApplicationReview_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "workforceApplicationReview_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "workforceApplicationReview_403",
+      "codes": [
+        "permission_denied"
+      ]
+    },
+    "404": {
+      "validator": "workforceApplicationReview_404",
+      "codes": [
+        "target_unavailable"
+      ]
+    },
+    "409": {
+      "validator": "workforceApplicationReview_409",
+      "codes": [
+        "state_changed",
+        "applicant_unavailable"
+      ]
+    },
+    "413": {
+      "validator": "workforceApplicationReview_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "415": {
+      "validator": "workforceApplicationReview_415",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "429": {
+      "validator": "workforceApplicationReview_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "500": {
+      "validator": "workforceApplicationReview_500",
+      "codes": [
+        "internal_error"
+      ]
+    },
+    "503": {
+      "validator": "workforceApplicationReview_503",
       "codes": [
         "dependency_unavailable",
         "outcome_unknown"

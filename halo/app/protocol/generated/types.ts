@@ -348,9 +348,41 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        get: operations["workforceApplications"];
         put?: never;
         post: operations["workforceApplicationSubmit"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workforce/applications/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["workforceApplication"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/workforce/applications/{id}/reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["workforceApplicationReview"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1112,18 +1144,20 @@ export interface components {
             id: components["schemas"]["directory.title.Id"];
             name: string;
         };
-        "application.Input": {
-            expected: components["schemas"]["application.Snapshot"];
-            kind: components["schemas"]["application.Kind"];
-            selections: components["schemas"]["application.Selections"];
-        };
-        "application.Created": {
-            application: components["schemas"]["application.Application"];
+        /** @enum {string} */
+        "application.Status": "submitted" | "approved" | "rejected";
+        "application.ManagedListResponse": components["schemas"]["application.ManagedList"] & {
             code: string;
         };
-        "application.Application": components["schemas"]["application.Summary"] & {
-            photo: components["schemas"]["application.Photo"];
-            snapshot: components["schemas"]["application.Snapshot"];
+        "application.ManagedList": {
+            applications: components["schemas"]["application.ManagedSummary"][];
+            /** Format: int64 */
+            count: number;
+        };
+        "application.ManagedSummary": components["schemas"]["application.Summary"] & {
+            department: components["schemas"]["application.Department"];
+            name: string;
+            printedNumber: string;
         };
         "application.Summary": {
             id: components["schemas"]["application.Id"];
@@ -1134,8 +1168,71 @@ export interface components {
         };
         /** Format: uuid */
         "application.Id": string;
-        /** @enum {string} */
-        "application.Status": "submitted";
+        "application.Input": {
+            expected: components["schemas"]["application.Snapshot"];
+            kind: components["schemas"]["application.Kind"];
+            selections: components["schemas"]["application.Selections"];
+        };
+        "application.Created": {
+            application: components["schemas"]["application.Application"];
+            code: string;
+        };
+        "application.Application": components["schemas"]["application.Decision"] & {
+            id: components["schemas"]["application.Id"];
+            kind: components["schemas"]["application.Kind"];
+            photo: components["schemas"]["application.Photo"];
+            snapshot: components["schemas"]["application.Snapshot"];
+            /** Format: date-time */
+            submittedAt: string;
+        };
+        "application.Decision": {
+            /** @enum {string} */
+            status: "submitted";
+        } | {
+            /** Format: date-time */
+            reviewedAt: string;
+            reviewerId: components["schemas"]["person.Id"];
+            reviewerName: string;
+            /** @enum {string} */
+            status: "approved";
+        } | {
+            rejectionReason: components["schemas"]["application.Reason"];
+            /** Format: date-time */
+            reviewedAt: string;
+            reviewerId: components["schemas"]["person.Id"];
+            reviewerName: string;
+            /** @enum {string} */
+            status: "rejected";
+        };
+        "application.Reason": string;
+        "application.ManagedDetailResponse": components["schemas"]["application.ManagedDetail"] & {
+            code: string;
+        };
+        "application.ManagedDetail": {
+            application: components["schemas"]["application.Application"];
+            current: components["schemas"]["application.Current"];
+        };
+        "application.Current": {
+            accountActive: boolean;
+            department: components["schemas"]["application.DirectoryValue"];
+            name: string;
+            number: components["schemas"]["number.Number"] | null;
+            participationActive: boolean;
+            position: components["schemas"]["application.DirectoryValue"] | null;
+            title: components["schemas"]["application.DirectoryValue"] | null;
+        };
+        "application.DirectoryValue": {
+            enabled: boolean;
+            name: string;
+        };
+        "application.ReviewInput": {
+            /** @enum {string} */
+            decision: "approve";
+        } | {
+            /** @enum {string} */
+            decision: "reject";
+            reason: components["schemas"]["application.Reason"];
+        };
         "application.ListResponse": components["schemas"]["application.List"] & {
             code: string;
         };
@@ -3947,6 +4044,115 @@ export interface operations {
             };
         };
     };
+    workforceApplications: {
+        parameters: {
+            query?: {
+                page?: number;
+                size?: number;
+                /** @description Defaults to submitted */
+                status?: components["schemas"]["application.Status"];
+            };
+            header: {
+                "Operation-Id": string;
+                "Session-Id": string;
+            };
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current approval authority; fixed name, printed number and department */
+            200: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["application.ManagedListResponse"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description internal_error */
+            500: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
     workforceApplicationSubmit: {
         parameters: {
             query?: never;
@@ -4090,6 +4296,269 @@ export interface operations {
                 };
             };
             /** @description dependency_unavailable or outcome_unknown; refresh own applications, do not automatically resubmit */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    workforceApplication: {
+        parameters: {
+            query?: never;
+            header: {
+                "Operation-Id": string;
+                "Session-Id": string;
+            };
+            path: {
+                id: components["schemas"]["application.Id"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Immutable application plus current printable facts and eligibility; no phone or identity number */
+            200: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["application.ManagedDetailResponse"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description target_unavailable */
+            404: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description internal_error */
+            500: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    workforceApplicationReview: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Diagnostic only; refresh after an unknown outcome */
+                "Operation-Id": string;
+                "Session-Id": string;
+                Origin: string;
+            };
+            path: {
+                id: components["schemas"]["application.Id"];
+            };
+            cookie?: never;
+        };
+        /** @description At most 8 KiB; approve or reject with a nonempty reason */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["application.ReviewInput"];
+            };
+        };
+        responses: {
+            /** @description Decision and audit committed atomically; approval does not generate a PDF */
+            200: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["application.Created"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description target_unavailable */
+            404: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description state_changed or applicant_unavailable */
+            409: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            415: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description internal_error */
+            500: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable or outcome_unknown; refresh management detail without automatically resending */
             503: {
                 headers: {
                     /** @description no-store */

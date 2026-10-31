@@ -17,6 +17,12 @@ export type Application = components["schemas"]["application.Application"];
 export type ApplicationList = components["schemas"]["application.ListResponse"];
 export type ApplicationDetail =
   components["schemas"]["application.DetailResponse"];
+export type ApplicationStatus = components["schemas"]["application.Status"];
+export type ManagedApplicationList =
+  components["schemas"]["application.ManagedListResponse"];
+export type ManagedApplicationDetail =
+  components["schemas"]["application.ManagedDetailResponse"];
+export type ReviewInput = components["schemas"]["application.ReviewInput"];
 export type PhotoMetadata = components["schemas"]["application.Photo"];
 export type ApplicationResult<T> = { kind: "ok"; value: T } | Failure;
 
@@ -91,6 +97,66 @@ async function request<T>(
   }
 }
 
+export async function managedApplications(
+  session: string,
+  page: number,
+  status: ApplicationStatus,
+  signal: AbortSignal,
+): Promise<ApplicationResult<ManagedApplicationList>> {
+  const result = await request<ManagedApplicationList>(
+    "GET /api/v1/workforce/applications",
+    `/api/v1/workforce/applications?page=${page}&size=20&status=${encodeURIComponent(status)}`,
+    session,
+    signal,
+  );
+  if (
+    result.kind === "ok" &&
+    (!Number.isSafeInteger(result.value.count) ||
+      result.value.count < 0 ||
+      result.value.applications.length > 20 ||
+      result.value.applications.some((item) => item.status !== status))
+  )
+    return { kind: "untrusted" };
+  return result;
+}
+export async function managedApplication(
+  session: string,
+  id: string,
+  signal: AbortSignal,
+): Promise<ApplicationResult<ManagedApplicationDetail>> {
+  const result = await request<ManagedApplicationDetail>(
+    "GET /api/v1/workforce/applications/{id}",
+    `/api/v1/workforce/applications/${encodeURIComponent(id)}`,
+    session,
+    signal,
+  );
+  if (result.kind === "ok" && result.value.application.id !== id)
+    return { kind: "untrusted" };
+  return result;
+}
+export async function reviewApplication(
+  session: string,
+  id: string,
+  input: ReviewInput,
+  signal: AbortSignal,
+): Promise<ApplicationResult<Application>> {
+  const result = await request<components["schemas"]["application.Created"]>(
+    "POST /api/v1/workforce/applications/{id}/reviews",
+    `/api/v1/workforce/applications/${encodeURIComponent(id)}/reviews`,
+    session,
+    signal,
+    input,
+  );
+  if (result.kind !== "ok") return result;
+  const item = result.value.application;
+  if (
+    item.id !== id ||
+    item.status !== (input.decision === "approve" ? "approved" : "rejected")
+  )
+    return { kind: "untrusted" };
+  return { kind: "ok", value: item };
+}
+
 export function applicationTemplate(session: string, signal: AbortSignal) {
   return request<ApplicationTemplate>(
     "GET /api/v1/workforce/application-template",
@@ -162,6 +228,7 @@ export async function submitApplication(
   if (result.kind !== "ok") return result;
   const application = result.value.application;
   if (
+    application.status !== "submitted" ||
     application.kind !== input.kind ||
     !sameApplicationContent(application.snapshot, input.expected) ||
     application.photo.photoId !== input.expected.photoId
@@ -182,6 +249,13 @@ export async function applications(
   );
   if (result.kind !== "ok") return result;
   if (!Number.isSafeInteger(result.value.count) || result.value.count < 0)
+    return { kind: "untrusted" };
+  if (
+    result.value.access === "restricted" &&
+    result.value.applications.some(
+      (item) => item.status !== "submitted" && item.status !== "approved",
+    )
+  )
     return { kind: "untrusted" };
   if (result.value.access === "restricted")
     return {
@@ -215,6 +289,8 @@ export async function application(
     return { kind: "untrusted" };
   if (result.kind === "ok" && result.value.access === "restricted") {
     const { id, kind, status, submittedAt } = result.value.application;
+    if (status !== "submitted" && status !== "approved")
+      return { kind: "untrusted" };
     return {
       kind: "ok",
       value: {

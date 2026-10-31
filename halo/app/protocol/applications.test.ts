@@ -6,9 +6,13 @@ import {
   previewApplication,
   submitApplication,
   sameApplicationContent,
+  managedApplications,
+  managedApplication,
+  reviewApplication,
 } from "./applications";
 import {
   applicationId,
+  accountId,
   applicationMaterial,
   snapshotMaterial,
   photoMaterial,
@@ -26,6 +30,122 @@ const input = () => ({
     pickup: snapshotMaterial().pickup,
   },
   expected: snapshotMaterial(),
+});
+describe("approval management reads", () => {
+  it("consumes the formal camelCase decision fields and rejects a missing masked name or the withdrawn schema", async () => {
+    const item = { ...applicationMaterial(), status: "approved", reviewerId: accountId, reviewerName: "林*", reviewedAt: "2026-10-31T01:15:00Z" };
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ code: "ok", application: item })));
+    expect((await reviewApplication("selected", item.id, { decision: "approve" }, signal())).kind).toBe("ok");
+    expect(await reviewApplication("selected", item.id, { decision: "reject", reason: "需更换照片" }, signal())).toEqual({ kind: "untrusted" });
+    const { reviewerName, ...missingName } = item;
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ code: "ok", application: missingName })));
+    expect(await reviewApplication("selected", item.id, { decision: "approve" }, signal())).toEqual({ kind: "untrusted" });
+    const { reviewerId, reviewedAt, ...withoutReview } = missingName;
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ code: "ok", application: { ...withoutReview, reviewer_id: reviewerId, reviewed_at: reviewedAt, reviewerName } })));
+    expect(await reviewApplication("selected", item.id, { decision: "approve" }, signal())).toEqual({ kind: "untrusted" });
+    const reason = "请保留完整头部与肩部。\n\n请使用正面照片。";
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ code: "ok", access: "full", application: { ...item, status: "rejected", rejectionReason: reason } })));
+    expect(await application("selected", item.id, signal())).toMatchObject({ kind: "ok", value: { application: { status: "rejected", reviewerName: "林*", rejectionReason: reason } } });
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ code: "ok", access: "restricted", count: 1, applications: [item] })));
+    const restricted = await applications("selected", 1, signal());
+    if (restricted.kind !== "ok") throw new Error("Expected trusted restricted summary");
+    expect(Object.keys(restricted.value.applications[0]).sort()).toEqual(["id", "kind", "status", "submittedAt"]);
+    vi.stubGlobal("fetch", vi.fn(async () => Response.json({ code: "ok", application: item }, { status: 201 })));
+    expect(await submitApplication("selected", input(), signal())).toEqual({ kind: "untrusted" });
+  });
+  it("binds filters, page size, target ids and safe counts to the declared response", async () => {
+    const item = applicationMaterial();
+    const summary = {
+      id: item.id,
+      kind: item.kind,
+      status: item.status,
+      submittedAt: item.submittedAt,
+      name: item.snapshot.name,
+      printedNumber: item.snapshot.printedNumber,
+      department: item.snapshot.department,
+    };
+    const fetch = vi.fn<typeof globalThis.fetch>(async () =>
+      Response.json({ code: "ok", count: 1, applications: [summary] }),
+    );
+    vi.stubGlobal("fetch", fetch);
+    expect(
+      (await managedApplications("selected", 2, "submitted", signal())).kind,
+    ).toBe("ok");
+    expect(fetch.mock.calls[0][0]).toBe(
+      "/api/v1/workforce/applications?page=2&size=20&status=submitted",
+    );
+    expect(
+      await managedApplications("selected", 1, "approved", signal()),
+    ).toEqual({ kind: "untrusted" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          code: "ok",
+          count: Number.MAX_SAFE_INTEGER + 1,
+          applications: [],
+        }),
+      ),
+    );
+    expect(
+      await managedApplications("selected", 1, "submitted", signal()),
+    ).toEqual({ kind: "untrusted" });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          code: "ok",
+          application: item,
+          current: {
+            name: item.snapshot.name,
+            number: null,
+            accountActive: false,
+            participationActive: false,
+            department: { name: item.snapshot.department.name, enabled: false },
+            position: null,
+            title: null,
+          },
+        }),
+      ),
+    );
+    expect((await managedApplication("selected", item.id, signal())).kind).toBe(
+      "ok",
+    );
+    expect(
+      await managedApplication("selected", applicationId(99), signal()),
+    ).toEqual({ kind: "untrusted" });
+  });
+  it("never accepts a terminal rejection through the restricted summary schema", async () => {
+    const item = {
+      id: applicationId(40),
+      kind: "issuance",
+      status: "rejected",
+      submittedAt: "2026-10-30T18:00:00Z",
+    };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({
+          code: "ok",
+          access: "restricted",
+          count: 1,
+          applications: [item],
+        }),
+      ),
+    );
+    expect(await applications("selected", 1, signal())).toEqual({
+      kind: "untrusted",
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        Response.json({ code: "ok", access: "restricted", application: item }),
+      ),
+    );
+    expect(await application("selected", item.id, signal())).toEqual({
+      kind: "untrusted",
+    });
+  });
 });
 describe("actual application contracts", () => {
   it.each([previewApplication, submitApplication])(

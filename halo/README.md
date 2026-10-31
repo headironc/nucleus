@@ -131,6 +131,20 @@ bun run test:browser -- tests/applications.spec.ts tests/application-photo.spec.
 
 浏览器夹具使用真实页面、控制器、生成校验器、IndexedDB、图片解码和合法测试字体，HTTP 响应受控。覆盖三种类型、同快照提交与查询、未知提交不重发、受限摘要、账户切换、失效资源、UTF-8 行范围、明暗主题和窄屏焦点。测试字体优先读取本树的后端夹具。后端候选尚未合入时，将 `HALO_APPLICATION_FONT_REV` 设为已抓取的准确 Git 修订，只读取得该修订中的字体；不读取其他任务的 WIP。原件分别记录协议快照摘要、字体来源及字节摘要。字体修订不代表协议或后端集成修订。这些检查不证明真实数据库事务、完整端到端或跨引擎打印效果。
 
+## 工牌审核
+
+员工服务中的“工牌审核”进入 `/workforce/reviews`，默认读取待审核申请。列表按服务端状态筛选和分页，详情位于 `/workforce/reviews/{id}`。实际权限与对象范围由管理接口检查；页面显示固定申请、当前资料变化、牌面加载状态及可执行的审核决定。批准只保存审核结果，不生成工牌。
+
+`app/workforce/reviews.ts` 拥有当前可见管理页、请求代次、确认、未知结果和固定媒体寿命。请求适配仍由 `app/protocol/applications.ts` 消费实际 OpenAPI；页面与本人历史复用 `application-display.tsx` 的固定资料和牌面呈现。审核结果未知时只刷新详情，不保存待重放正文，也不自动重发。审核人姓名只使用服务端允许的脱敏投影。
+
+```bash
+cd halo
+bun run test -- app/protocol/applications.test.ts app/workforce/reviews.test.ts tools/protocol.test.ts
+bun run test:browser -- tests/reviews.spec.ts tests/review-dialog.spec.ts --output ../target/badge-approval-browser/current
+```
+
+浏览器夹具运行真实管理页、本人历史页、生成校验器、IndexedDB、固定字体和图片解码，HTTP 响应受控。虚构像素只在测试响应中提供；资源失败时产品页面显示占位。验收覆盖分页筛选、固定资料与当前差异、权限与资格、未知决定、状态竞争、迟到响应、受限历史、完整理由及窄屏焦点。每轮验收选独立输出目录，保留截图和原 reporter；同目录再次运行会替换旧图片。受控检查与后端事务检查、真实组合验收分别取证。
+
 ## 头像本地选择与预览
 
 `app/avatar/candidate.ts` 读取本地文件，核对大小、实际格式、动画和正方形尺寸后解码预览。`format.ts` 检查图片容器，并仅为预览去除方向元数据。候选保留原 `File`，不会裁剪、缩放或改写待提交字节。重新选择、取消和关闭时释放旧解码资源；迟到的解码结果不能覆盖后来选择。
