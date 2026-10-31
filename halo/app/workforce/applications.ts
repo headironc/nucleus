@@ -63,8 +63,14 @@ export type ApplicationState =
       kind: "created";
       application: Pick<Application, "id" | "kind" | "status" | "submittedAt">;
     }
-  | { kind: "list"; page: number; result: ApplicationList; uncertain: boolean }
-  | { kind: "detail"; result: ApplicationDetail; artwork?: ApplicationArtwork };
+  | { kind: "list"; page: number; result: ApplicationList }
+  | {
+      kind: "detail";
+      result: ApplicationDetail;
+      artwork?: ApplicationArtwork;
+      media?: "loading" | "failed";
+      retryAt?: number;
+    };
 
 const READ_ERROR = "暂时无法加载，请刷新后重试。";
 export const APPLICATION_FAILURE_COPY: Record<string, string> = {
@@ -407,7 +413,6 @@ export class Applications {
           kind: "list",
           page,
           result: result.value,
-          uncertain: this.uncertainAccount === this.account(),
         });
       } else {
         const result = await this.api.detail(
@@ -422,6 +427,7 @@ export class Applications {
           return;
         }
         const item = result.value.application;
+        this.show({ kind: "detail", result: result.value, media: "loading" });
         const resources = await this.api.artwork(
           session,
           item.snapshot.template,
@@ -431,8 +437,16 @@ export class Applications {
           if (resources.kind === "ok") resources.value.close();
           return;
         }
+        if (!(await scope.guard())) {
+          if (resources.kind === "ok") resources.value.close();
+          return;
+        }
         if (resources.kind !== "ok")
-          return this.failure(resources, scope.binding);
+          return this.detailMediaFailure(
+            resources,
+            scope.binding,
+            result.value,
+          );
         this.templateArtwork = resources.value;
         const photo = await this.api.resource(
           session,
@@ -440,7 +454,8 @@ export class Applications {
           scope.signal,
         );
         if (!(await scope.guard())) return;
-        if (photo.kind !== "ok") return this.failure(photo, scope.binding);
+        if (photo.kind !== "ok")
+          return this.detailMediaFailure(photo, scope.binding, result.value);
         const artwork = await resources.value.preview(
           item.snapshot,
           item.photo,
@@ -454,7 +469,8 @@ export class Applications {
           if (artwork.kind === "ok") artwork.value.close();
           return;
         }
-        if (artwork.kind !== "ok") return this.failure(artwork, scope.binding);
+        if (artwork.kind !== "ok")
+          return this.detailMediaFailure(artwork, scope.binding, result.value);
         this.previewArtwork = artwork.value;
         this.show({
           kind: "detail",
@@ -463,11 +479,39 @@ export class Applications {
         });
       }
     } catch {
-      if (scope.active())
-        await this.failure({ kind: "disconnected" }, scope.binding);
+      if (scope.active()) {
+        if (this.state.kind === "detail")
+          await this.detailMediaFailure(
+            { kind: "disconnected" },
+            scope.binding,
+            this.state.result,
+          );
+        else await this.failure({ kind: "disconnected" }, scope.binding);
+      }
     } finally {
       scope.finish();
     }
+  }
+  private async detailMediaFailure(
+    result: { kind: string; status?: number; retryAfter?: number },
+    binding: CurrentBinding,
+    detail: ApplicationDetail,
+  ) {
+    if (
+      result.kind === "failure" &&
+      (result.status === 401 || result.status === 403)
+    )
+      return this.failure(result, binding);
+    this.clear();
+    this.retryAt =
+      this.dependencies.now() + Math.max(5000, result.retryAfter ?? 0);
+    this.waitingSelection = `${binding.selection.id}/${binding.selection.revision}`;
+    this.show({
+      kind: "detail",
+      result: detail,
+      media: "failed",
+      retryAt: this.retryAt,
+    });
   }
   edit(choices: ApplicationChoices) {
     if (!this.context || this.submittingAccount || this.closed) return;
@@ -640,7 +684,12 @@ export class Applications {
     }
   }
   previewFailed() {
-    if (this.state.kind === "preview" && this.context) {
+    if (this.state.kind === "detail") {
+      const result = this.state.result;
+      this.cancel();
+      this.clear();
+      this.show({ kind: "detail", result, media: "failed", retryAt: 0 });
+    } else if (this.state.kind === "preview" && this.context) {
       this.previewArtwork?.close();
       this.previewArtwork = undefined;
       this.show({
@@ -649,10 +698,7 @@ export class Applications {
         message: "工牌预览无法完整显示，请重新预览后再提交。",
         retryAt: 0,
       });
-    } else if (
-      this.state.kind === "detail" ||
-      this.state.kind === "submitting"
-    ) {
+    } else if (this.state.kind === "submitting") {
       const unknown = !!this.submittingAccount;
       this.cancel();
       this.clear();

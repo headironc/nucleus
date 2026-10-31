@@ -497,13 +497,11 @@ async function prepare(page: Page) {
 async function preview(page: Page) {
   await page.getByRole("button", { name: "预览工牌", exact: true }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(
-    page.getByRole("img", { name: "本次工牌完整预览" }),
-  ).toBeVisible();
+  await expect(page.getByRole("img", { name: "工牌预览" })).toBeVisible();
   await expect
     .poll(() =>
       page
-        .getByRole("img", { name: "本次工牌完整预览" })
+        .getByRole("img", { name: "工牌预览" })
         .evaluate((node: HTMLCanvasElement) => {
           const context = node.getContext("2d")!;
           const pixel = (x: number, y: number) => [
@@ -557,9 +555,7 @@ test("all kinds confirm the actual snapshot, submit once, and read it unchanged 
     ).toBeVisible();
     expect(state.submissions.at(-1)?.kind).toBe(kind);
     await page.getByRole("link", { name: "查看已保存的申请" }).click();
-    await expect(
-      page.getByRole("img", { name: "本次工牌完整预览" }),
-    ).toBeVisible();
+    await expect(page.getByRole("img", { name: "工牌预览" })).toBeVisible();
     await expect(
       page.getByText("阿依古丽·买买提", { exact: true }),
     ).toBeVisible();
@@ -588,7 +584,7 @@ test("an uncertain committed submission offers only a list refresh and never res
     .getByRole("button", { name: "确认并提交申请", exact: true })
     .click();
   await expect(
-    page.getByRole("heading", { name: "未能确认，请刷新查看" }),
+    page.getByRole("heading", { name: "暂时无法确认申请是否已提交" }),
   ).toBeVisible();
   await expect(page.getByRole("button", { name: /提交/ })).toHaveCount(0);
   await page.getByRole("link", { name: "刷新申请列表" }).click();
@@ -632,7 +628,7 @@ test("photo capacity refusal stays editable without preview, submission or autom
   );
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(
-    page.getByRole("heading", { name: "未能确认，请刷新查看" }),
+    page.getByRole("heading", { name: "暂时无法确认申请是否已提交" }),
   ).toHaveCount(0);
   await page.clock.fastForward(6000);
   await expect(
@@ -662,7 +658,7 @@ for (const phase of ["preview", "submit"] as const) {
     await expect(page.getByRole("alert")).toContainText("无法使用这项内容");
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(
-      page.getByRole("heading", { name: "未能确认，请刷新查看" }),
+      page.getByRole("heading", { name: "暂时无法确认申请是否已提交" }),
     ).toHaveCount(0);
     expect(state.previews).toHaveLength(1);
     expect(state.submissions).toHaveLength(phase === "submit" ? 1 : 0);
@@ -708,21 +704,17 @@ test("no current number still permits full history; suspended service exposes su
   state.number = null;
   await page.goto(origin + "/workforce/applications");
   await page.getByRole("link", { name: "查看详情", exact: true }).click();
-  await expect(
-    page.getByRole("img", { name: "本次工牌完整预览" }),
-  ).toBeVisible();
+  await expect(page.getByRole("img", { name: "工牌预览" })).toBeVisible();
   for (const status of ["suspended", "terminated"]) {
     state.grant = status;
     state.mediaHeaders = [];
     await page.goto(origin + `/workforce/applications/${state.saved[0].id}`);
     await expect(
-      page.getByText("当前仅能查看申请摘要，工牌内容和照片暂不开放。", {
+      page.getByText("当前仅可查看申请类型、状态和提交时间。", {
         exact: true,
       }),
     ).toBeVisible();
-    await expect(
-      page.getByRole("img", { name: "本次工牌完整预览" }),
-    ).toHaveCount(0);
+    await expect(page.getByRole("img", { name: "工牌预览" })).toHaveCount(0);
     await expect(
       page.getByText("阿依古丽·买买提", { exact: true }),
     ).toHaveCount(0);
@@ -736,7 +728,9 @@ test("a failed list is not displayed as no applications", async ({ page }) => {
   await expect(
     page.getByText("暂时无法加载，请刷新后重试。", { exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("暂无申请", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("暂无工牌申请。", { exact: true })).toHaveCount(
+    0,
+  );
 });
 test("leaving clears the photo canvas and a later account selection cannot accept the old submit response", async ({
   page,
@@ -879,12 +873,12 @@ test("the submission deadline stays unknown even when a late server result compl
   await expect.poll(() => state.submissions.length).toBe(1);
   await page.clock.fastForward(35_001);
   await expect(
-    page.getByRole("heading", { name: "未能确认，请刷新查看" }),
+    page.getByRole("heading", { name: "暂时无法确认申请是否已提交" }),
   ).toBeVisible();
   release();
   await expect.poll(() => state.saved.length).toBe(1);
   await expect(
-    page.getByRole("heading", { name: "未能确认，请刷新查看" }),
+    page.getByRole("heading", { name: "暂时无法确认申请是否已提交" }),
   ).toBeVisible();
   expect(state.submissions).toHaveLength(1);
 });
@@ -912,7 +906,7 @@ test("refreshing eligibility can reopen the form after service restoration", asy
 
 test("own history uses page, size and count, including multiple applications with the same timestamp", async ({
   page,
-}) => {
+}, testInfo) => {
   const state = control();
   await open(page, state);
   await prepare(page);
@@ -947,6 +941,18 @@ test("own history uses page, size and count, including multiple applications wit
   await expect(
     page.getByText("共 21 项 · 第 1 页", { exact: true }),
   ).toBeVisible();
+  state.saved.splice(1);
+  await page.getByRole("button", { name: "下一页", exact: true }).click();
+  await expect(
+    page.getByText("找不到这一页，请返回第一页。", { exact: true }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("own-history-empty-page.png"),
+  });
+  await page.getByRole("button", { name: "返回第一页", exact: true }).click();
+  await expect(
+    page.getByText("共 1 项 · 第 1 页", { exact: true }),
+  ).toBeVisible();
 });
 
 test("session rejection removes the visible snapshot and clears only the selected session", async ({
@@ -963,17 +969,13 @@ test("session rejection removes the visible snapshot and clears only the selecte
     page.getByRole("heading", { name: "工牌申请已提交" }),
   ).toBeVisible();
   await page.getByRole("link", { name: "查看已保存的申请" }).click();
-  await expect(
-    page.getByRole("img", { name: "本次工牌完整预览" }),
-  ).toBeVisible();
+  await expect(page.getByRole("img", { name: "工牌预览" })).toBeVisible();
   state.sessionInvalid = true;
   await page.getByRole("button", { name: "刷新详情", exact: true }).click();
   await expect(
     page.getByRole("link", { name: "手机号登录", exact: true }),
   ).toBeVisible();
-  await expect(page.getByRole("img", { name: "本次工牌完整预览" })).toHaveCount(
-    0,
-  );
+  await expect(page.getByRole("img", { name: "工牌预览" })).toHaveCount(0);
   await expect(page.getByText("阿依古丽·买买提", { exact: true })).toHaveCount(
     0,
   );
