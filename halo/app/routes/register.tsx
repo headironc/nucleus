@@ -13,7 +13,7 @@ import botanical from "../../../design/assets/halo-botanical.svg";
 
 export function meta() {
   return [
-    { title: "填写注册资料 · 司籍处" },
+    { title: "创建个人账户 · 司籍处" },
     { name: "robots", content: "noindex" },
   ];
 }
@@ -80,66 +80,43 @@ function useRegistration() {
 function description(state: State): [string, string] {
   switch (state.kind) {
     case "editing":
-      return ["填写注册资料", "手机号已验证。填写本人资料，完成账户注册。"];
+      return [
+        "创建个人账户",
+        "手机号已验证。请填写本人居民身份证上的姓名和号码。",
+      ];
     case "preparing":
-      return ["正在打开注册页面", "请稍候。"];
+      return ["正在打开注册页面…", "请稍候。"];
     case "submitting":
-      return ["正在提交注册", "请稍候，暂时不要再次提交注册。"];
+      return ["正在创建账户…", "请稍候。"];
     case "pending":
       return state.sent
-        ? [
-            "注册结果待确认",
-            "请点击“查看注册结果”，核对本次注册的处理结果。暂时不要再次提交注册。",
-          ]
-        : ["本次尚未提交注册", "请点击“继续注册”，使用已经确认的资料继续。"];
+        ? ["暂时无法确认注册结果", "请先查看结果，暂时不要再次提交。"]
+        : ["尚未创建账户", "请继续创建账户，无需重新填写资料。"];
     case "limited":
       return state.sent
-        ? [
-            "请稍后查看注册结果",
-            "暂时无法处理，请稍后查看本次注册结果。暂时不要再次提交注册。",
-          ]
-        : [
-            "请稍后再注册",
-            "本次注册尚未受理。请稍后返回填写资料，再明确提交。",
-          ];
+        ? ["暂时无法查看注册结果", "请稍后再试，暂时不要再次提交。"]
+        : ["暂时无法创建账户", "请稍后返回填写资料，再提交。"];
     case "storage-before":
-      return [
-        "暂时无法保存注册信息",
-        "本次尚未提交注册。请检查浏览器是否允许保存本站数据，再重新检查。",
-      ];
+      return ["暂时无法开始注册", "本次尚未提交注册，请重新检查。"];
     case "storage-read":
-      return ["暂时无法读取注册信息", "请重新检查。暂时不要再次提交注册。"];
+      return ["注册信息暂时无法使用", "请重新检查，暂时不要再次提交注册。"];
     case "storage-write":
-      return [
-        "暂时无法更新注册信息",
-        "请留在本页重新检查，暂时不要刷新、关闭或再次提交注册。",
-      ];
+      return ["注册信息暂时无法使用", "请重新检查，暂时不要再次提交注册。"];
     case "created":
       return [
         "账户已创建",
-        state.selection
-          ? "正在检查当前账户。"
-          : "请检查当前登录状态。后来登录的账户不代表本次注册的账户。",
+        state.selection ? "正在打开个人账户…" : "请检查登录状态。",
       ];
     case "created-storage":
-      return [
-        "账户已创建",
-        "浏览器未能保留登录信息。请重新检查，仍无法继续时可在新标签页重新登录。",
-      ];
+      return ["账户已创建", "暂时无法保留登录信息，请重新检查。"];
     case "created-cleanup":
-      return [
-        "账户已创建",
-        "临时验证信息尚未清理完毕。请留在本页重新检查，不用再次注册。",
-      ];
+      return ["账户已创建", "暂时无法打开个人账户，请重新检查。"];
     case "reload":
-      return [
-        "请重新加载页面",
-        "页面暂时无法继续。重新加载后查看本次结果，暂时不要再次提交注册。",
-      ];
+      return ["请重新加载", "页面暂时无法继续，请重新加载后查看注册结果。"];
     case "random":
-      return ["暂时无法注册", "本次尚未提交注册。请重新加载页面后再试。"];
+      return ["暂时无法开始注册", "本次尚未提交注册，请重新加载后再试。"];
     case "credential-expired":
-      return ["填写已超时", "本次尚未提交注册，请重新验证手机号后继续。"];
+      return ["填写已超时", "请重新验证手机号后创建账户。"];
     case "changed":
       return ["登录状态有变化", "请检查当前登录状态，再按页面提示继续。"];
     case "rejected":
@@ -149,26 +126,23 @@ function description(state: State): [string, string] {
           "请先检查当前登录状态，暂时不要再次提交注册。",
         ];
       if (state.reason === "verification_required")
-        return [
-          "请重新验证手机号",
-          "本次验证已无法继续使用，请重新验证手机号后按页面提示继续。",
-        ];
+        return ["请重新验证手机号", "请重新验证手机号后创建账户。"];
       if (state.reason === "mobile_taken")
         return [
           "请重新验证手机号",
-          "本次注册未完成。请重新验证手机号后按页面提示继续。",
+          "本次注册未完成。请重新验证手机号，再按页面提示继续。",
         ];
       if (state.reason === "id_number_taken")
         return [
-          "请核对填写内容",
-          "本次注册未完成。请核对身份证号，或联系医院管理员。",
+          "请检查居民身份证号",
+          "本次注册时，该身份证号已被使用。请核对填写的号码。",
         ];
       if (state.reason === "invalid_input")
-        return ["请检查填写内容", "本次提交未被受理，请核对资料后再提交。"];
-      return ["暂时无法注册", "本次提交未被受理。请返回首页，或稍后再试。"];
+        return ["请检查填写内容", "请检查姓名和居民身份证号。"];
+      return ["目前无法创建账户", "可以返回首页。"];
     default:
       return [
-        "暂时无法确认注册结果",
+        "暂时无法确认此前的注册结果",
         "请先检查当前登录状态，暂时不要再次提交注册。",
       ];
   }
@@ -243,13 +217,7 @@ function Form({ controller }: { controller: Registration }) {
   return (
     <div className="authentication-layout">
       <aside className="service-introduction">
-        <p className="eyebrow">本人账户 · 从这里开始</p>
-        <h2>注册与登录</h2>
-        <p>验证手机号，完成注册或登录。</p>
         <img src={botanical} alt="" />
-        <p className="introduction-footnote">
-          公开内容无需登录，可以返回首页继续浏览。
-        </p>
       </aside>
       <section
         className="authentication-card"
@@ -257,7 +225,6 @@ function Form({ controller }: { controller: Registration }) {
       >
         {editing ? (
           <>
-            <p className="eyebrow">首次使用 · 创建账户</p>
             <h1 ref={title} tabIndex={-1}>
               {heading}
             </h1>
@@ -309,12 +276,12 @@ function Form({ controller }: { controller: Registration }) {
                   className={invalid === "name" ? "field-error" : "field-hint"}
                 >
                   {invalid === "name"
-                    ? "请填写完整姓名，最多 64 个字符，不含控制字符。"
+                    ? "请填写本人完整姓名，最多 64 个字符。"
                     : "请填写本人完整姓名。"}
                 </p>
               </div>
               <div className="registration-field">
-                <label htmlFor="registration-id">身份证号</label>
+                <label htmlFor="registration-id">居民身份证号</label>
                 <input
                   id="registration-id"
                   name="idNumber"
@@ -332,23 +299,19 @@ function Form({ controller }: { controller: Registration }) {
                   id="registration-id-help"
                   className={invalid === "id" ? "field-error" : "field-hint"}
                 >
-                  {invalid === "id"
-                    ? "请填写 18 位居民身份证号，末位 X 可用大小写。"
-                    : "请核对姓名和身份证号，末位 X 可用大小写。"}
+                  请填写 18 位居民身份证号，末位可为 X。
                 </p>
               </div>
               {state.invalid && (
                 <p role="alert" className="field-error">
-                  请检查填写内容。
+                  请检查姓名和居民身份证号。
                 </p>
               )}
               <div className="notice">
-                <p>
-                  姓名和身份证号用于账户登记。员工服务需另行开通。尚未提交的姓名和身份证号不会自动保存。
-                </p>
+                <p>姓名和身份证号用于登记个人账户。员工服务需另行加入。</p>
               </div>
               <Button className="primary send-button" type="submit">
-                注册并登录 →
+                创建账户
               </Button>
             </form>
           </>
@@ -386,7 +349,7 @@ function Form({ controller }: { controller: Registration }) {
                     : !state.sent
                       ? state.kind === "limited"
                         ? "返回填写资料"
-                        : "继续注册"
+                        : "继续创建账户"
                       : "查看注册结果"}
                 </Button>
               )}
@@ -406,7 +369,7 @@ function Form({ controller }: { controller: Registration }) {
               )}
               {["reload", "random"].includes(state.kind) && (
                 <Button className="primary" onClick={() => location.reload()}>
-                  重新加载页面
+                  重新加载
                 </Button>
               )}
               {(["changed", "missing", "expired", "created"].includes(
@@ -463,7 +426,7 @@ function Form({ controller }: { controller: Registration }) {
         )}
         {!["submitting", "preparing"].includes(state.kind) && (
           <p className="scope-note">
-            <a href="/">返回首页，浏览公开内容</a>
+            <a href="/">返回首页</a>
           </p>
         )}
       </section>

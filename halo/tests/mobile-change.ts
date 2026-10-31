@@ -45,16 +45,16 @@ export async function ownMobileChange(
   await code(page, firstCode);
   await page.getByRole("button", { name: "验证并继续" }).click();
   await expect(
-    page.getByRole("heading", { name: "填写注册资料" }),
+    page.getByRole("heading", { name: "创建个人账户" }),
   ).toBeVisible();
   await page.getByLabel("姓名", { exact: true }).fill("Mobile Fixture");
-  await page.getByLabel("身份证号", { exact: true }).fill("000000200002294003");
+  await page.getByLabel("居民身份证号", { exact: true }).fill("000000200002294003");
   const registration = page.waitForResponse(
     (response) =>
       new URL(response.url()).pathname === "/api/v1/registrations" &&
       response.status() === 201,
   );
-  await page.getByRole("button", { name: "注册并登录 →" }).click();
+  await page.getByRole("button", { name: "创建账户" }).click();
   const first = (await (await registration).json()).session;
   await expect(page).toHaveURL(/\/account$/);
   await expect(page.getByText("Mobile Fixture", { exact: true })).toBeVisible();
