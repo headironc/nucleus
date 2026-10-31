@@ -14,6 +14,8 @@ pub struct Settings {
     pub(super) font: Arc<Vec<u8>>,
     pub(super) pickups: Vec<String>,
     pub(super) photo_limits: photo::Limits,
+    pub(super) badge_limits: super::Limits,
+    pub(super) resolution: super::render::Resolution,
     pub(super) resources: [(ResourceId, &'static str, &'static str, i64); 2],
     text: Arc<Mutex<Text>>,
 }
@@ -49,6 +51,10 @@ impl Settings {
     }
     /// Entry points own source paths and file reading. All processing and durable file writes
     /// finish before startup accepts the database references.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "Keep deployment resolution separate from retained template facts and photograph capacity"
+    )]
     pub fn new(
         storage: platform::files::Settings,
         template: Template,
@@ -57,8 +63,11 @@ impl Settings {
         font: Vec<u8>,
         pickups: Vec<String>,
         photo_limits: photo::Limits,
+        badge_limits: super::Limits,
+        resolution: super::render::Resolution,
     ) -> Result<Self, Error> {
         Self::validate(&template, &pickups, background_media)?;
+        resolution.dimensions(template.layout.width, template.layout.height)?;
         let background =
             photo::prepare(background_media, &background).map_err(|_| Error::Configuration)?;
         let font = font::Upload::new(font)?.sanitize()?;
@@ -80,23 +89,8 @@ impl Settings {
                 i64::try_from(font.as_bytes().len()).map_err(|_| Error::Configuration)?,
             ),
         ];
-        let mut fonts = parley::FontContext {
-            collection: parley::fontique::Collection::new(parley::fontique::CollectionOptions {
-                system_fonts: false,
-                ..Default::default()
-            }),
-            source_cache: Default::default(),
-        };
-        let families = fonts.collection.register_fonts(
-            parley::fontique::Blob::new(Arc::new(font.as_bytes().to_vec())),
-            None,
-        );
-        let family_id = families.first().ok_or(Error::Configuration)?.0;
-        let family = fonts
-            .collection
-            .family_name(family_id)
-            .ok_or(Error::Configuration)?
-            .to_owned();
+        let font = Arc::new(font.as_bytes().to_vec());
+        let (fonts, family) = fonts(Arc::clone(&font))?;
         let text = Arc::new(Mutex::new(Text {
             fonts,
             layout: parley::LayoutContext::new(),
@@ -105,9 +99,11 @@ impl Settings {
         Ok(Self {
             directory,
             template,
-            font: Arc::new(font.as_bytes().to_vec()),
+            font,
             pickups,
             photo_limits,
+            badge_limits,
+            resolution,
             resources,
             text,
         })
@@ -123,28 +119,7 @@ impl Settings {
             layout,
             family,
         } = &mut *engine;
-        let mut builder = layout.ranged_builder(fonts, text, 1.0, false);
-        builder.push_default(parley::StyleProperty::FontFamily(
-            parley::FontFamily::Source(family.as_str().into()),
-        ));
-        // Values are scaled to millimetres before Parley's f32 boundary; no integer casts.
-        let size = f64::from(area.font_size) / 1000.0;
-        let size: f32 = size.to_string().parse().map_err(|_| Error::Configuration)?;
-        let line_height: f32 = (f64::from(area.line_height) / 1000.0)
-            .to_string()
-            .parse()
-            .map_err(|_| Error::Configuration)?;
-        builder.push_default(parley::StyleProperty::FontSize(size));
-        builder.push_default(parley::StyleProperty::LineHeight(
-            parley::LineHeight::Absolute(line_height),
-        ));
-        let mut layout: parley::Layout<()> = builder.build(text);
-        let width: f32 = (f64::from(area.area.width) / 1000.0)
-            .to_string()
-            .parse()
-            .map_err(|_| Error::Configuration)?;
-        layout.break_all_lines(if area.wrap { Some(width) } else { None });
-        layout.align(parley::Alignment::Left, parley::AlignmentOptions::default());
+        let layout = shape(fonts, layout, family, text, area)?;
         let mut result = Vec::new();
         for line in layout.lines() {
             let mut left = 0_f64;
@@ -195,6 +170,59 @@ impl Settings {
         }
         Ok(result)
     }
+}
+
+pub(super) fn fonts(bytes: Arc<Vec<u8>>) -> Result<(parley::FontContext, String), Error> {
+    let mut fonts = parley::FontContext {
+        collection: parley::fontique::Collection::new(parley::fontique::CollectionOptions {
+            system_fonts: false,
+            ..Default::default()
+        }),
+        source_cache: Default::default(),
+    };
+    let families = fonts
+        .collection
+        .register_fonts(parley::fontique::Blob::new(bytes), None);
+    let family = fonts
+        .collection
+        .family_name(families.first().ok_or(Error::Configuration)?.0)
+        .ok_or(Error::Configuration)?
+        .to_owned();
+    Ok((fonts, family))
+}
+
+pub(super) fn shape(
+    fonts: &mut parley::FontContext,
+    context: &mut parley::LayoutContext<()>,
+    family: &str,
+    text: &str,
+    area: &TextArea,
+) -> Result<parley::Layout<()>, Error> {
+    let mut builder = context.ranged_builder(fonts, text, 1.0, false);
+    builder.push_default(parley::StyleProperty::FontFamily(
+        parley::FontFamily::Source(family.into()),
+    ));
+    // Preview and rasterization cross the same f32 boundary in millimetres.
+    let millimetres = |value| {
+        (f64::from(value) / 1000.0)
+            .to_string()
+            .parse::<f32>()
+            .map_err(|_| Error::Configuration)
+    };
+    builder.push_default(parley::StyleProperty::FontSize(millimetres(
+        area.font_size,
+    )?));
+    builder.push_default(parley::StyleProperty::LineHeight(
+        parley::LineHeight::Absolute(millimetres(area.line_height)?),
+    ));
+    let mut layout: parley::Layout<()> = builder.build(text);
+    layout.break_all_lines(if area.wrap {
+        Some(millimetres(area.area.width)?)
+    } else {
+        None
+    });
+    layout.align(parley::Alignment::Left, parley::AlignmentOptions::default());
+    Ok(layout)
 }
 
 pub(super) fn validate_layout(template: &Template) -> Result<(), Error> {
@@ -288,6 +316,9 @@ mod tests {
             font.to_vec(),
             vec!["Fixture pickup".to_owned()],
             super::photo::Limits::new(100, 1 << 30, 1000, 10 << 30).expect("fixture capacity"),
+            super::super::Limits::new(100, 1 << 30, 1000, 10 << 30)
+                .expect("fixture badge capacity"),
+            super::super::render::Resolution::try_from(300).expect("fixture resolution"),
         )
         .expect("valid isolated template");
         (directory, settings)

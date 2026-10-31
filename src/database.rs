@@ -123,10 +123,15 @@ mod tests {
                 r#"{"person_files":100,"person_bytes":1073741824,"total_files":1000,"total_bytes":10737418240}"#,
             )
             .env(
+                "NUCLEUS_WORKFORCE__APPLICATION__BADGE_LIMITS",
+                r#"{"person_files":100,"person_bytes":1073741824,"total_files":1000,"total_bytes":10737418240}"#,
+            )
+            .env(
                 "NUCLEUS_WORKFORCE__APPLICATION__TEMPLATE",
                 serde_json::to_string(&domain::workforce::application::fixture_template())
                     .expect("fixture template"),
             )
+            .env("NUCLEUS_WORKFORCE__APPLICATION__PIXELS_PER_INCH", "300")
             .env("NUCLEUS_WECHAT__WEBSITE__APP_ID", "website-fixture")
             .env(
                 "NUCLEUS_DATABASE__AUTHORITY",

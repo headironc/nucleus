@@ -7,9 +7,9 @@ use crate::{
     identity::person,
     pagination::Pagination,
     workforce::application::{
-        Application, Approval, Decision, Detail, DirectoryValue, Error, Id, Kind, List,
-        ManagedList, ManagedSummary, ManagementQuery, Photo, PhotoId, ResourceId, Snapshot, Status,
-        Summary, Template,
+        Application, Approval, Badge, BadgeId, Decision, Detail, DirectoryValue, Error, Id, Kind,
+        List, ManagedList, ManagedSummary, ManagementQuery, Photo, PhotoId, RenderError,
+        ResourceId, Snapshot, Status, Summary, Template,
     },
 };
 
@@ -94,6 +94,7 @@ impl TryFrom<Row> for Summary {
         let status = match row.try_get::<_, &str>("status")? {
             "submitted" => Status::Submitted,
             "approved" => Status::Approved,
+            "ready" => Status::Ready,
             "rejected" => Status::Rejected,
             "cancelled" => Status::Cancelled,
             _ => return Err(Error::Configuration),
@@ -107,21 +108,42 @@ impl TryFrom<Row> for Summary {
     }
 }
 
-impl TryFrom<(Row, Option<person::revision::Identity>)> for Application {
+impl
+    TryFrom<(
+        Row,
+        Option<person::revision::Identity>,
+        Option<Badge>,
+        Option<RenderError>,
+    )> for Application
+{
     type Error = Error;
-    fn try_from((row, identity): (Row, Option<person::revision::Identity>)) -> Result<Self, Error> {
+    fn try_from(
+        (row, identity, badge, render_error): (
+            Row,
+            Option<person::revision::Identity>,
+            Option<Badge>,
+            Option<RenderError>,
+        ),
+    ) -> Result<Self, Error> {
         let snapshot = serde_json::from_str(row.try_get::<_, &str>("snapshot")?)?;
         let photo = Photo::try_from(&row)?;
         let reviewer = row.try_get("reviewer_id")?;
         let reviewed = row.try_get("reviewed_at")?;
         let reason: Option<String> = row.try_get("rejection_reason")?;
         let summary = Summary::try_from(row)?;
+        if (matches!(summary.status, Status::Ready) && badge.is_none())
+            || (badge.is_some() && !matches!(summary.status, Status::Ready | Status::Cancelled))
+            || (render_error.is_some() && !matches!(summary.status, Status::Approved))
+        {
+            return Err(Error::Configuration);
+        }
         let decision = match (summary.status, reviewer, reviewed, reason, identity) {
             (Status::Submitted, None, None, None, None) => Decision::Submitted,
             (Status::Approved, Some(reviewer_id), Some(reviewed_at), None, Some(identity))
                 if reviewed_at >= summary.submitted_at && identity.person_id() == reviewer_id =>
             {
                 Decision::Approved {
+                    render_error,
                     approval: Approval {
                         reviewer_id,
                         reviewer_name: identity.name().to_owned(),
@@ -129,11 +151,27 @@ impl TryFrom<(Row, Option<person::revision::Identity>)> for Application {
                     },
                 }
             }
-            (Status::Cancelled, None, None, None, None) => Decision::Cancelled { approval: None },
+            (Status::Ready, Some(reviewer_id), Some(reviewed_at), None, Some(identity))
+                if reviewed_at >= summary.submitted_at && identity.person_id() == reviewer_id =>
+            {
+                Decision::Ready {
+                    approval: Approval {
+                        reviewer_id,
+                        reviewer_name: identity.name().to_owned(),
+                        reviewed_at,
+                    },
+                    badge: badge.ok_or(Error::Configuration)?,
+                }
+            }
+            (Status::Cancelled, None, None, None, None) if badge.is_none() => Decision::Cancelled {
+                approval: None,
+                badge: None,
+            },
             (Status::Cancelled, Some(reviewer_id), Some(reviewed_at), None, Some(identity))
                 if reviewed_at >= summary.submitted_at && identity.person_id() == reviewer_id =>
             {
                 Decision::Cancelled {
+                    badge,
                     approval: Some(Approval {
                         reviewer_id,
                         reviewer_name: identity.name().to_owned(),
@@ -187,7 +225,19 @@ async fn application(
         ),
         None => None,
     };
-    (row, identity).try_into()
+    let id: Id = row.try_get("id")?;
+    let facts = client.query_one("SELECT application.render_error,badge.id FROM workforce.applications application LEFT JOIN workforce.badges badge ON badge.application_id=application.id WHERE application.id=$1", &[&id]).await?;
+    let badge = facts
+        .try_get::<_, Option<BadgeId>>(1)?
+        .map(|id| Badge { id });
+    let error = match facts.try_get::<_, Option<&str>>(0)? {
+        None => None,
+        Some("missing_glyph") => Some(RenderError::MissingGlyph),
+        Some("text_overflow") => Some(RenderError::TextOverflow),
+        Some("dependency_unavailable") => Some(RenderError::DependencyUnavailable),
+        _ => return Err(Error::Configuration),
+    };
+    (row, identity, badge, error).try_into()
 }
 
 pub(super) async fn submit(
@@ -200,7 +250,7 @@ pub(super) async fn submit(
     let snapshot = serde_json::to_string(&snapshot)?;
     client.execute("INSERT INTO workforce.applications (id,person_id,kind,snapshot) VALUES ($1,$2,$3,$4::text::jsonb)", &[&id,&person,&kind(kind_value),&snapshot]).await?;
     client.execute("INSERT INTO audit.events (actor_id,action,target_type,target_id,details) VALUES ($1,'workforce.application.submitted','workforce.application',$2,'{}'::jsonb)", &[&person,&id]).await?;
-    (application_row(client, id).await?, None).try_into()
+    (application_row(client, id).await?, None, None, None).try_into()
 }
 
 pub(super) async fn list(
@@ -213,7 +263,7 @@ pub(super) async fn list(
 ) -> Result<List, Error> {
     let count = client
         .query_one(
-            "SELECT count(*) FROM workforce.applications WHERE person_id=$1 AND ($2 OR status IN ('submitted','approved'))",
+            "SELECT count(*) FROM workforce.applications WHERE person_id=$1 AND ($2 OR status IN ('submitted','approved','ready'))",
             &[&person, &active],
         )
         .await?
@@ -229,7 +279,7 @@ pub(super) async fn list(
             applications,
         })
     } else {
-        let rows = client.query("SELECT id,kind,status,submitted_at FROM workforce.applications WHERE person_id=$1 AND status IN ('submitted','approved') ORDER BY submitted_at DESC,id DESC LIMIT $2 OFFSET $3", &[&person,&pagination.size(),&pagination.offset()]).await?;
+        let rows = client.query("SELECT id,kind,status,submitted_at FROM workforce.applications WHERE person_id=$1 AND status IN ('submitted','approved','ready') ORDER BY submitted_at DESC,id DESC LIMIT $2 OFFSET $3", &[&person,&pagination.size(),&pagination.offset()]).await?;
         Ok(List::Restricted {
             count,
             applications: rows
@@ -254,7 +304,7 @@ pub(super) async fn detail(
             application: Box::new(application(client, row, persons, now).await?),
         })
     } else {
-        let row = client.query_opt("SELECT id,kind,status,submitted_at FROM workforce.applications WHERE person_id=$1 AND id=$2 AND status IN ('submitted','approved')", &[&person,&id]).await?.ok_or(Error::TargetUnavailable)?;
+        let row = client.query_opt("SELECT id,kind,status,submitted_at FROM workforce.applications WHERE person_id=$1 AND id=$2 AND status IN ('submitted','approved','ready')", &[&person,&id]).await?.ok_or(Error::TargetUnavailable)?;
         Ok(Detail::Restricted {
             application: row.try_into()?,
         })
@@ -283,6 +333,7 @@ pub(super) async fn managed_list(
     let status = match query.status {
         Status::Submitted => "submitted",
         Status::Approved => "approved",
+        Status::Ready => "ready",
         Status::Rejected => "rejected",
         Status::Cancelled => "cancelled",
     };
@@ -439,10 +490,11 @@ pub(super) async fn cancel(
     let expected = match expected {
         super::CancellableStatus::Submitted => "submitted",
         super::CancellableStatus::Approved => "approved",
+        super::CancellableStatus::Ready => "ready",
     };
     let changed = client
         .execute(
-            "UPDATE workforce.applications SET status='cancelled' WHERE id=$1 AND status=$2 AND (NOT $3 OR person_id=$4)",
+            "UPDATE workforce.applications SET status='cancelled',render_error=NULL WHERE id=$1 AND status=$2 AND (NOT $3 OR person_id=$4)",
             &[&id, &expected, &own, &operator],
         )
         .await?;

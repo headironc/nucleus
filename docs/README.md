@@ -55,7 +55,8 @@
 | 工牌管理审批与附理由驳回                  | 已交付   | [申请](workforce/applications.md)；后端管理查询、审批及本人审核结果，网站兼容与页面组合验收由客户端集成覆盖                                                                |
 | Halo 网站工牌审核与本人审核结果           | 已交付   | [工牌审核页面](client/pages.md#网站工牌审核)、[真实组合](../halo/README.md#真实审批组合)；批准、附理由驳回、未知结果刷新与受限历史已完成真实组合验收                       |
 | 工牌本人或管理者按确认状态取消            | 已交付   | [申请](workforce/applications.md)、[真实取消组合](../halo/README.md#真实取消组合)；本人及管理确认取消、未知结果只读刷新和六个独立 SQL 窗口已完成真实组合验收               |
-| 工牌成品与发放                            | 目标     | [成品与发放](workforce/fulfillment.md)                                                                                                                                     |
+| 工牌单面 WebP 生成与授权读取              | 待验收   | [成品与发放](workforce/fulfillment.md)；后端生成、永久保留、下载与 ready 取消，网站消费和真实组合另验                                                                      |
+| 工牌发放                                  | 目标     | [成品与发放](workforce/fulfillment.md#实际发放)                                                                                                                            |
 | 栏目创建领域组件                          | 已交付   | [栏目](content/columns.md)；含永久原结果、导航顺序与封印核验；尚未装配栏目 HTTP 入口                                                                                       |
 | 网站栏目管理与 HTTP 接入                  | 目标     | [栏目](content/columns.md)、[内容 HTTP](content/http.md)                                                                                                                   |
 | 网站内容管理与发布                        | 目标     | [草稿、版本与上线](content/publication.md)、[文章](content/articles.md)、[首页编排](content/home.md)、[内容图片](content/images.md)                                        |
@@ -84,7 +85,7 @@
 | 既有能力迁入统一审计表                    | 目标     | [审计](architecture.md#审计)                                                                                                                                               |
 | 每日备份与恢复演练                        | 目标     | [备份与恢复](operations/backup.md)                                                                                                                                         |
 
-统一审计表当前接入工牌照片准备、申请提交、审批与取消，既有能力保留原历史。栏目创建领域组件不代表完整内容管理已经交付。首版公开内容的管理、发布和两端展示仍待实施。小程序公开读取不依赖手机号认证或微信身份，也不扩大工牌办理范围。旧内容设计的取舍见[网站公开内容](engineering/delivery.md#网站公开内容)。
+统一审计表当前接入工牌照片准备与申请提交、审批、生成、取消，既有能力保留原历史。栏目创建领域组件不代表完整内容管理已经交付。首版公开内容的管理、发布和两端展示仍待实施。小程序公开读取不依赖手机号认证或微信身份，也不扩大工牌办理范围。旧内容设计的取舍见[网站公开内容](engineering/delivery.md#网站公开内容)。
 
 后续范围与依赖见[剩余交付清单](engineering/delivery.md#剩余交付清单)。检查时机与连续交付见[开发协作与交接](engineering/delivery.md#开发协作与交接)，委派和上下文恢复见[模型政策](engineering/models.md)。[里程碑与生产准备](engineering/delivery.md#里程碑与生产准备)区分功能完成、隔离验收和真实部署证据。尚需业务决定的事项集中在[待确认事项](engineering/delivery.md#待确认事项)。
 

@@ -1161,7 +1161,7 @@ export interface components {
             name: string;
         };
         /** @enum {string} */
-        "application.Status": "submitted" | "approved" | "rejected" | "cancelled";
+        "application.Status": "submitted" | "approved" | "ready" | "rejected" | "cancelled";
         "application.ManagedListResponse": components["schemas"]["application.ManagedList"] & {
             code: string;
         };
@@ -1205,8 +1205,15 @@ export interface components {
             /** @enum {string} */
             status: "submitted";
         } | (components["schemas"]["application.Approval"] & {
+            renderError?: components["schemas"]["application.RenderError"];
+        } & {
             /** @enum {string} */
             status: "approved";
+        }) | (components["schemas"]["application.Approval"] & {
+            badge: components["schemas"]["application.Badge"];
+        } & {
+            /** @enum {string} */
+            status: "ready";
         }) | {
             rejectionReason: components["schemas"]["application.Reason"];
             /** Format: date-time */
@@ -1225,6 +1232,8 @@ export interface components {
             reviewerId: components["schemas"]["person.Id"];
             reviewerName: string;
         }) & {
+            badge?: components["schemas"]["application.Badge"];
+        } & {
             /** @enum {string} */
             status: "cancelled";
         });
@@ -1234,6 +1243,13 @@ export interface components {
             reviewerId: components["schemas"]["person.Id"];
             reviewerName: string;
         };
+        /** @enum {string} */
+        "application.RenderError": "missing_glyph" | "text_overflow" | "dependency_unavailable";
+        "application.Badge": {
+            id: components["schemas"]["application.BadgeId"];
+        };
+        /** Format: uuid */
+        "application.BadgeId": string;
         "application.Reason": string;
         "application.ManagedDetailResponse": components["schemas"]["application.ManagedDetail"] & {
             code: string;
@@ -1274,7 +1290,7 @@ export interface components {
             reason: components["schemas"]["application.Reason"];
         };
         /** @enum {string} */
-        "application.CancellableStatus": "submitted" | "approved";
+        "application.CancellableStatus": "submitted" | "approved" | "ready";
         "application.Cancellation": {
             application: components["schemas"]["application.Cancelled"];
             code: string;
@@ -4636,7 +4652,7 @@ export interface operations {
             };
             cookie?: never;
         };
-        /** @description At most 8 KiB; explicit self or manager mode and the confirmed submitted or approved state; a manager reason is required */
+        /** @description At most 8 KiB; explicit self or manager mode and the confirmed submitted, approved or ready state; a manager reason is required */
         requestBody: {
             content: {
                 "application/json": components["schemas"]["application.CancellationInput"];
