@@ -1383,7 +1383,7 @@ test("account entry, three leave prompts and keyboard focus", async ({
   expect(accountDocument?.headers()["content-security-policy"]).not.toContain(
     "challenges.cloudflare.com",
   );
-  await expect(page.getByRole("heading", { name: "当前已登录" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "个人账户" })).toBeVisible();
   const [navigation] = await Promise.all([
     page.waitForResponse(
       (response) =>
