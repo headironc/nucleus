@@ -58,7 +58,10 @@ pub(crate) fn router(
     OpenApiRouter::new()
         .routes(routes!(photo))
         .routes(routes!(preview).map(|router| router.layer(DefaultBodyLimit::max(8192))))
-        .routes(routes!(submit).map(|router| router.layer(DefaultBodyLimit::max(128 * 1024))))
+        .routes(
+            routes!(submit, managed_list)
+                .map(|router| router.layer(DefaultBodyLimit::max(128 * 1024))),
+        )
         .routes(routes!(list))
         .routes(routes!(template))
         .route_layer(middleware::from_fn_with_state(
@@ -69,6 +72,8 @@ pub(crate) fn router(
         .merge(
             OpenApiRouter::new()
                 .routes(routes!(detail))
+                .routes(routes!(managed_detail))
+                .routes(routes!(review).map(|router| router.layer(DefaultBodyLimit::max(8192))))
                 .route_layer(middleware::from_fn_with_state(
                     authentication.clone(),
                     identity::current::authenticate,
@@ -219,6 +224,84 @@ struct Template {
     code: &'static str,
     #[serde(flatten)]
     choices: application::TemplateChoices,
+}
+
+#[derive(Serialize, ToSchema)]
+#[schema(as = application::ManagedListResponse)]
+struct ManagedList {
+    code: &'static str,
+    #[serde(flatten)]
+    list: application::ManagedList,
+}
+
+#[derive(Serialize, ToSchema)]
+#[schema(as = application::ManagedDetailResponse)]
+struct ManagedDetail {
+    code: &'static str,
+    #[serde(flatten)]
+    detail: application::ManagedDetail,
+}
+
+#[utoipa::path(get, path = "/workforce/applications", operation_id = "workforceApplications",
+    params(("Operation-Id" = uuid::Uuid, Header), ("Session-Id" = uuid::Uuid, Header), ("page" = Option<i64>, Query, minimum = 1), ("size" = Option<i64>, Query, minimum = 1, maximum = 100), ("status" = Option<application::Status>, Query, description = "Defaults to submitted")),
+    responses((status = 200, body = ManagedList, description = "Current approval authority; fixed name, printed number and department"),
+        (status = 400, body = Failure, description = "invalid_input"), (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"),
+        (status = 413, body = Failure, description = "invalid_input"), (status = 429, body = Failure, description = "rate_limited", headers(("Retry-After" = u64, description = "Wait seconds"))), (status = 500, body = Failure, description = "internal_error"), (status = 503, body = Failure, description = "dependency_unavailable")))]
+async fn managed_list(
+    State(service): State<application::Service>,
+    Extension(actor): Extension<Actor>,
+    Query(query): Query<application::ManagementQuery>,
+    bytes: Result<Bytes, BytesRejection>,
+) -> Response {
+    if let Err(status) = super::validate_empty(bytes) {
+        return invalid(status);
+    }
+    respond(service.managed_list(&actor, query).await, |list| {
+        Json(ManagedList { code: "ok", list }).into_response()
+    })
+}
+
+#[utoipa::path(get, path = "/workforce/applications/{id}", operation_id = "workforceApplication",
+    params(("Operation-Id" = uuid::Uuid, Header), ("Session-Id" = uuid::Uuid, Header), ("id" = Id, Path)),
+    responses((status = 200, body = ManagedDetail, description = "Immutable application plus current printable facts and eligibility; no phone or identity number"),
+        (status = 400, body = Failure, description = "invalid_input"), (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"), (status = 404, body = Failure, description = "target_unavailable"),
+        (status = 413, body = Failure, description = "invalid_input"), (status = 429, body = Failure, description = "rate_limited", headers(("Retry-After" = u64, description = "Wait seconds"))), (status = 500, body = Failure, description = "internal_error"), (status = 503, body = Failure, description = "dependency_unavailable")))]
+async fn managed_detail(
+    State(service): State<application::Service>,
+    Extension(actor): Extension<Actor>,
+    Extension(id): Extension<Id>,
+    Query(_): Query<Empty>,
+    bytes: Result<Bytes, BytesRejection>,
+) -> Response {
+    if let Err(status) = super::validate_empty(bytes) {
+        return invalid(status);
+    }
+    respond(service.managed_detail(&actor, id).await, |detail| {
+        Json(ManagedDetail { code: "ok", detail }).into_response()
+    })
+}
+
+#[utoipa::path(post, path = "/workforce/applications/{id}/reviews", operation_id = "workforceApplicationReview",
+    params(("Operation-Id" = uuid::Uuid, Header, description = "Diagnostic only; refresh after an unknown outcome"), ("Session-Id" = uuid::Uuid, Header), ("Origin" = String, Header), ("id" = Id, Path)),
+    request_body(content = application::ReviewInput, description = "At most 8 KiB; approve or reject with a nonempty reason"),
+    responses((status = 200, body = Created, description = "Decision and audit committed atomically; approval does not generate a PDF"),
+        (status = 400, body = Failure, description = "invalid_input"), (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"), (status = 404, body = Failure, description = "target_unavailable"),
+        (status = 409, body = Failure, description = "state_changed or applicant_unavailable"), (status = 413, body = Failure, description = "invalid_input"), (status = 415, body = Failure, description = "invalid_input"),
+        (status = 429, body = Failure, description = "rate_limited", headers(("Retry-After" = u64, description = "Wait seconds"))), (status = 500, body = Failure, description = "internal_error"), (status = 503, body = Failure, description = "dependency_unavailable or outcome_unknown; refresh management detail without automatically resending")))]
+async fn review(
+    State(service): State<application::Service>,
+    Extension(actor): Extension<Actor>,
+    Extension(id): Extension<Id>,
+    Query(_): Query<Empty>,
+    Json(input): Json<application::ReviewInput>,
+) -> Response {
+    respond(service.review(&actor, id, input).await, |application| {
+        Json(Created {
+            code: "ok",
+            application,
+        })
+        .into_response()
+    })
 }
 
 #[utoipa::path(get, path = "/workforce/application-template", operation_id = "workforceApplicationTemplate",
@@ -448,12 +531,18 @@ fn respond<T>(
         Err(error) => error,
     };
     let (status, code) = match &error {
-        application::Error::Identity(current::Error::Invalid) => {
-            (StatusCode::UNAUTHORIZED, "authentication_invalid")
+        application::Error::Identity(current::Error::Invalid)
+        | application::Error::Grant(domain::access::grant::Error::Current(
+            current::Error::Invalid,
+        )) => (StatusCode::UNAUTHORIZED, "authentication_invalid"),
+        application::Error::Denied
+        | application::Error::Grant(domain::access::grant::Error::Denied) => {
+            (StatusCode::FORBIDDEN, "permission_denied")
         }
-        application::Error::Denied => (StatusCode::FORBIDDEN, "permission_denied"),
         application::Error::TargetUnavailable => (StatusCode::NOT_FOUND, "target_unavailable"),
         application::Error::Changed => (StatusCode::CONFLICT, "data_changed"),
+        application::Error::StateChanged => (StatusCode::CONFLICT, "state_changed"),
+        application::Error::ApplicantUnavailable => (StatusCode::CONFLICT, "applicant_unavailable"),
         application::Error::NumberRequired => (StatusCode::CONFLICT, "number_required"),
         application::Error::SelectionUnavailable => {
             (StatusCode::UNPROCESSABLE_ENTITY, "selection_unavailable")
