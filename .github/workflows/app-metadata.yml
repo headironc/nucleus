@@ -1,0 +1,38 @@
+name: Cladiron App metadata
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cladiron-app-metadata
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  metadata:
+    if: ${{ github.ref == 'refs/heads/dev' && github.repository == 'headironc/nucleus' && github.repository_id == '1432619931' && github.repository_owner_id == '19648989' && github.actor_id == '19648989' && github.triggering_actor == github.repository_owner }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    environment: dev-admission
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6
+        with:
+          bun-version-file: .tool-versions
+      - name: Check fixed Bun
+        run: bun tools/check-bun.ts
+      - name: Read fixed App installation metadata
+        env:
+          CLADIRON_TRIGGERING_ACTOR_ID: ${{ github.triggering_actor == github.repository_owner && github.repository_owner_id || '0' }}
+          CLADIRON_CLIENT_ID: ${{ vars.CLADIRON_CLIENT_ID }}
+          CLADIRON_PRIVATE_KEY: ${{ secrets.NUCLEUS_DEV_PRIVATE_KEY }}
+        run: bun --no-env-file .github/review-approval/app-metadata.ts
