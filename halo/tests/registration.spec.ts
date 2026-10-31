@@ -95,17 +95,19 @@ test.beforeEach(async ({ context, page }) => {
   );
   await page.goto(`${origin}/authentication/register`);
   await expect(
-    page.getByRole("heading", { name: "填写注册资料" }),
+    page.getByRole("heading", { name: "创建个人账户" }),
   ).toBeVisible();
 });
 async function fill(page: Page) {
   await page.getByLabel("姓名", { exact: true }).fill("示例用户");
-  await page.getByLabel("身份证号", { exact: true }).fill("11010519491231002X");
+  await page
+    .getByLabel("居民身份证号", { exact: true })
+    .fill("11010519491231002X");
 }
 test("real registration page keeps drafts private, focuses errors and fits all four widths", async ({
   page,
 }) => {
-  await page.getByRole("button", { name: "注册并登录 →" }).click();
+  await page.getByRole("button", { name: "创建账户" }).click();
   await expect(page.getByLabel("姓名", { exact: true })).toBeFocused();
   await fill(page);
   expect(
@@ -119,19 +121,19 @@ test("real registration page keeps drafts private, focuses errors and fits all f
       ),
     ).toBe(true);
     await page.screenshot({
-      path: `test-results/r2-form-${width}.png`,
+      path: test.info().outputPath(`r2-form-${width}.png`),
       fullPage: true,
     });
   }
-  await page.getByLabel("身份证号", { exact: true }).focus();
+  await page.getByLabel("居民身份证号", { exact: true }).focus();
   await page.keyboard.press("Tab");
-  await expect(
-    page.getByRole("button", { name: "注册并登录 →" }),
-  ).toBeFocused();
+  await expect(page.getByRole("button", { name: "创建账户" })).toBeFocused();
   page.on("dialog", (dialog) => dialog.accept());
   await page.reload();
   await expect(page.getByLabel("姓名", { exact: true })).toHaveValue("");
-  await expect(page.getByLabel("身份证号", { exact: true })).toHaveValue("");
+  await expect(page.getByLabel("居民身份证号", { exact: true })).toHaveValue(
+    "",
+  );
 });
 test("failed pre-submit persistence returns to editing without an automatic POST", async ({
   page,
@@ -152,14 +154,14 @@ test("failed pre-submit persistence returns to editing without an automatic POST
     };
   });
   await fill(page);
-  await page.getByRole("button", { name: "注册并登录 →" }).click();
+  await page.getByRole("button", { name: "创建账户" }).click();
   await expect(
-    page.getByText("本次尚未提交注册。", { exact: false }),
+    page.getByText("本次尚未提交注册，请重新检查。", { exact: false }),
   ).toBeVisible();
   expect(posts).toBe(0);
   await page.getByRole("button", { name: "重新检查" }).click();
   await expect(
-    page.getByRole("heading", { name: "填写注册资料" }),
+    page.getByRole("heading", { name: "创建个人账户" }),
   ).toBeVisible();
   await expect(page.getByLabel("姓名", { exact: true })).toHaveValue(
     "示例用户",
@@ -180,13 +182,13 @@ test("unknown result reload keeps original input and proof mismatch stops origin
       await route.fulfill({ status: 409, json: { code: "request_mismatch" } });
   });
   await fill(page);
-  await page.getByRole("button", { name: "注册并登录 →" }).click();
+  await page.getByRole("button", { name: "创建账户" }).click();
   await expect(
-    page.getByRole("heading", { name: "注册结果待确认" }),
+    page.getByRole("heading", { name: "暂时无法确认注册结果" }),
   ).toBeVisible();
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "注册结果待确认" }),
+    page.getByRole("heading", { name: "暂时无法确认注册结果" }),
   ).toBeVisible();
   expect(requests).toHaveLength(1);
   await expect(
@@ -228,7 +230,7 @@ test("a delayed R2 success cannot replace another tab's actual IndexedDB selecti
       .catch(() => {});
   });
   await fill(page);
-  await page.getByRole("button", { name: "注册并登录 →" }).click();
+  await page.getByRole("button", { name: "创建账户" }).click();
   await entered;
   const other = await context.newPage();
   await other.goto(origin);
