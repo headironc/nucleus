@@ -130,12 +130,12 @@ function description(state: State): [string, string] {
       if (state.reason === "mobile_taken")
         return [
           "请重新验证手机号",
-          "该手机号已有账户，请重新验证手机号后登录。",
+          "本次注册未完成。请重新验证手机号，再按页面提示继续。",
         ];
       if (state.reason === "id_number_taken")
         return [
           "请检查居民身份证号",
-          "该身份证号已用于注册，请检查填写的号码。",
+          "本次注册时，该身份证号已被使用。请核对填写的号码。",
         ];
       if (state.reason === "invalid_input")
         return ["请检查填写内容", "请检查姓名和居民身份证号。"];

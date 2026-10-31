@@ -206,7 +206,7 @@ for (const [index, code] of (
     ).toBeVisible();
     expect(requests).toHaveLength(1);
     await page
-      .getByRole("button", { name: "查看发送结果", exact: true })
+      .getByRole("button", { name: "重试获取验证码", exact: true })
       .click();
     const title = "暂时无法查看发送结果";
     await expect(page.getByRole("heading", { name: title })).toBeVisible();
@@ -221,7 +221,7 @@ for (const [index, code] of (
     expect(saved.input).toEqual(JSON.parse(requests[0].input));
     await expect(
       page.getByRole("button", {
-        name: /查看发送结果|继续获取验证码|重新填写|重新验证/,
+        name: /重试获取验证码|继续获取验证码|重新填写|重新验证/,
       }),
     ).toHaveCount(0);
     expect(requests).toHaveLength(2);
@@ -293,7 +293,7 @@ test("normal supplier acceptance, terminal reload and real quota refusal", async
     other.getByRole("heading", { name: "请稍后再试", exact: true }),
   ).toBeVisible();
   await expect(
-    other.getByRole("button", { name: /秒后查看发送结果/ }),
+    other.getByRole("button", { name: /秒后可重试/ }),
   ).toBeDisabled();
   await other.close();
 });
@@ -328,7 +328,7 @@ test("lost response and refresh reuse the exact input and original proof", async
   );
   expect(saved.input.token).toBe(requests[0].operation);
   await expect(
-    page.getByText("请先查看手机短信，也可稍后查看发送结果。"),
+    page.getByText("请先查看手机短信，稍后可重试获取验证码。"),
   ).toBeVisible();
   await page.screenshot({ path: "test-results/pending.png", fullPage: true });
   const viewport = page.viewportSize()!;
@@ -344,7 +344,7 @@ test("lost response and refresh reuse the exact input and original proof", async
   });
   await page.setViewportSize(viewport);
   await expect(
-    page.getByRole("button", { name: "查看发送结果", exact: true }),
+    page.getByRole("button", { name: "重试获取验证码", exact: true }),
   ).toBeEnabled();
   await page.route("**/build.json", (route) =>
     route.fulfill({
@@ -370,9 +370,9 @@ test("lost response and refresh reuse the exact input and original proof", async
   ).toBeVisible();
   expect(requests.length).toBe(1);
   await expect(
-    page.getByRole("button", { name: /秒后查看发送结果/ }),
+    page.getByRole("button", { name: /秒后可重试/ }),
   ).toBeDisabled();
-  await page.getByRole("button", { name: "查看发送结果", exact: true }).click();
+  await page.getByRole("button", { name: "重试获取验证码", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "验证码已提交发送" }),
   ).toBeVisible();
@@ -439,7 +439,7 @@ test("PNVS refusal and unknown supplier outcome are distinct", async ({
   await expect(
     page.getByRole("heading", { name: "暂时无法确认发送结果" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "查看发送结果", exact: true }).click();
+  await page.getByRole("button", { name: "重试获取验证码", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "暂时无法确认发送结果" }),
   ).toBeVisible();
@@ -486,7 +486,7 @@ for (const [index, fault] of ["media", "shape", "code"].entries()) {
     ).toBeVisible();
     expect(requests).toBe(1);
     await page
-      .getByRole("button", { name: "查看发送结果", exact: true })
+      .getByRole("button", { name: "重试获取验证码", exact: true })
       .click();
     await expect(
       page.getByRole("heading", { name: "验证码已提交发送" }),
@@ -559,7 +559,7 @@ test("a held send expires after full-document navigation home without another SM
   await page.reload();
   await expect(page.getByText("请先查看手机短信。")).toBeVisible();
   await expect(
-    page.getByRole("button", { name: /查看发送结果|获取验证码/ }),
+    page.getByRole("button", { name: /重试获取验证码|获取验证码/ }),
   ).toHaveCount(0);
   expect(requests).toBe(1);
 });
@@ -1041,7 +1041,7 @@ test("an unsent application remains correctable after the required build reload"
   ).toBeVisible();
   expect(writes).toBe(0);
   await expect(
-    page.getByRole("button", { name: "查看发送结果", exact: true }),
+    page.getByRole("button", { name: "重试获取验证码", exact: true }),
   ).toHaveCount(0);
   await page.screenshot({
     path: "test-results/unsubmitted.png",
@@ -1074,7 +1074,7 @@ for (const body of ["{", "null"]) {
     ).toBeVisible();
     await expect(
       page.getByRole("button", {
-        name: /查看发送结果|继续获取验证码/,
+        name: /重试获取验证码|继续获取验证码/,
         exact: true,
       }),
     ).toHaveCount(0);

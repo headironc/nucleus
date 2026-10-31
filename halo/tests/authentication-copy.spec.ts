@@ -162,7 +162,7 @@ for (const width of [320, 1440])
       await capture(page, "codes-unknown");
       await page.reload();
       await expect(
-        page.getByRole("button", { name: "查看发送结果", exact: true }),
+        page.getByRole("button", { name: "重试获取验证码", exact: true }),
       ).toBeEnabled();
       expect(posts).toBe(1);
       await page.evaluate(() => sessionStorage.clear());
@@ -233,6 +233,178 @@ test("a terminal unknown SMS result offers no unavailable result query", async (
   ).toHaveCount(0);
   await expect(page.getByText(/稍后查看发送结果/)).toHaveCount(0);
   await capture(page, "codes-terminal-unknown");
+});
+test("a first SMS limit and its restored attempt describe a send-capable retry", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  const requests: { operation: string; input: unknown }[] = [];
+  await page.route("**/api/v1/codes", async (route) => {
+    requests.push({
+      operation: route.request().headers()["operation-id"],
+      input: route.request().postDataJSON(),
+    });
+    if (requests.length === 1)
+      await route.fulfill({
+        status: 429,
+        headers: { "Retry-After": "1" },
+        json: { code: "rate_limited" },
+      });
+    else
+      await route.fulfill({
+        json: {
+          code: "ok",
+          message: {
+            id: "019354fd-933c-7e6a-8912-345678901234",
+            delivery: "sent",
+            expiresAt: new Date(Date.now() + 600_000).toISOString(),
+          },
+        },
+      });
+  });
+  await page.goto(`${origin}/authentication/codes`);
+  await page.getByLabel("手机号", { exact: true }).fill("13900000000");
+  await page.getByRole("button", { name: "完成安全验证（测试替身）" }).click();
+  await page.getByRole("button", { name: "获取验证码", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "请稍后再试", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /秒后可重试/ }),
+  ).toBeDisabled();
+  await expect(page.getByRole("button", { name: /查看发送结果/ })).toHaveCount(
+    0,
+  );
+  expect(requests).toHaveLength(1);
+  await capture(page, "codes-first-limit");
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "暂时无法确认发送结果", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("button", { name: /查看发送结果/ })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("button", { name: "重试获取验证码", exact: true }),
+  ).toBeEnabled();
+  expect(requests).toHaveLength(1);
+  await capture(page, "codes-restored-limit");
+  await page
+    .getByRole("button", { name: "重试获取验证码", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "验证码已提交发送", exact: true }),
+  ).toBeVisible();
+  expect(requests).toHaveLength(2);
+  expect(requests[1]).toEqual(requests[0]);
+});
+test("a trusted sending receipt retains its result action after reload", async ({
+  page,
+}) => {
+  let posts = 0;
+  await page.route("**/api/v1/codes", async (route) => {
+    posts++;
+    await route.fulfill({
+      json: {
+        code: "ok",
+        message: {
+          id: "019354fd-933c-7e6a-8912-345678901234",
+          delivery: "sending",
+          expiresAt: new Date(Date.now() + 600_000).toISOString(),
+        },
+      },
+    });
+  });
+  await page.goto(`${origin}/authentication/codes`);
+  await page.getByLabel("手机号", { exact: true }).fill("13900000000");
+  await page.getByRole("button", { name: "完成安全验证（测试替身）" }).click();
+  await page.getByRole("button", { name: "获取验证码", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "验证码正在发送", exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "验证码正在发送", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /秒后可查看结果/ }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: /重试获取验证码/ }),
+  ).toHaveCount(0);
+  expect(posts).toBe(1);
+});
+test("a restored mobile refusal does not promise the phone number's current account or login", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await seed(page, "register");
+  await expect(
+    page.getByRole("heading", { name: "创建个人账户", exact: true }),
+  ).toBeVisible();
+  let registrations = 0;
+  await page.route("**/api/v1/registrations", async (route) => {
+    registrations++;
+    await route.fulfill({ status: 409, json: { code: "mobile_taken" } });
+  });
+  await page.getByLabel("姓名", { exact: true }).fill("示例用户");
+  await page
+    .getByLabel("居民身份证号", { exact: true })
+    .fill("11010519491231002X");
+  await page.getByRole("button", { name: "创建账户", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "请重新验证手机号", exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByText("本次注册未完成。请重新验证手机号，再按页面提示继续。", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.getByText(/该手机号已有账户|验证手机号后登录/)).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("link", { name: "重新验证手机号", exact: true }),
+  ).toHaveAttribute("href", "/authentication/codes");
+  await expect(page.getByRole("textbox")).toHaveCount(0);
+  expect(registrations).toBe(1);
+  await capture(page, "register-restored-mobile-refusal");
+});
+test("a restored identity-number refusal describes its original registration time", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await seed(page, "register");
+  await expect(
+    page.getByRole("heading", { name: "创建个人账户", exact: true }),
+  ).toBeVisible();
+  let registrations = 0;
+  await page.route("**/api/v1/registrations", async (route) => {
+    registrations++;
+    await route.fulfill({ status: 409, json: { code: "id_number_taken" } });
+  });
+  await page.getByLabel("姓名", { exact: true }).fill("示例用户");
+  await page
+    .getByLabel("居民身份证号", { exact: true })
+    .fill("11010519491231002X");
+  await page.getByRole("button", { name: "创建账户", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "请检查居民身份证号", exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.getByText("本次注册时，该身份证号已被使用。请核对填写的号码。", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "返回填写资料", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("textbox")).toHaveCount(0);
+  expect(registrations).toBe(1);
+  await capture(page, "register-restored-identity-refusal");
 });
 test("a created account remains confirmed after local cleanup fails", async ({
   page,

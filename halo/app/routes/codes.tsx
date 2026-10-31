@@ -121,7 +121,7 @@ function ResultView({
   }, [state, now]);
   const unsubmitted = recovery.unsubmitted;
   let title = "暂时无法确认发送结果";
-  let copy = "请先查看手机短信，也可稍后查看发送结果。";
+  let copy = "请先查看手机短信，稍后可重试获取验证码。";
   let note = "";
   let successful = false;
   if (state.kind === "submitting") {
@@ -152,7 +152,7 @@ function ResultView({
       delivery === "sent" ? "提交发送不代表已送达。请勿向他人透露验证码。" : "";
   } else if (state.kind === "limited") {
     title = "请稍后再试";
-    copy = "暂时无法查看发送结果，请稍后再试。";
+    copy = "请先查看手机短信，稍后可重试获取验证码。";
   } else if (state.kind === "rejected") {
     [title, copy] = labels[state.reason] ?? [
       "暂时无法查看发送结果",
@@ -172,7 +172,7 @@ function ResultView({
     title = "请重新加载";
     copy = unsubmitted
       ? "本次尚未发送验证码，请重新加载后再试。"
-      : "请先查看手机短信，或重新加载后再查看发送结果。";
+      : "请先查看手机短信，或重新加载后按页面提示继续。";
   } else if (state.kind === "storage") {
     title = "暂时无法获取验证码";
     copy = "本次尚未发送验证码，请重新加载后再试。";
@@ -184,7 +184,16 @@ function ResultView({
     state.kind === "pending" ||
     state.kind === "sending" ||
     state.kind === "limited";
-  const action = unsubmitted ? "继续获取验证码" : "查看发送结果";
+  const action = unsubmitted
+    ? "继续获取验证码"
+    : state.kind === "sending"
+      ? "查看发送结果"
+      : "重试获取验证码";
+  const waitingAction = unsubmitted
+    ? "继续"
+    : state.kind === "sending"
+      ? "查看结果"
+      : "重试";
   const newAllowed =
     state.kind === "rejected" &&
     !state.uncertain &&
@@ -234,7 +243,7 @@ function ResultView({
           disabled={seconds > 0}
           onClick={() => void recovery.confirm()}
         >
-          {seconds > 0 ? `${seconds} 秒后${action}` : action}
+          {seconds > 0 ? `${seconds} 秒后可${waitingAction}` : action}
           <ArrowRight size={17} aria-hidden="true" />
         </Button>
       )}
