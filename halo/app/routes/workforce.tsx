@@ -235,6 +235,9 @@ function Service({
                 我的工牌申请
               </a>
             )}
+            {account.kind === "ready" && (
+              <a href="/workforce/reviews">工牌审核</a>
+            )}
             {account.kind === "ready" &&
               (status === "active" || status === "suspended") && (
                 <a className="primary" href="/workforce/termination">
