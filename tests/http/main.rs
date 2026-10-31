@@ -20,6 +20,7 @@ mod grant;
 mod invitation;
 mod mini;
 mod mobile;
+mod native;
 mod number;
 mod protocol;
 mod revocation;

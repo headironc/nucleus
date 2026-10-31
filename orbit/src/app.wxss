@@ -1,8 +1,8 @@
+@import "./self.wxss";
 page { background: #f8f6ef; color: #2f3731; font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif; font-size: 30rpx; }
 .page { padding: 48rpx 40rpx 72rpx; max-width: 880rpx; margin: 0 auto; box-sizing: border-box; }
 .eyebrow { color: #55684e; font-size: 24rpx; letter-spacing: 3rpx; margin-bottom: 32rpx; }
 .hero-title { font-family: "Songti SC", serif; font-size: 72rpx; line-height: 1.35; margin: 50rpx 0 24rpx; font-weight: 600; }
-.line-break { display: block; }
 .hero-copy, .body-copy { color: #5b655c; font-size: 28rpx; line-height: 1.8; }
 .intro-card { padding: 36rpx; border: 1rpx solid #ddd6c6; border-radius: 16rpx; background: #fffefa; margin: 36rpx 0; }
 .section-label { color: #55684e; font-size: 23rpx; letter-spacing: 2rpx; margin-bottom: 20rpx; }

@@ -8,7 +8,7 @@ import {
 import { Button } from "@base-ui/react/button";
 import type { CurrentState } from "../authentication/current";
 import type { Account } from "../protocol/session";
-import { leaveKind, type State, type UnknownNotice } from "./controller";
+import { leaveKind, type State } from "./controller";
 import type { Cancellation } from "./controller";
 
 type Screen = Readonly<{
@@ -17,7 +17,6 @@ type Screen = Readonly<{
   introduction: string;
   documentTitle?: string;
   panel: ReactNode;
-  guide?: ReactNode;
   entry?: boolean;
 }>;
 
@@ -36,27 +35,13 @@ function remaining(at: number, now: number) {
   return Math.max(0, Math.ceil((at - now) / 1000));
 }
 
-function noticeCopy(notice: UnknownNotice): [string, string, string?] {
-  if (notice === "mismatch")
-    return [
-      "暂时无法确认注销结果",
-      "本次提交与已保存的信息不一致，当前无法确认账户是否已注销。",
-      "请勿重复提交",
-    ];
-  return [
-    "暂时无法确认注销结果",
-    "注销申请可能已经发出，但现在无法确认账户是否已注销。",
-    "登录失效不代表注销成功",
-  ];
-}
-
 function currentResult(
   screen: CurrentState,
   now: number,
   controller: Cancellation,
 ): Screen {
-  const kicker = "注销结果 · 检查登录";
-  const introduction = "检查只读取当前登录，不会重新提交注销。";
+  const kicker = "当前账户";
+  const introduction = "此前的注销结果仍未确认。";
   const home = (
     <a className="quiet-link" href="/">
       返回首页
@@ -87,11 +72,8 @@ function currentResult(
             aria-busy="true"
           >
             <span className="reading-symbol" aria-hidden="true" />
-            <span className="result-status">登录检查</span>
             <h2>正在检查当前登录</h2>
-            <p className="stage-description">
-              检查只读取当前账户，不会重新提交注销。
-            </p>
+            <p className="stage-description">请稍候。</p>
             <div className="cancellation-actions">
               <Button className="primary" disabled>
                 正在检查
@@ -105,14 +87,11 @@ function currentResult(
       return {
         kicker,
         title: "登录状态",
-        introduction: "当前登录仍有效，注销结果仍待确认。",
+        introduction,
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">登录检查</span>
             <h2>当前登录仍有效</h2>
-            <p className="stage-description">
-              当前登录账户仍可使用。这不能单独确认本次注销结果。
-            </p>
+            <p className="stage-description">可打开个人账户查看当前资料。</p>
             <div className="current-account">
               <span>当前登录</span>
               <strong>{screen.account.name}</strong>
@@ -121,15 +100,12 @@ function currentResult(
                 <span className="suffix">{screen.account.idNumber.suffix}</span>
               </span>
             </div>
-            <div className="cancellation-note">
-              <h3>不能单独确认注销结果</h3>
-              <p>
-                当前登录可用不能证明本次注销已经完成或没有完成。请勿重复提交注销；本页不提供注销结果查询。
-              </p>
-            </div>
             <div className="cancellation-actions">
+              <a className="primary" href="/account">
+                打开个人账户
+              </a>
               <Button
-                className="primary"
+                className="quiet-link"
                 onClick={() => void controller.check()}
               >
                 重新检查登录状态
@@ -143,20 +119,13 @@ function currentResult(
       return {
         kicker,
         title: "登录状态",
-        introduction: "当前登录已失效，注销结果仍待确认。",
+        introduction,
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">登录检查</span>
-            <h2>当前登录已无法使用</h2>
+            <h2>请重新登录</h2>
             <p className="stage-description">
-              登录失效不代表注销成功，也不能确认本次注销结果。
+              请使用手机号登录，查看当前账户状态。
             </p>
-            <div className="cancellation-note warning">
-              <h3>请勿用登录结果判断注销</h3>
-              <p>
-                重新登录只检查当前账户，不会继续此前的注销。新注册或另一账户不承接本次注销。
-              </p>
-            </div>
             <div className="cancellation-actions">
               <a className="primary" href="/authentication/codes">
                 手机号登录
@@ -170,14 +139,11 @@ function currentResult(
       return {
         kicker,
         title: "登录状态",
-        introduction: "注销结果仍待确认。",
+        introduction,
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">登录检查</span>
-            <h2>需要登录</h2>
-            <p className="stage-description">
-              当前没有可用的登录。登录后可以查看当前账户，但不能据此确认此前的注销结果。
-            </p>
+            <h2>请使用手机号登录</h2>
+            <p className="stage-description">登录后可查看当前账户状态。</p>
             <div className="cancellation-actions">
               <a className="primary" href="/authentication/codes">
                 手机号登录
@@ -191,14 +157,11 @@ function currentResult(
       return {
         kicker,
         title: "登录状态",
-        introduction: "当前账户资料已隐藏。",
+        introduction,
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">登录检查</span>
-            <h2>暂时无法读取登录信息</h2>
-            <p className="stage-description">
-              浏览器中的登录信息无法使用。可以重新检查，或选择手机号登录。此前的注销结果仍无法确认。
-            </p>
+            <h2>登录信息暂时无法使用</h2>
+            <p className="stage-description">请重新检查，或使用手机号登录。</p>
             <div className="cancellation-actions">
               <Button
                 className="primary"
@@ -218,12 +181,11 @@ function currentResult(
       return {
         kicker,
         title: "登录状态",
-        introduction: "当前登录暂时无法检查，注销结果仍待确认。",
+        introduction,
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">登录检查</span>
-            <h2>暂时无法检查当前登录</h2>
-            <p className="stage-description">请稍后再试。注销结果仍待确认。</p>
+            <h2>目前无法查看个人账户</h2>
+            <p className="stage-description">可以返回首页。</p>
             <div className="cancellation-actions">{home}</div>
           </section>
         ),
@@ -232,13 +194,12 @@ function currentResult(
       return {
         kicker,
         title: "登录状态",
-        introduction: "当前登录暂时无法检查，注销结果仍待确认。",
+        introduction,
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">登录检查</span>
-            <h2>请稍后再检查登录</h2>
+            <h2>请稍后重试</h2>
             <p className="stage-description">
-              暂时无法处理，注销结果仍待确认。
+              暂时无法检查登录状态，请稍后再试。
             </p>
             <div className="cancellation-actions">
               {retry("检查登录状态", screen.retryAt)}
@@ -251,17 +212,14 @@ function currentResult(
       return {
         kicker,
         title: "登录状态",
-        introduction: "当前登录暂时无法检查，注销结果仍待确认。",
+        introduction,
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">登录检查</span>
-            <h2>请重新加载页面</h2>
-            <p className="stage-description">
-              页面暂时无法继续，请重新加载后再检查当前登录。
-            </p>
+            <h2>请重新加载</h2>
+            <p className="stage-description">请重新加载后再检查登录状态。</p>
             <div className="cancellation-actions">
               <Button className="primary" onClick={() => location.reload()}>
-                重新加载页面
+                重新加载
               </Button>
               {home}
             </div>
@@ -272,14 +230,11 @@ function currentResult(
       return {
         kicker,
         title: "登录状态",
-        introduction: "当前登录暂时无法检查，注销结果仍待确认。",
+        introduction,
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">登录检查</span>
-            <h2>暂时无法检查当前登录</h2>
-            <p className="stage-description">
-              本次检查没有完成，注销结果仍待确认。
-            </p>
+            <h2>暂时无法检查登录状态</h2>
+            <p className="stage-description">请稍后重新检查。</p>
             <div className="cancellation-actions">
               {retry("检查登录状态", screen.retryAt)}
               {home}
@@ -317,18 +272,14 @@ function readFailure(
     case "changed":
       return {
         kicker: "账户管理 · 仅限本人",
-        title: "注销账户",
-        introduction: "正在检查当前账户，检查完成前不展示本人资料。",
+        title: "正在检查账户…",
+        introduction: "请稍候。",
         panel: (
           <section
             className="cancellation-panel cancellation-result"
             aria-busy="true"
           >
             <span className="reading-symbol" aria-hidden="true" />
-            <h2>正在检查当前账户</h2>
-            <p className="stage-description">
-              检查完成前不展示本人资料，也不会提交注销。
-            </p>
           </section>
         ),
       };
@@ -336,14 +287,12 @@ function readFailure(
     case "expired":
       return {
         kicker: "账户管理 · 仅限本人",
-        title: "请重新登录",
-        introduction: "当前登录已失效，本次注销尚未提交。",
+        title: screen.kind === "anonymous" ? "请使用手机号登录" : "请重新登录",
+        introduction: "请验证手机号后继续。",
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">账户检查</span>
-            <h2>请重新登录</h2>
             <p className="stage-description">
-              当前登录已无法继续使用，本次注销尚未提交。
+              手机号验证后可核对当前账户资料。
             </p>
             <div className="cancellation-actions">
               <a className="primary" href="/authentication/codes">
@@ -357,15 +306,10 @@ function readFailure(
     case "storage":
       return {
         kicker: "账户管理 · 仅限本人",
-        title: "暂时无法读取登录信息",
-        introduction: "当前账户资料已隐藏，本次注销尚未提交。",
+        title: "登录信息暂时无法使用",
+        introduction: "请重新检查，或使用手机号登录。",
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">账户检查</span>
-            <h2>暂时无法读取登录信息</h2>
-            <p className="stage-description">
-              浏览器中的登录信息无法使用。可以重新检查，或选择手机号登录。本次注销尚未提交。
-            </p>
             <div className="cancellation-actions">
               {retry(0)}
               <a className="quiet-link" href="/authentication/codes">
@@ -379,13 +323,10 @@ function readFailure(
     case "denied":
       return {
         kicker: "账户管理 · 仅限本人",
-        title: "暂时无法办理注销",
-        introduction: "暂时无法读取账户，本次注销尚未提交。",
+        title: "目前无法注销账户",
+        introduction: "可以返回首页。",
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">账户检查</span>
-            <h2>暂时无法办理注销</h2>
-            <p className="stage-description">请稍后再试。本次注销尚未提交。</p>
             <div className="cancellation-actions">{home}</div>
           </section>
         ),
@@ -393,17 +334,12 @@ function readFailure(
     case "limited":
       return {
         kicker: "账户管理 · 仅限本人",
-        title: "请稍后再读取账户",
-        introduction: "当前账户暂时无法读取，本次注销尚未提交。",
+        title: "暂时无法检查账户",
+        introduction: "请稍后重新检查。",
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">账户检查</span>
-            <h2>请稍后再读取账户</h2>
-            <p className="stage-description">
-              暂时无法处理，本次注销尚未提交。
-            </p>
             <div className="cancellation-actions">
-              {retry(screen.retryAt, "重新读取账户")}
+              {retry(screen.retryAt)}
               {home}
             </div>
           </section>
@@ -412,17 +348,13 @@ function readFailure(
     case "reload":
       return {
         kicker: "账户管理 · 仅限本人",
-        title: "请重新加载页面",
-        introduction: "当前账户暂时无法读取，本次注销尚未提交。",
+        title: "请重新加载",
+        introduction: "页面暂时无法继续，请重新加载后再试。",
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <h2>请重新加载页面</h2>
-            <p className="stage-description">
-              页面暂时无法继续，请重新加载后再办理注销。
-            </p>
             <div className="cancellation-actions">
               <Button className="primary" onClick={() => location.reload()}>
-                重新加载页面
+                重新加载
               </Button>
               {home}
             </div>
@@ -432,15 +364,10 @@ function readFailure(
     default:
       return {
         kicker: "账户管理 · 仅限本人",
-        title: "暂时无法读取账户",
-        introduction: "当前账户暂时无法读取，本次注销尚未提交。",
+        title: "暂时无法检查账户",
+        introduction: "请稍后重新检查。",
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">账户检查</span>
-            <h2>暂时无法读取账户</h2>
-            <p className="stage-description">
-              请重新加载后再办理注销。未取得可信资料前，不会提交注销。
-            </p>
             <div className="cancellation-actions">
               {retry(screen.retryAt)}
               {home}
@@ -489,14 +416,10 @@ function refusedScreen(
       return {
         kicker: "账户管理",
         title: "注销结果",
-        introduction: "当前登录已失效，本次请求未被受理。",
+        introduction: "本次尚未注销。请使用手机号登录，查看当前账户。",
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">未受理</span>
-            <h2>当前登录已失效</h2>
-            <p className="stage-description">
-              本次请求未被受理。请重新登录后再查看当前账户。
-            </p>
+            <h2>请重新登录</h2>
             <div className="cancellation-actions">
               <a className="primary" href="/authentication/codes">
                 手机号登录
@@ -510,14 +433,10 @@ function refusedScreen(
       return {
         kicker: "账户管理",
         title: "注销结果",
-        introduction: "本次注销未能办理，请求未被受理。",
+        introduction: "可以返回首页。",
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">未办理</span>
-            <h2>本次注销未能办理</h2>
-            <p className="stage-description">
-              暂时无法办理，请稍后再试。本次请求未被受理。
-            </p>
+            <h2>本次尚未注销</h2>
             <div className="cancellation-actions">{home}</div>
           </section>
         ),
@@ -526,17 +445,10 @@ function refusedScreen(
       return {
         kicker: "账户管理",
         title: "注销结果",
-        introduction: "本次注销尚未受理。",
+        introduction: "请稍后返回确认页面再试。",
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">未受理</span>
-            <h2>本次注销尚未受理</h2>
-            <p className="stage-description">
-              本次注销没有开始办理，账户没有因此注销。
-            </p>
-            <p className="cancellation-guidance">
-              等待结束后返回确认页面，核对当前账户并再次确认。
-            </p>
+            <h2>本次尚未注销</h2>
             <div className="cancellation-actions">
               {restart("返回确认页面")}
               {home}
@@ -548,14 +460,10 @@ function refusedScreen(
       return {
         kicker: "账户管理",
         title: "注销结果",
-        introduction: "账户资料已变化，需要重新确认。",
+        introduction: "请重新查看账户资料后确认。",
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">需要重新确认</span>
             <h2>账户资料已变化</h2>
-            <p className="stage-description">
-              本次注销没有办理。请重新查看当前账户资料，再确认是否注销。
-            </p>
             <div className="cancellation-actions">
               {restart("重新查看账户资料")}
               {home}
@@ -567,17 +475,10 @@ function refusedScreen(
       return {
         kicker: "账户管理",
         title: "注销结果",
-        introduction: "本次注销没有完成。",
+        introduction: "请重新查看账户资料后再试。",
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">未完成</span>
-            <h2>本次注销没有完成</h2>
-            <p className="stage-description">
-              系统暂时无法处理，本次没有产生注销结果。
-            </p>
-            <p className="cancellation-guidance">
-              可以稍后重新查看账户资料，再决定是否重新办理。
-            </p>
+            <h2>本次注销未完成</h2>
             <div className="cancellation-actions">
               {restart("重新查看账户资料")}
               {home}
@@ -589,14 +490,10 @@ function refusedScreen(
       return {
         kicker: "账户管理",
         title: "注销结果",
-        introduction: "本次注销未能办理。",
+        introduction: "请重新查看账户资料后再试。",
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">未办理</span>
-            <h2>本次注销未能办理</h2>
-            <p className="stage-description">
-              提交的确认信息未被接受，本次注销没有办理。
-            </p>
+            <h2>本次注销未完成</h2>
             <div className="cancellation-actions">
               {restart("重新查看账户资料")}
               {home}
@@ -626,7 +523,7 @@ function screenFor(
       return {
         kicker: "账户管理 · 仅限本人",
         title: "注销账户",
-        introduction: "注销前，请核对当前账户并了解后果。",
+        introduction: "注销前，请核对账户并了解以下后果。",
         entry: true,
         panel: (
           <section
@@ -636,16 +533,17 @@ function screenFor(
             {accountIdentity(state.account)}
             <h2 id="consequences-title">注销后会发生什么</h2>
             <ul className="cancellation-consequences">
-              <li>账户不能恢复，当前及所有设备的登录都会结束。</li>
-              <li>本人服务会结束；尚未办理完的原申请停止办理。</li>
-              <li>必要业务记录和已保存的发放仍会保留，原工号不会自动释放。</li>
+              <li>账户无法恢复，网站和小程序的全部登录与员工服务将结束。</li>
+              <li>
+                尚未完成的原申请将停止办理，必要业务记录和已保存的发放记录保留。
+              </li>
+              <li>
+                原工号不会自动释放。重新注册将创建新账户，不继承原账户的资格和历史。
+              </li>
             </ul>
-            <div className="cancellation-note warning">
-              <h3>重新注册不会恢复原账户</h3>
-              <p>
-                同一手机号重新注册会是新账户，不继承原账户的资格、记录或员工服务。
-              </p>
-            </div>
+            <p className="cancellation-guidance">
+              暂时离开可返回个人账户，选择退出登录。
+            </p>
             <div className="cancellation-actions">
               <Button className="primary" onClick={openConfirm}>
                 注销账户
@@ -656,48 +554,28 @@ function screenFor(
             </div>
           </section>
         ),
-        guide: (
-          <aside className="cancellation-guide" aria-labelledby="guide-title">
-            <p className="section-kicker">注销前请确认</p>
-            <h2 id="guide-title">这不是退出登录</h2>
-            <p>
-              如果只是暂时离开，可以返回个人账户，选择退出登录。注销会永久结束账户和本人服务，申请发出后不能撤回。
-            </p>
-            <ul>
-              <li>只注销当前登录的本人账户。</li>
-              <li>结果未知时，不要重复提交。</li>
-            </ul>
-          </aside>
-        ),
       };
     case "success":
       return {
         kicker: "账户管理",
         title: "账户已注销",
-        introduction: "本次注销已完成。",
+        introduction: "全部登录和员工服务已结束，原账户无法恢复。",
         panel: (
           <section className="cancellation-panel cancellation-result is-success">
-            <span className="result-status success">已完成</span>
-            <h2>账户已注销</h2>
-            <p className="stage-description">本次注销已经生效。</p>
             <p className="cancellation-time">
-              注销时间：
+              注销时间（北京时间）：
               <time dateTime={state.result.cancelledAt}>
                 {stamp(state.result.cancelledAt)}
               </time>
             </p>
             <ul className="result-consequences">
-              <li>全部登录和本人服务已结束，账户不能恢复。</li>
-              <li>必要业务记录和已保存的发放仍会保留；原工号不会自动释放。</li>
-              <li>同一手机号重新注册是新账户，不继承原资格和历史。</li>
+              <li>必要业务记录和已保存的发放记录保留，原工号不会自动释放。</li>
+              <li>重新注册将创建新账户，不继承原账户的资格和历史。</li>
             </ul>
             {!state.persisted && (
-              <div className="cancellation-note warning">
-                <h3>请勿关闭本页</h3>
-                <p>
-                  浏览器未能保存本次结果。关闭页面后，本页将无法再次显示这次注销结果。
-                </p>
-              </div>
+              <p className="cancellation-guidance">
+                本页暂时无法保存结果，关闭后可能无法再次显示本次结果。
+              </p>
             )}
             <div className="cancellation-actions">
               <a className="primary" href="/">
@@ -708,30 +586,17 @@ function screenFor(
         ),
       };
     case "unknown": {
-      const [title, description, noteTitle] = noticeCopy(state.notice);
       return {
         kicker: "账户管理",
-        title: "注销结果",
-        introduction: "本次注销结果尚无法确认。",
+        title: "注销结果尚不确定",
+        introduction: "暂时不要重复提交，可先检查登录状态。",
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">结果待确认</span>
-            <h2>{title}</h2>
-            <p className="stage-description">{description}</p>
-            <p className="cancellation-guidance">
-              重新登录或使用同一手机号注册，也不能证明本次注销结果；新账户不承接本次注销。
-            </p>
             {!state.persisted && (
               <p className="cancellation-guidance">
-                浏览器未能保存本次注销信息。请勿关闭本页，也不要重复提交。
+                本页暂时无法保存注销信息，关闭后可能无法再次显示本次状态。
               </p>
             )}
-            <div className="cancellation-note warning">
-              <h3>{noteTitle}</h3>
-              <p>
-                页面不会自动重复提交，也不提供注销结果查询。请先检查当前登录状态。
-              </p>
-            </div>
             <div className="cancellation-actions">
               <Button
                 className="primary"
@@ -751,17 +616,9 @@ function screenFor(
       return {
         kicker: "账户管理",
         title: "本次尚未提交注销",
-        introduction: "本次注销尚未提交。",
+        introduction: "请返回确认页面，重新核对账户。",
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">未提交</span>
-            <h2>本次尚未提交注销</h2>
-            <p className="stage-description">
-              浏览器未能保存本次办理所需的信息，注销申请没有发出。
-            </p>
-            <p className="cancellation-guidance">
-              账户没有因此注销。返回确认页面后，可以重新核对并决定是否再次提交。
-            </p>
             <div className="cancellation-actions">
               <Button
                 className="primary"
@@ -777,22 +634,17 @@ function screenFor(
     case "preparing":
       return {
         kicker: "账户管理",
-        title: "正在准备注销",
-        introduction: "正在核对当前登录，本次注销尚未提交。",
+        title: "正在核对账户…",
+        introduction: "请稍候。",
         panel: (
           <section
             className="cancellation-panel cancellation-result"
             aria-busy="true"
           >
             <span className="reading-symbol" aria-hidden="true" />
-            <span className="result-status">准备中</span>
-            <h2>正在准备注销</h2>
-            <p className="stage-description">
-              正在核对当前登录，本次注销尚未提交。
-            </p>
             <div className="cancellation-actions">
               <Button className="primary" disabled>
-                正在准备
+                请稍候
               </Button>
               {home}
             </div>
@@ -802,19 +654,15 @@ function screenFor(
     case "submitting":
       return {
         kicker: "账户管理",
-        title: "注销结果",
-        introduction: "正在提交注销申请。",
+        title: "正在注销账户…",
+        introduction: "请稍候。",
         panel: (
           <section
             className="cancellation-panel cancellation-result"
             aria-busy="true"
           >
             <span className="reading-symbol" aria-hidden="true" />
-            <span className="result-status">提交中</span>
-            <h2>正在提交注销申请</h2>
-            <p className="stage-description">
-              请稍候，不要重复提交。离开页面不会取消已经发出的申请。
-            </p>
+            <p className="stage-description">离开不会撤回已发出的注销请求。</p>
             <div className="cancellation-actions">
               <Button className="primary" disabled>
                 正在注销
@@ -835,26 +683,13 @@ function screenFor(
             : "页面暂时无法继续。",
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">
-              {state.unsubmitted
-                ? "未提交"
-                : state.pending
-                  ? "结果待确认"
-                  : "暂时无法继续"}
-            </span>
-            <h2>暂时无法继续</h2>
             <p className="stage-description">
               {state.unsubmitted
-                ? "浏览器无法保存注销信息，本次注销尚未提交。请重新检查。"
+                ? "本次尚未提交注销，请重新检查。"
                 : state.pending
-                  ? "浏览器暂时无法读取本页信息。本次注销结果仍待确认，请重新检查。"
-                  : "浏览器暂时无法读取本页信息。请重新检查。"}
+                  ? "暂时无法确认注销结果，请重新检查。"
+                  : "请重新检查后再试。"}
             </p>
-            {state.pending && (
-              <p className="cancellation-guidance">
-                离开不会取消已经发出的申请，也不会确认注销结果。
-              </p>
-            )}
             <div className="cancellation-actions">
               <Button
                 className="primary"
@@ -873,24 +708,16 @@ function screenFor(
     case "reload":
       return {
         kicker: "账户管理",
-        title: "请重新加载页面",
+        title: "请重新加载",
         introduction: state.pending
           ? "本次注销结果仍待确认。"
           : "页面暂时无法继续。",
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">
-              {state.pending ? "结果待确认" : "需要重新加载"}
-            </span>
-            <h2>请重新加载页面</h2>
-            <p className="stage-description">
-              {state.pending
-                ? "本次注销结果仍待确认。重新加载不会重新提交注销。"
-                : "页面暂时无法继续，请重新加载。"}
-            </p>
+            <p className="stage-description">请重新加载后按页面提示继续。</p>
             <div className="cancellation-actions">
               <Button className="primary" onClick={() => location.reload()}>
-                重新加载页面
+                重新加载
               </Button>
               {home}
             </div>
@@ -901,17 +728,12 @@ function screenFor(
       return {
         kicker: "账户管理",
         title: "本次注销尚未提交",
-        introduction: "本次注销尚未提交。",
+        introduction: "请重新加载后再试。",
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <span className="result-status">未提交</span>
-            <h2>本次注销尚未提交</h2>
-            <p className="stage-description">
-              暂时无法发起注销，请重新加载页面后再试。
-            </p>
             <div className="cancellation-actions">
               <Button className="primary" onClick={() => location.reload()}>
-                重新加载页面
+                重新加载
               </Button>
               {home}
             </div>
@@ -921,20 +743,16 @@ function screenFor(
     case "hidden":
       if (info.checking)
         return {
-          kicker: "注销结果 · 检查登录",
+          kicker: "当前账户",
           title: "登录状态",
-          introduction: "检查只读取当前登录，不会重新提交注销。",
+          introduction: "正在检查登录状态…",
           panel: (
             <section
               className="cancellation-panel cancellation-result"
               aria-busy="true"
             >
               <span className="reading-symbol" aria-hidden="true" />
-              <span className="result-status">登录检查</span>
-              <h2>正在检查当前登录</h2>
-              <p className="stage-description">
-                检查只读取当前账户，不会重新提交注销。
-              </p>
+              <p className="stage-description">请稍候。</p>
               <div className="cancellation-actions">
                 <Button className="primary" disabled>
                   正在检查
@@ -949,13 +767,12 @@ function screenFor(
         title: "账户状态",
         introduction:
           state.current.kind === "storage"
-            ? "暂时无法读取当前登录。"
-            : "当前登录状态已更新。",
+            ? "登录信息暂时无法使用。"
+            : "请重新检查当前登录。",
         panel: (
           <section className="cancellation-panel cancellation-result">
-            <h2>请检查当前账户</h2>
             <p className="stage-description">
-              本页暂时无法显示账户信息。可以重新检查，或打开个人账户查看当前状态。
+              可打开个人账户，查看当前资料。
             </p>
             <div className="cancellation-actions">
               <Button
@@ -1143,14 +960,7 @@ export function Content({ controller }: { controller: Cancellation }) {
         )}
       </div>
       <div className="cancellation-content" aria-live="polite">
-        {screen.entry ? (
-          <div className="cancellation-columns">
-            {screen.panel}
-            {screen.guide}
-          </div>
-        ) : (
-          screen.panel
-        )}
+        {screen.panel}
       </div>
 
       <dialog
@@ -1174,17 +984,15 @@ export function Content({ controller }: { controller: Cancellation }) {
             ×
           </button>
         </div>
-        <h2 id="confirm-title">确认注销本人账户？</h2>
-        <p id="confirm-description">
-          注销后，全部登录和本人服务会结束，账户不能恢复。
-        </p>
+        <h2 id="confirm-title">确认注销此账户？</h2>
+        <p id="confirm-description">账户无法恢复，全部登录和员工服务将结束。</p>
         {account && (
           <p className="confirm-identity">
             {account.name} · 身份证尾号 {account.idNumber.suffix}
           </p>
         )}
         <p className="dialog-note">
-          必要业务记录和已保存的发放仍会保留；原工号不会自动释放。
+          必要业务记录和已保存的发放记录保留，原工号不会自动释放。
         </p>
         <div className="dialog-actions">
           <Button
@@ -1230,12 +1038,12 @@ export function Content({ controller }: { controller: Cancellation }) {
             </button>
           </div>
           <h2 id="leave-title">
-            {kind === "unsubmitted" ? "尚未提交注销" : "离开前请留意注销结果"}
+            {kind === "unsubmitted" ? "尚未提交注销" : "注销结果尚未确认"}
           </h2>
           <p id="leave-description">
             {kind === "unsubmitted"
-              ? "本次注销尚未提交。离开后，需要重新打开本页并再次确认。"
-              : "本次注销结果仍未确定。离开不会取消已经发出的申请。"}
+              ? "离开后需要重新打开本页并确认。"
+              : "离开不会撤回已经发出的注销请求。"}
           </p>
           <div className="dialog-actions">
             <Button ref={leaveStay} className="primary" onClick={stay}>

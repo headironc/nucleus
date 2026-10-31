@@ -52,9 +52,6 @@ export function HistoryPanel({ controller }: { controller: History }) {
           刷新记录
         </Button>
       </div>
-      <p className="correction-explanation">
-        按更正先后从新到旧展示，时间以北京时间显示。证件号仅展示尾四位。
-      </p>
       {ready && state.corrections.length > 0 ? (
         <ol className="correction-list">
           {state.corrections.map((record) => (
@@ -64,6 +61,7 @@ export function HistoryPanel({ controller }: { controller: History }) {
                   <h3>实名资料更正</h3>
                   <time dateTime={record.correctedAt}>
                     {dateFormat.format(new Date(record.correctedAt))}
+                    （北京时间）
                   </time>
                 </div>
                 <div className="correction-values">
@@ -92,36 +90,21 @@ export function HistoryPanel({ controller }: { controller: History }) {
       ) : (
         <div className="correction-message" role="status">
           {state.kind === "loading" ? (
-            <>
-              <h3>正在读取更正记录</h3>
-              <p>请稍候。</p>
-            </>
+            <h3>正在加载实名更正记录…</h3>
           ) : ready ? (
             state.count === 0 ? (
-              <>
-                <h3>暂无实名更正记录</h3>
-                <p>当前账户没有可展示的实名更正记录。</p>
-              </>
+              <h3>暂无实名更正记录</h3>
             ) : (
               <>
-                <h3>这一页没有记录</h3>
-                <p>记录总数仍为 {state.count} 条，请返回第一页查看。</p>
+                <h3>找不到这一页</h3>
+                <p>请返回第一页。</p>
                 <Button onClick={() => refresh()}>返回第一页</Button>
               </>
             )
           ) : (
             <>
-              <h3>
-                {state.kind === "limited"
-                  ? "暂时无法读取更正记录"
-                  : "暂时无法加载更正记录"}
-              </h3>
-              <p>
-                {state.kind === "limited"
-                  ? "暂时无法处理，请稍后再试。"
-                  : "请刷新后重试。"}
-                当前账户资料仍可查看。
-              </p>
+              <h3>实名更正记录暂时无法加载</h3>
+              <p>{state.kind === "limited" ? "请稍后再试。" : "请重试。"}</p>
               <Button disabled={seconds > 0} onClick={() => refresh()}>
                 {seconds > 0 ? `${seconds} 秒后可重新加载` : "重新加载记录"}
               </Button>

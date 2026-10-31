@@ -54,12 +54,14 @@ vitest.describe(`the all-session logout page`, () => {
         account,
         selection: { id: revision, revision },
       });
-      vitest.expect(html).toContain(`退出全部设备`);
+      vitest.expect(html).toContain(`退出全部登录`);
       vitest.expect(html).toContain(account.name);
-      vitest.expect(html).toContain(`当前登录也会退出`);
-      vitest.expect(html).toContain(`网站和小程序均需重新登录`);
-      vitest.expect(html).toContain(`实名资料、微信绑定和员工服务均保留`);
-      vitest.expect(html).toContain(`确认退出全部设备`);
+      vitest
+        .expect(html)
+        .toContain(`将退出网站和小程序的全部登录，包括本次登录。`);
+      vitest.expect(html).toContain(`再次进入个人账户需要重新登录。`);
+      vitest.expect(html).toContain(`账户资料和已提交的申请保留。`);
+      vitest.expect(html).toContain(`>全部退出<`);
       vitest.expect(html).toContain(`暂不退出`);
       vitest.expect(controller.submit).not.toHaveBeenCalled();
     },
@@ -85,12 +87,11 @@ vitest.describe(`the all-session logout page`, () => {
         },
         detail,
       );
-      vitest.expect(html).toContain(`暂未查到此前退出结果`);
-      vitest.expect(html).toContain(`不表示本次退出全部设备已完成`);
+      vitest.expect(html).toContain(`暂时无法确认此前的退出结果`);
       vitest.expect(html).toContain(`此前退出的登录`);
-      vitest.expect(html).toContain(`查看此前退出结果`);
-      vitest.expect(html).not.toContain(`本次全部退出已完成`);
-      vitest.expect(html).toContain(`<h1>此前退出结果</h1>`);
+      vitest.expect(html).toContain(`查看退出结果`);
+      vitest.expect(html).not.toContain(`已退出全部登录`);
+      vitest.expect(html).toContain(`<h1>退出结果</h1>`);
     },
   );
   vitest.it(`reports the positive session count without a device list`, () => {
@@ -112,11 +113,15 @@ vitest.describe(`the all-session logout page`, () => {
       },
       detail,
     );
-    vitest.expect(html).toContain(`本次全部退出已完成`);
-    vitest.expect(html).toContain(`本次退出的登录`);
-    vitest.expect(html).toContain(`3 个`);
+    vitest.expect(html).toContain(`已退出全部登录`);
+    vitest.expect(html).toContain(`class="primary" href="/"`);
+    vitest
+      .expect(html)
+      .toContain(`class="quiet-link" href="/authentication/codes"`);
+    vitest.expect(html).toContain(`已退出的登录`);
+    vitest.expect(html).toContain(`3 条`);
     vitest.expect(html).not.toContain(`设备清单`);
-    vitest.expect(html).toContain(`<h1>本次退出结果</h1>`);
+    vitest.expect(html).toContain(`<h1>退出结果</h1>`);
   });
   vitest.it(`keeps a later login when reading the prior completion`, () => {
     const { html } = render(
@@ -131,34 +136,48 @@ vitest.describe(`the all-session logout page`, () => {
       },
       { count: 2, binding: "matched", record: null, revokedAt: time },
     );
-    vitest.expect(html).toContain(`当前的新登录继续保留`);
+    vitest.expect(html).toContain(`此前的退出已完成`);
+    vitest.expect(html).not.toContain(`当前的新登录继续保留`);
     vitest.expect(html).toContain(`打开个人账户`);
   });
   vitest.it(
     `does not promise recovery when original material is missing`,
     () => {
       const { html } = render({ kind: `missing` });
-      vitest.expect(html).toContain(`暂时无法查看此前退出结果`);
+      vitest.expect(html).toContain(`暂时无法查看此前的退出结果`);
       vitest.expect(html).toContain(`href="/authentication/codes"`);
       vitest.expect(html).not.toContain(`return=all-logout-result`);
-      vitest.expect(html).not.toContain(`查看本次退出结果`);
+      vitest.expect(html).not.toContain(`>查看退出结果<`);
     },
   );
   vitest.it(
     `offers the public home after a query denial without a repair check`,
     () => {
-      const { html } = render({
-        kind: `result`,
-        outcome: `pending`,
-        notice: `denied`,
-        retryAt: 0,
-        canRead: false,
-        canStart: false,
-        newLogin: false,
-      });
-      vitest.expect(html).toContain(`暂时无法查看本次退出结果`);
+      const { html } = render(
+        {
+          kind: `result`,
+          outcome: `pending`,
+          notice: `denied`,
+          retryAt: 0,
+          canRead: false,
+          canStart: false,
+          newLogin: false,
+        },
+        {
+          count: null,
+          binding: "mismatch",
+          record: { count: 2, revokedAt: time },
+          revokedAt: null,
+        },
+      );
+      vitest.expect(html).toContain(`暂时无法查看此前的退出结果`);
       vitest.expect(html).toContain(`返回首页`);
       vitest.expect(html).not.toContain(`重新检查`);
+      vitest.expect(html).not.toContain(`请稍后查看退出结果`);
+      vitest.expect(html).not.toContain(`>查看退出结果<`);
+      vitest.expect(html).not.toContain(`重新确认`);
+      vitest.expect(html).not.toContain(`此前退出的登录`);
+      vitest.expect(html).not.toContain(`本次尚未退出`);
     },
   );
   vitest.it(
@@ -174,7 +193,11 @@ vitest.describe(`the all-session logout page`, () => {
       vitest
         .expect(html)
         .toContain(`href="/authentication/codes?return=all-logout-result"`);
-      vitest.expect(html).toContain(`此前退出的结果仍待确认`);
+      vitest
+        .expect(html)
+        .toContain(
+          `退出结果尚未确认。请使用原账户的手机号登录，继续查看退出结果。`,
+        );
       vitest.expect(html).toContain(`<h1>账户管理</h1>`);
     },
   );
@@ -184,7 +207,7 @@ vitest.describe(`the all-session logout page`, () => {
       const { html } = render({ kind: `other` });
       vitest
         .expect(html)
-        .not.toMatch(/退出全部设备|确认退出全部设备|return=all-logout-result/);
+        .not.toMatch(/退出全部登录|全部退出|return=all-logout-result/);
       vitest.expect(html).toContain(`href="/account"`);
       vitest.expect(html).toContain(`<h1>账户管理</h1>`);
     },

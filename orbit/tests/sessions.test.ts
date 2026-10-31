@@ -65,7 +65,7 @@ test.each([true, false])("unknown other logout only refreshes current state, tar
   const work = h.controller.logoutOther(h.controller.targetSelection(ids.later)!); await h.platform.next(2);
   h.platform.disconnect(2); await work;
   expect(h.controller.snapshot()).toMatchObject({ canCheck: true, canRecover: false, sessionsReady: false, sessions: [] });
-  expect(h.controller.snapshot().message).toContain("结果待确认");
+  expect(h.controller.snapshot().message).toBe("暂时无法确认是否已退出，请刷新列表查看。");
   await refreshed(h, present ? rows() : rows().filter(item => item.id !== ids.later));
   expect(h.controller.snapshot().message).toBe("列表已刷新。");
   expect(h.platform.requests.filter(item => item.method === "DELETE")).toHaveLength(1);
@@ -82,7 +82,7 @@ test("failed refresh after unknown preserves uncertainty without repeating DELET
   const work = h.controller.logoutOther(h.controller.targetSelection(ids.later)!); await h.platform.next(2); h.platform.disconnect(2); await work;
   const refresh = h.controller.check(); await h.platform.next(3); h.platform.reply(3, { code: "ok", account: account() });
   await h.platform.next(4); h.platform.reply(4, { code: "dependency_unavailable" }, 503); await refresh;
-  expect(h.controller.snapshot().message).toContain("退出结果仍待确认");
+  expect(h.controller.snapshot().message).toBe("暂时无法确认是否已退出，登录列表也未能加载，请刷新列表。");
   expect(h.controller.snapshot().sessions).toEqual([]);
   expect(h.platform.requests.filter(item => item.method === "DELETE")).toHaveLength(1);
 });
@@ -91,7 +91,7 @@ test("failed current check while refreshing also preserves unknown single exit",
   const h = await opened();
   const work = h.controller.logoutOther(h.controller.targetSelection(ids.later)!); await h.platform.next(2); h.platform.disconnect(2); await work;
   const refresh = h.controller.check(); await h.platform.next(3); h.platform.reply(3, { code: "dependency_unavailable" }, 503); await refresh;
-  expect(h.controller.snapshot().message).toContain("退出结果仍待确认");
+  expect(h.controller.snapshot().message).toBe("暂时无法确认是否已退出，登录列表也未能加载，请刷新列表。");
   expect(h.platform.requests.filter(item => item.method === "DELETE")).toHaveLength(1);
 });
 
@@ -169,7 +169,7 @@ test.each(["wrong-operation", "wrong-count", "untrusted"])("%s completion cannot
     count: kind === "wrong-count" ? 2 : 1, revokedAt: "2026-10-30T08:00:00Z" } }, 200,
     kind === "untrusted" ? { "Content-Type": "text/html" } : {}); await work;
   expect(h.controller.snapshot()).toMatchObject({ sessionsReady: false, sessions: [], canCheck: true });
-  expect(h.controller.snapshot().message).toContain("结果待确认");
+  expect(h.controller.snapshot().message).toBe("暂时无法确认是否已退出，请刷新列表查看。");
   expect(h.platform.records().session?.id).toBe(ids.session);
 });
 
