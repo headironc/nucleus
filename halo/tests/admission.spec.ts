@@ -200,7 +200,7 @@ test("institution account entry, default role and keyboard confirmation", async 
   page,
 }) => {
   await page.goto(origin + "/account");
-  await page.getByRole("link", { name: "开通员工服务", exact: true }).click();
+  await page.getByRole("link", { name: "为同事开通员工服务", exact: true }).click();
   await find(page);
   await expect(
     page.getByRole("radio", { name: "普通成员 · 默认选择" }),

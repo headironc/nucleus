@@ -96,6 +96,16 @@ function deferred() {
   return { promise, resolve };
 }
 
+async function prepareScreenshot(page: Page) {
+  await page.evaluate(async () => {
+    scrollTo(0, 0);
+    await document.fonts.ready;
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve())),
+    );
+  });
+}
+
 test.beforeEach(async ({ context, page }) => {
   await page.route("https://fixture.invalid/**", (route) =>
     route.fulfill({ contentType: "image/webp", body: avatarBytes }),
@@ -155,10 +165,10 @@ test("own history reads, pagination, refresh, accessibility and responsive long 
     if (!["GET", "HEAD"].includes(request.method())) writes.push(request.url());
   });
   await expect(
-    page.getByRole("link", { name: "退出本次登录", exact: true }),
+    page.getByRole("link", { name: "退出登录", exact: true }),
   ).toHaveAttribute("href", "/sessions/logout");
   await expect(
-    page.getByRole("link", { name: "退出全部设备", exact: true }),
+    page.getByRole("link", { name: "退出全部登录", exact: true }),
   ).toHaveAttribute("href", "/sessions/logout-all");
   await expect(
     page.getByRole("link", { name: "注销账户", exact: true }),
@@ -195,6 +205,7 @@ test("own history reads, pagination, refresh, accessibility and responsive long 
           () => document.documentElement.scrollWidth <= innerWidth,
         ),
       ).toBe(true);
+      await prepareScreenshot(page);
       await page.screenshot({
         path: info.outputPath(`history-${width}-${colorScheme}.png`),
         fullPage: true,
@@ -211,6 +222,57 @@ test("own history reads, pagination, refresh, accessibility and responsive long 
   expect(JSON.stringify(storage)).not.toContain(records[0].id);
 });
 
+test("management permission loading retains trusted facts and waits before showing the entry", async ({
+  page,
+}, info) => {
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  const entered = deferred();
+  const release = deferred();
+  await page.route("**/api/v1/accounts/current/role", async (route) => {
+    entered.resolve();
+    await release.promise;
+    await route
+      .fulfill({
+        json: {
+          code: "ok",
+          role: {
+            id,
+            changeId: id,
+            kind: "full",
+            name: "管理员",
+            level: 1000,
+            permissions: ["institution.workforce"],
+          },
+        },
+      })
+      .catch(() => {});
+  });
+  try {
+    await page.reload();
+    await entered.promise;
+    await expect(page.locator(".current-summary")).toContainText(longName);
+    await expect(
+      page.getByText("正在检查管理权限…", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "为同事开通员工服务", exact: true }),
+    ).toHaveCount(0);
+    await prepareScreenshot(page);
+    await page.screenshot({
+      path: info.outputPath("management-permission-loading.png"),
+      fullPage: true,
+    });
+  } finally {
+    release.resolve();
+  }
+  await expect(
+    page.getByRole("link", { name: "为同事开通员工服务", exact: true }),
+  ).toHaveAttribute("href", "/workforce/grants/new");
+  await expect(
+    page.getByText("正在检查管理权限…", { exact: true }),
+  ).toHaveCount(0);
+});
 test("empty history and count-preserving out-of-range pages are distinct", async ({
   page,
 }, info) => {
@@ -220,8 +282,9 @@ test("empty history and count-preserving out-of-range pages are distinct", async
     route.fulfill({ json: { code: "ok", count: 1, corrections: [] } }),
   );
   await page.getByRole("button", { name: "下一页" }).click();
-  await expect(page.getByText("这一页没有记录")).toBeVisible();
+  await expect(page.getByText("找不到这一页")).toBeVisible();
   await expect(page.getByText("共 1 条记录", { exact: true })).toBeVisible();
+  await prepareScreenshot(page);
   await page.screenshot({
     path: info.outputPath("out-of-range.png"),
     fullPage: true,
@@ -236,6 +299,7 @@ test("empty history and count-preserving out-of-range pages are distinct", async
   await expect(
     page.getByText("暂无实名更正记录", { exact: true }),
   ).toBeVisible();
+  await prepareScreenshot(page);
   await page.screenshot({ path: info.outputPath("empty.png"), fullPage: true });
 });
 
@@ -260,7 +324,7 @@ for (const status of [429, 503])
     await page.getByRole("button", { name: "刷新记录" }).click();
     await expect(
       page.getByRole("heading", {
-        name: status === 429 ? "暂时无法读取更正记录" : "暂时无法加载更正记录",
+        name: "实名更正记录暂时无法加载",
       }),
     ).toBeVisible();
     await expect(page.locator(".current-summary")).toContainText(longName);
@@ -271,6 +335,7 @@ for (const status of [429, 503])
       page.getByRole("button", { name: /秒后可重新加载/ }),
     ).toBeDisabled();
     expect(calls).toBe(1);
+    await prepareScreenshot(page);
     await page.screenshot({
       path: info.outputPath(`failure-${status}.png`),
       fullPage: true,
@@ -292,7 +357,7 @@ for (const status of [401, 403])
     await page.getByRole("button", { name: "刷新记录" }).click();
     await expect(
       page.getByRole("heading", {
-        name: status === 401 ? "请重新登录" : "暂时无法完成检查",
+        name: status === 401 ? "请重新登录" : "目前无法查看个人账户",
       }),
     ).toBeVisible();
     await expect(
@@ -428,7 +493,7 @@ test("a document first mounted in the background waits for visibility before rea
   });
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "正在检查登录状态" }),
+    page.getByRole("heading", { name: "正在打开个人账户…" }),
   ).toBeVisible();
   await expect(page.locator(".current-summary, .correction-panel")).toHaveCount(
     0,
@@ -455,7 +520,7 @@ test("storage failure and untrusted history close private access", async ({
   });
   await page.getByRole("button", { name: "刷新记录" }).click();
   await expect(
-    page.getByRole("heading", { name: "暂时无法检查登录状态" }),
+    page.getByRole("heading", { name: "登录信息暂时无法使用" }),
   ).toBeVisible();
   await expect(page.locator(".current-summary, .correction-panel")).toHaveCount(
     0,
@@ -468,9 +533,7 @@ test("storage failure and untrusted history close private access", async ({
     }),
   );
   await page.getByRole("button", { name: "刷新记录" }).click();
-  await expect(
-    page.getByRole("heading", { name: "请重新加载页面" }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "请重新加载" })).toBeVisible();
   await expect(page.locator(".current-summary, .correction-panel")).toHaveCount(
     0,
   );
