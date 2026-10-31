@@ -30,7 +30,7 @@ import {
   type AffiliationRead,
   type AffiliationSnapshot,
 } from "../affiliation/controller";
-import { browserMarker } from "../affiliation/marker";
+import { clearLegacyMarker } from "../affiliation/marker";
 import "../affiliation/page.css";
 
 const noSubscribe = () => () => {};
@@ -70,6 +70,10 @@ function useController() {
     affiliation: Affiliation;
   }>();
   useEffect(() => {
+    clearLegacyMarker(
+      () => window.sessionStorage,
+      () => window.history,
+    );
     const sessions = new Sessions();
     const identity = new Current({
       sessions,
@@ -82,7 +86,6 @@ function useController() {
       read: currentAffiliation,
       values: affiliationValues,
       create: createAffiliation,
-      marker: browserMarker(() => window.sessionStorage, () => window.history),
       build: currentBuild,
       now: Date.now,
       operation: () => crypto.randomUUID(),
@@ -245,7 +248,6 @@ function RecordPanel({
   kicker = "当前记录",
   title = "当前政治面貌",
   person,
-  context,
   current,
 }: {
   value: AffiliationValue;
@@ -253,15 +255,8 @@ function RecordPanel({
   kicker?: string;
   title?: string;
   person?: string;
-  context?: "success" | "unknown";
   current?: boolean;
 }) {
-  const note =
-    context === "success"
-      ? "这次读取只补充当前记录，不改变本次已完成的结果。"
-      : context === "unknown"
-        ? "当前有值只来自这次另行读取，不证明原填写已经完成；原结果仍未确认。"
-        : "已有记录后，本人不能自行更正、撤回或清空。";
   return (
     <section
       className={`affiliation-panel ${current ? "current-panel " : ""}record-panel`}
@@ -288,42 +283,20 @@ function RecordPanel({
           <time dateTime={value.createdAt}>{beijing(value.createdAt)}</time>
         </dd>
       </dl>
-      <p className="record-note">{note}</p>
+      <p className="record-note">已有记录后，本人不能自行更正、撤回或清空。</p>
     </section>
   );
 }
 
 function CurrentReadPanel({
   read,
-  context,
   now,
   onRetry,
 }: {
   read: AffiliationRead;
-  context: "success" | "unknown";
   now: number;
   onRetry: () => void;
 }) {
-  const success = context === "success";
-  const note = (mode: "loading" | "error" | "unset" | "value") => {
-    if (success) {
-      if (mode === "loading")
-        return "读取完成前不显示记录。已确认的填写结果不受影响。";
-      if (mode === "error")
-        return "已确认的填写结果仍然有效；读取失败只影响当前值展示。";
-      if (mode === "unset")
-        return "已确认的填写结果仍然有效；这次读取只补充当前记录。";
-      return "这次读取只补充当前记录，不改变本次已完成的结果。";
-    }
-    if (mode === "loading")
-      return "读取完成前不显示记录。原填写结果仍未确认。";
-    if (mode === "error")
-      return "本次读取失败不说明原填写是否完成，原结果仍未确认。";
-    if (mode === "unset")
-      return "这次读取没有找到记录，但不能证明原填写未完成，也不会在本页开始新的填写。";
-    return "当前有值只来自这次另行读取，不证明原填写已经完成；原结果仍未确认。";
-  };
-
   if (read.kind === "idle") return null;
   if (read.kind === "loading")
     return (
@@ -332,11 +305,11 @@ function CurrentReadPanel({
         aria-busy="true"
       >
         <span className="reading-symbol" aria-hidden="true" />
-        <p className="panel-kicker">另行读取</p>
+        <p className="panel-kicker">当前记录</p>
         <h2 className="state-title" data-focus tabIndex={-1}>
           正在读取当前政治面貌
         </h2>
-        <p className="state-copy">{note("loading")}</p>
+        <p className="state-copy">请稍候。</p>
       </section>
     );
   if (read.kind === "record")
@@ -344,27 +317,25 @@ function CurrentReadPanel({
       <RecordPanel
         value={read.value}
         name={read.name}
-        kicker="另行读取"
+        kicker="当前记录"
         person={undefined}
-        context={context}
         current
       />
     );
   if (read.kind === "unset")
     return (
       <section className="affiliation-panel current-panel state-panel">
-        <p className="panel-kicker">另行读取</p>
+        <p className="panel-kicker">当前记录</p>
         <h2 className="state-title" data-focus tabIndex={-1}>
-          当前尚未填写
+          暂时未取得当前记录
         </h2>
-        <p className="state-copy">这次读取没有找到政治面貌记录。</p>
-        <p className="page-note">{note("unset")}</p>
+        <p className="state-copy">填写已完成。你可以稍后再查看当前记录。</p>
       </section>
     );
   const remaining = secondsUntil(read.retryAt, now);
   return (
     <section className="affiliation-panel current-panel state-panel">
-      <p className="panel-kicker">另行读取</p>
+      <p className="panel-kicker">当前记录</p>
       <h2 className="state-title" data-focus tabIndex={-1}>
         {read.kind === "dictionary-error"
           ? "当前政治面貌暂时无法显示"
@@ -375,12 +346,10 @@ function CurrentReadPanel({
           ? "当前政治面貌记录已读取，但完整名称暂未取得。请稍后重新读取。"
           : "请稍后重新读取。"}
       </p>
-      <p className="page-note">{note("error")}</p>
+      <p className="page-note">填写已完成。你可以稍后再查看当前记录。</p>
       <div className="panel-actions">
         <ActionButton onClick={onRetry} disabled={remaining > 0}>
-          {remaining > 0
-            ? `${remaining} 秒后重新读取`
-            : "重新读取当前政治面貌"}
+          {remaining > 0 ? `${remaining} 秒后重新读取` : "重新读取当前政治面貌"}
         </ActionButton>
       </div>
     </section>
@@ -393,9 +362,7 @@ function Aside() {
       <div className="aside-rule" aria-hidden="true" />
       <h2 id="aside-heading">填写前请确认</h2>
       <p>这是可选资料，未填写不影响员工服务和工牌。</p>
-      <p>
-        未填写不等同于选择“群众”。请按本人情况选择，不确定时可暂不填写。
-      </p>
+      <p>未填写不等同于选择“群众”。请按本人情况选择，不确定时可暂不填写。</p>
     </aside>
   );
 }
@@ -405,26 +372,9 @@ type Leave = { href: string; mode: "draft" | "pending" };
 function leaveMode(snapshot: AffiliationSnapshot): "" | "draft" | "pending" {
   if (snapshot.kind !== "ready") return "";
   const panel = snapshot.panel;
+  if (panel.kind === "submitting") return "pending";
   if (
-    [
-      "submitting",
-      "retry-submitting",
-      "unknown",
-      "submit-limited",
-      "submit-invalid",
-      "submit-conflict",
-      "submit-mismatch",
-      "submit-failed",
-      "retry-wait",
-      "retry-mismatch",
-      "retry-conflict",
-      "retry-stopped",
-    ].includes(panel.kind)
-  )
-    return "pending";
-  if (panel.kind === "submit-storage") return panel.retry ? "pending" : "draft";
-  if (
-    ["form", "confirm"].includes(panel.kind) &&
+    ["form", "confirm", "submit-invalid"].includes(panel.kind) &&
     "choice" in panel &&
     panel.choice
   )
@@ -493,8 +443,6 @@ function description(panel: AffiliationPanel): string {
       return "当前尚未填写，填写选项暂时无法读取。";
     case "value-dictionary-error":
       return "当前政治面貌暂时无法完整显示。";
-    case "marker-unavailable":
-      return "浏览器存储不可用，本页暂时无法安全开始填写。";
     case "form":
       return "请选择与你本人一致的一项。提交后，本人不能自行修改或清空。";
     case "confirm":
@@ -509,28 +457,10 @@ function description(panel: AffiliationPanel): string {
       return "本次填写未提交成功，请重新核对。";
     case "submit-failed":
       return "本次填写未完成，请稍后再试。";
-    case "submit-mismatch":
-      return "本次填写无法继续。";
-    case "submit-storage":
-      return panel.uncertain
-        ? "本次重试尚未发送，此前填写结果仍未确认。"
-        : "本次提交尚未发送，请检查浏览器存储后重试。";
     case "success":
       return "本次填写已确认完成。";
     case "unknown":
-      return "本次填写结果尚未确认。";
-    case "retry-submitting":
-      return "正在重试本次填写。";
-    case "retry-wait":
-      return "本次重试未被受理，此前填写结果仍未确认。";
-    case "retry-mismatch":
-      return "本次重试无法继续，此前填写结果仍未确认。";
-    case "retry-conflict":
-      return "当前已有政治面貌记录，此前填写结果仍未确认。";
-    case "retry-stopped":
-      return "本次重试未被受理，此前填写结果仍未确认。";
-    case "current-unset":
-      return "这次读取没有找到政治面貌记录。";
+      return "填写本人政治面貌。";
   }
 }
 
@@ -569,8 +499,10 @@ function PanelView({
   onNavigate: (event: MouseEvent<HTMLAnchorElement>) => void;
 }) {
   const { panel, person, options, current: read } = snapshot;
-  const readDisabled = read.kind === "loading" ||
-    ((read.kind === "error" || read.kind === "dictionary-error") && read.retryAt > now);
+  const readDisabled =
+    read.kind === "loading" ||
+    ((read.kind === "error" || read.kind === "dictionary-error") &&
+      read.retryAt > now);
   const account = (
     <LinkButton href="/account" secondary onClick={onNavigate}>
       返回个人账户
@@ -610,9 +542,7 @@ function PanelView({
                 onClick={() => affiliation.retryRead()}
                 disabled={remaining > 0}
               >
-                {remaining > 0
-                  ? `${remaining} 秒后重新读取`
-                  : "重新读取"}
+                {remaining > 0 ? `${remaining} 秒后重新读取` : "重新读取"}
               </ActionButton>
               {account}
             </>
@@ -622,11 +552,7 @@ function PanelView({
     }
     case "record":
       return (
-        <RecordPanel
-          value={panel.value}
-          name={panel.name}
-          person={person}
-        />
+        <RecordPanel value={panel.value} name={panel.name} person={person} />
       );
     case "unset":
       return (
@@ -663,9 +589,7 @@ function PanelView({
                 onClick={() => affiliation.retryRead()}
                 disabled={remaining > 0}
               >
-                {remaining > 0
-                  ? `${remaining} 秒后重新读取`
-                  : "重新读取选项"}
+                {remaining > 0 ? `${remaining} 秒后重新读取` : "重新读取选项"}
               </ActionButton>
               {account}
             </>
@@ -695,31 +619,6 @@ function PanelView({
         />
       );
     }
-    case "marker-unavailable":
-      return (
-        <>
-          <StatePanel
-            kicker="结果状态"
-            title="暂时无法确认本页状态"
-            copy="浏览器存储不可用，本页无法安全开始填写。你仍可查看当前记录。"
-            person={person}
-            actions={
-              <>
-                <ActionButton disabled={readDisabled} onClick={() => affiliation.viewCurrent()}>
-                  查看当前政治面貌
-                </ActionButton>
-                {account}
-              </>
-            }
-          />
-          <CurrentReadPanel
-            read={read}
-            context="unknown"
-            now={now}
-            onRetry={() => affiliation.retryRead()}
-          />
-        </>
-      );
     case "form":
       return (
         <section className="affiliation-panel form-panel">
@@ -825,50 +724,15 @@ function PanelView({
         </section>
       );
     case "submitting":
-    case "retry-submitting":
       return (
         <StatePanel
           busy
           className="submitting-panel"
-          kicker={panel.kind === "submitting" ? "请稍候" : "结果尚未确认"}
-          title={
-            panel.kind === "submitting"
-              ? "正在提交填写"
-              : "正在重试本次填写"
-          }
-          copy={
-            panel.kind === "submitting"
-              ? "暂时不用重复操作。"
-              : "请稍候，暂时不用重复操作。重试会按原选项再次提交。"
-          }
+          kicker="请稍候"
+          title="正在提交填写"
+          copy="暂时不用重复操作。"
           person={person}
           extra={pending(panel.choice)}
-        />
-      );
-    case "submit-storage":
-      return (
-        <StatePanel
-          kicker={panel.uncertain ? "此前填写结果尚未确认" : "本次提交尚未发送"}
-          title="暂时无法准备本次提交"
-          copy={panel.uncertain
-            ? "浏览器未能保存本次重试所需的标记，重试尚未发出。此前填写可能已经完成；再次重试仍可能完成原填写。"
-            : "浏览器未能保存本次提交所需的标记，这次提交尚未发送。请检查浏览器存储设置后重试。"}
-          person={person}
-          extra={pending(panel.choice)}
-          actions={
-            <>
-              {panel.retry ? (
-                <ActionButton onClick={() => void affiliation.retrySubmit()}>
-                  重试本次填写
-                </ActionButton>
-              ) : (
-                <ActionButton onClick={() => affiliation.reconfirm()}>
-                  返回确认
-                </ActionButton>
-              )}
-              {account}
-            </>
-          }
         />
       );
     case "submit-limited": {
@@ -877,18 +741,15 @@ function PanelView({
         <StatePanel
           kicker="本次填写尚未受理"
           title="请稍后再试"
-          copy="本次提交未被受理，尚未收到填写完成的结果。此页会保留你的选择，等待期间不会自动提交。"
+          copy="本次提交未被受理。请稍后刷新查看。"
           person={person}
-          extra={pending(panel.choice)}
           actions={
             <>
               <ActionButton
-                onClick={() => void affiliation.retrySubmit()}
+                onClick={() => affiliation.viewCurrent()}
                 disabled={remaining > 0}
               >
-                {remaining > 0
-                  ? `${remaining} 秒后可重新提交`
-                  : "重试本次填写"}
+                {remaining > 0 ? `${remaining} 秒后可刷新` : "刷新"}
               </ActionButton>
               {account}
             </>
@@ -905,7 +766,10 @@ function PanelView({
           person={person}
           actions={
             <>
-              <ActionButton disabled={readDisabled} onClick={() => affiliation.viewCurrent()}>
+              <ActionButton
+                disabled={readDisabled}
+                onClick={() => affiliation.viewCurrent()}
+              >
                 查看当前政治面貌
               </ActionButton>
               {account}
@@ -937,18 +801,15 @@ function PanelView({
         <StatePanel
           kicker="本次填写未完成"
           title="暂时无法完成填写"
-          copy="本次填写未完成。服务恢复后，你可以按本次选择重试。"
+          copy="服务暂时不可用。请稍后刷新查看。"
           person={person}
-          extra={pending(panel.choice)}
           actions={
             <>
               <ActionButton
-                onClick={() => void affiliation.retrySubmit()}
+                onClick={() => affiliation.viewCurrent()}
                 disabled={remaining > 0}
               >
-                {remaining > 0
-                  ? `${remaining} 秒后可重试`
-                  : "重试本次填写"}
+                {remaining > 0 ? `${remaining} 秒后可刷新` : "刷新"}
               </ActionButton>
               {account}
             </>
@@ -956,24 +817,6 @@ function PanelView({
         />
       );
     }
-    case "submit-mismatch":
-      return (
-        <StatePanel
-          kicker="本次填写未提交成功"
-          title="本次填写无法继续"
-          copy="当前无法把本次提交与原先操作对应，已停止提交。本次填写未完成。"
-          person={person}
-          extra={pending(panel.choice)}
-          actions={
-            <>
-              <ActionButton disabled={readDisabled} onClick={() => affiliation.viewCurrent()}>
-                查看当前政治面貌
-              </ActionButton>
-              {account}
-            </>
-          }
-        />
-      );
     case "success": {
       const showAction = read.kind === "idle";
       return (
@@ -994,7 +837,10 @@ function PanelView({
             </p>
             <div className="panel-actions">
               {showAction && (
-                <ActionButton disabled={readDisabled} onClick={() => affiliation.viewCurrent()}>
+                <ActionButton
+                  disabled={readDisabled}
+                  onClick={() => affiliation.viewCurrent()}
+                >
                   查看当前政治面貌
                 </ActionButton>
               )}
@@ -1003,7 +849,6 @@ function PanelView({
           </section>
           <CurrentReadPanel
             read={read}
-            context="success"
             now={now}
             onRetry={() => affiliation.retryRead()}
           />
@@ -1011,83 +856,19 @@ function PanelView({
       );
     }
     case "unknown": {
-      const canRetry = panel.canRetry;
-      const remaining = panel.canRetry ? secondsUntil(panel.retryAt, now) : 0;
-      return (
-        <>
-          <section className="affiliation-panel unknown-panel">
-            <p className="panel-kicker">结果尚未确认</p>
-            <h2 className="state-title" data-focus tabIndex={-1}>
-              暂时无法确认填写结果
-            </h2>
-            {personContext(person)}
-            <p className="state-copy">
-              本次填写可能已经完成。离开本页不会取消已经发出的填写。
-            </p>
-            {pending(panel.canRetry ? panel.choice : undefined)}
-            {canRetry ? (
-              <p className="retry-note">
-                <strong>重试本次填写</strong>
-                会再次提交上面的选项，可能完成本次填写。请不要另选一项。
-              </p>
-            ) : (
-              <p className="retry-note">
-                本页已无法重试原填写。你仍可查看当前记录。
-              </p>
-            )}
-            <p className="page-note">
-              查看当前政治面貌只读取当前记录，不能证明本次填写是否完成。
-            </p>
-            <div className="panel-actions">
-              {canRetry && (
-                <ActionButton disabled={remaining > 0} onClick={() => void affiliation.retrySubmit()}>
-                  {remaining > 0 ? `${remaining} 秒后可重试本次填写` : "重试本次填写"}
-                </ActionButton>
-              )}
-              <ActionButton
-                onClick={() => affiliation.viewCurrent()}
-                disabled={readDisabled}
-                secondary={!canRetry}
-              >
-                查看当前政治面貌
-              </ActionButton>
-              {account}
-            </div>
-          </section>
-          <CurrentReadPanel
-            read={read}
-            context="unknown"
-            now={now}
-            onRetry={() => affiliation.retryRead()}
-          />
-        </>
-      );
-    }
-    case "retry-wait": {
       const remaining = secondsUntil(panel.retryAt, now);
       return (
         <StatePanel
-          kicker="结果尚未确认"
-          title="暂时无法重试本次填写"
-          copy="本次重试未被受理，请稍后再试。此前填写结果仍未确认。"
+          title="未能确认填写结果"
+          copy="请刷新查看。"
           person={person}
-          extra={
-            <>
-              {pending(panel.choice)}
-              <p className="retry-note">
-                未获受理不等于原填写失败；等待期间不会自动重试。
-              </p>
-            </>
-          }
           actions={
             <>
               <ActionButton
-                onClick={() => void affiliation.retrySubmit()}
+                onClick={() => affiliation.viewCurrent()}
                 disabled={remaining > 0}
               >
-                {remaining > 0
-                  ? `${remaining} 秒后可重试本次填写`
-                  : "重试本次填写"}
+                {remaining > 0 ? `${remaining} 秒后可刷新` : "刷新"}
               </ActionButton>
               {account}
             </>
@@ -1095,72 +876,6 @@ function PanelView({
         />
       );
     }
-    case "retry-mismatch":
-    case "retry-conflict":
-    case "retry-stopped": {
-      const mismatch = panel.kind === "retry-mismatch";
-      const conflict = panel.kind === "retry-conflict";
-      return (
-        <>
-          <StatePanel
-            kicker="结果尚未确认"
-            title={
-              mismatch
-                ? "本次重试无法继续"
-                : conflict
-                  ? "当前已有政治面貌记录"
-                  : "本次重试未被受理"
-            }
-            copy={
-              mismatch
-                ? "当前无法把本次重试与原先填写对应，已停止重试。此前填写结果仍未确认。"
-                : conflict
-                  ? "本次重试未被受理。此前填写结果仍未确认。"
-                  : "本次重试未被受理，已停止重试。此前填写结果仍未确认。"
-            }
-            person={person}
-            extra={
-              <>
-                {pending(panel.choice)}
-                <p className="retry-note">
-                  {conflict
-                    ? "当前记录需要另行读取，不能用它判断原填写是否完成。"
-                    : "不能改选其他选项来代替本次填写。"}
-                </p>
-              </>
-            }
-            actions={
-              <>
-                <ActionButton disabled={readDisabled} onClick={() => affiliation.viewCurrent()}>
-                  查看当前政治面貌
-                </ActionButton>
-                {account}
-              </>
-            }
-          />
-          <CurrentReadPanel
-            read={read}
-            context="unknown"
-            now={now}
-            onRetry={() => affiliation.retryRead()}
-          />
-        </>
-      );
-    }
-    case "current-unset":
-      return (
-        <StatePanel
-          title="当前尚未填写"
-          copy="这次读取没有找到政治面貌记录。"
-          person={person}
-          extra={
-            <p className="page-note">
-              这次读取没有找到记录，但不能证明原填写未完成，也不会在本页开始新的填写。
-            </p>
-          }
-          actions={account}
-        />
-      );
     default:
       return home;
   }
@@ -1274,7 +989,7 @@ function LeaveDialog({
           <Dialog.Description>
             {leave?.mode === "draft"
               ? "当前选择尚未提交。离开后需要重新选择。"
-              : "离开不会取消已经发出的填写。返回后无法用本页原输入重试。"}
+              : "离开不会取消已经发出的填写。返回后请刷新查看当前状态。"}
           </Dialog.Description>
           <div className="dialog-actions">
             <Dialog.Close ref={stayRef} className="button primary">
@@ -1416,9 +1131,7 @@ export default function AffiliationPage() {
               <p className="state-copy">正在确认当前账户。</p>
             </section>
           ) : snapshot.kind === "ready" ? (
-            <div
-              className={`affiliation-columns${aside ? "" : " single"}`}
-            >
+            <div className={`affiliation-columns${aside ? "" : " single"}`}>
               <div className="affiliation-main">
                 <PanelView
                   affiliation={controllers.affiliation}

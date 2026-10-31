@@ -114,7 +114,7 @@ Access 核验角色、Holder 与 Grant 的 State、Record、永久 Completion �
 
 初始化在业务事务内取得可信时间，回滚不回退进程高水位。当前交付支持新库和可重建隔离库。密钥登记要求根版本元数据为空或与装载集合完全一致，不补齐部分登记。不要将隔离迁移通过解释为持久旧库升级验证。
 
-`V9__affiliations` 定义 Center 的封印状态、永久取值和永久完成记录。状态只开放 SELECT、INSERT、UPDATE，取值及完成只开放 SELECT、INSERT；延迟配对保护状态与本事务新增记录共同提交。资格、严格时间与首次填写由执行器内的纯判断负责，SQL 不重复办理业务。启动全量核对封印、连续记录与状态指针，再建立状态锚；扫描与 Identity、Access 共用独占启动屏障。Center 不参与认证清理或注销删除。共享责任见[状态历史与完整性](architecture.md#状态历史与完整性)，业务保留见[政治面貌](center/affiliation.md#存储密码与维护)。
+`V9__affiliations` 定义 Center 的永久加密取值。运行身份只有 SELECT、INSERT，保留人员及原办理人引用、有限时间和同人时间唯一约束。普通事务在目标人员协调内核对资格、首次填写及严格时间，并与共同审计一起提交。当前值直接读取最新记录，不另存状态、序号、封印或完成绑定。启动分批核验保留信封、代码、时间与原实名版本，不建立 Center 状态锚。Center 不参与认证清理或注销删除。业务保留见[政治面貌](center/affiliation.md#存储密码与维护)。
 
 ## 当前身份与默认头像读取
 
@@ -152,7 +152,7 @@ Account 与 Session 所有者直接取得状态行锁。管理命令按 Account 
 
 ## 目标保护姿态
 
-下述设计随[架构内核与状态封印](engineering/delivery.md#架构内核与状态封印)逐片落实。当前 Center、角色、机构 Holder、Grant、Account、Session 与 Person 状态历史采用该职责划分。Account、Holder 与未结束 Grant 的注销投影随注销在同一事务追加，状态保留永久墓碑。其他未迁入能力仍按本文各节的现有保护办理。
+下述设计随[架构内核与状态封印](engineering/delivery.md#架构内核与状态封印)逐片落实。当前角色、机构 Holder、Grant、Account、Session 与 Person 状态历史采用该职责划分。Center 只保留加密取值及追加权限。Account、Holder 与未结束 Grant 的注销投影随注销在同一事务追加，状态保留永久墓碑。其他未迁入能力仍按本文各节的现有保护办理。
 
 数据库只承担结构保护，与 Rust 的职责划分见[架构](architecture.md#数据库与-rust-的职责)。运行身份按表的类别授权：永久状态表 SELECT、INSERT、UPDATE；永久变更记录与不可变取值 SELECT、INSERT；短期技术记录 SELECT、INSERT、UPDATE、DELETE。按保留期删除的短期状态（例如会话）连同其变更记录归入短期类别，并授予 DELETE；`Expiry` 在同一事务内、持对象锁先删记录再删状态行，启动规则“记录必有所属对象”保持成立。完成记录授予 SELECT、INSERT、DELETE，模板化触发器只允许删除 `expires_at` 已过的行，永久完成记录不能删除。不再使用列级授权：不可变列由封印保护，记录与取值不可改删由不授 UPDATE、DELETE 保证。运行身份直接对状态行取 `FOR UPDATE` 或 `FOR SHARE`，对尚不存在的对象取事务级 advisory 锁；`SECURITY DEFINER` 锁函数及其启动核验删除。
 

@@ -91,7 +91,7 @@ nucleus 与部署入口各自读取固定文件，共用 `domain::keys::input::I
 
 所有永久 Suspension 和 Resumption 的原手机号也参加启动解封。两者使用同一 `encryption` 集合，按信封内 key ID 选择材料。它们可共用事实 ID，AAD 字段分别为 `suspension.mobile` 与 `resumption.mobile`，不能互换密文。完整编码归[暂停恢复事实](identity/suspension.md#事实约束与权限)。恢复、再次暂停和认证清理均不结束这些历史引用；完整退役范围见[密钥维护引用](operations/key-scope.md)。
 
-Center、角色与机构 Holder 的状态及永久记录参加启动封印核验。扫描包含删除及注销墓碑。Center、角色、机构指派、初始化和 Workforce 配置完成也参加核验。除配置完成保留 24 小时外，这些完成永久保留。所有仍保留的完成输入都必须能解封，包括已经到期但未清理的配置完成。技术重加密保持规范明文及原绑定，不改变明文封印；重新封印仍须先核验旧封印。完整保留范围见[完成记录](architecture.md#完成记录)与[密钥引用](operations/key-scope.md)。
+角色与机构 Holder 的状态及永久记录参加启动封印核验，包含删除及注销墓碑。角色、机构指派、初始化和 Workforce 配置完成也参加核验；Center 只保留取值信封及原办理人实名版本的鉴别，不保存状态或完成封印。除配置完成保留 24 小时外，上述完成永久保留。所有仍保留的完成输入都必须能解封，包括已经到期但未清理的配置完成。技术重加密保持规范明文及原绑定，不改变仍在使用的明文封印；重新封印先核验旧封印。完整保留范围见[完成记录](architecture.md#完成记录)与[密钥引用](operations/key-scope.md)。
 
 ## 5. 密码原语与信封
 

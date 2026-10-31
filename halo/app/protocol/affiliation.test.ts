@@ -186,7 +186,7 @@ describe("fixed affiliation vocabulary", () => {
 describe("first affiliation write", () => {
   const operation = "4ef1d157-e547-4d18-bf84-45a159709a4b";
 
-  it("sends the exact original operation, session and body", async () => {
+  it("sends the request diagnostic, session and selected value", async () => {
     const fetch = respond({ code: "ok" });
     const signal = new AbortController().signal;
     expect(await createAffiliation(operation, id, "04", signal)).toEqual({
@@ -228,7 +228,6 @@ describe("first affiliation write", () => {
       [401, "authentication_invalid"],
       [403, "permission_denied"],
       [409, "state_conflict"],
-      [409, "request_mismatch"],
       [429, "rate_limited"],
       [503, "dependency_unavailable"],
     ] as const) {

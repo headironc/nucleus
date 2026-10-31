@@ -17,7 +17,7 @@ use utoipa::{
 
 use crate::response::{AsCode, Common, Failure, limited};
 
-/// HTTP waits this long; a cancelled wait never cancels accepted work.
+/// HTTP bounds its wait; each capability owns cancellation and completion.
 const WAIT: Duration = Duration::from_secs(30);
 
 /// Work-slot exhaustion asks clients to retry after this many seconds.
@@ -52,7 +52,7 @@ pub(crate) async fn command<T, R: Rejection>(
 ) -> Response {
     match timeout(WAIT, operation).await {
         Ok(Ok(value)) => project(value),
-        // The executor reports the final failure of accepted work once.
+        // The capability reports its final technical failure once.
         Ok(Err(error)) => failure(&error),
         Err(_) => respond(StatusCode::SERVICE_UNAVAILABLE, Common::OutcomeUnknown),
     }

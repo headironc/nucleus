@@ -25,6 +25,7 @@ pub fn init() -> Result<(), tracing::subscriber::SetGlobalDefaultError> {
                 .with_target("domain::suspension", Level::INFO)
                 .with_target("domain::correction", Level::INFO)
                 .with_target("domain::cancellation", Level::INFO)
+                .with_target("domain::center::affiliation", Level::INFO)
                 .with_target("domain::kernel", Level::INFO)
                 .with_target("domain::access::role", Level::INFO)
                 .with_target("domain::access::appointment", Level::INFO)

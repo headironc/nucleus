@@ -149,7 +149,7 @@ export interface paths {
         };
         /** @description Read the current person's value and createdAt without institutional or Workforce permission. No query or body is accepted. Origin must match when supplied; absent Origin requires Sec-Fetch-Site: same-origin. Supplied Sec-Fetch-Site must be same-origin. Preserves the session cookie. Read contract: docs/center/affiliation.md#http-契约. */
         get: operations["currentAffiliation"];
-        /** @description Record the current person's first affiliation without institutional or Workforce permission. Requires exact Origin; supplied Sec-Fetch-Site must be same-origin. Success returns only code: ok and preserves the session cookie. Original-operation and conflict rules: docs/center/affiliation.md#http-契约. */
+        /** @description Record the current person's first affiliation without institutional or Workforce permission. Requires exact Origin; supplied Sec-Fetch-Site must be same-origin. Operation-Id is diagnostic only, without deduplication or replay. Success returns only code: ok and preserves the session cookie. Refresh current state after an unknown outcome; never automatically repeat PUT. Rules: docs/center/affiliation.md#http-契约. */
         put: operations["createCurrentAffiliation"];
         post?: never;
         delete?: never;
@@ -2533,7 +2533,7 @@ export interface operations {
             };
         };
         responses: {
-            /** @description First affiliation recorded or original completion confirmed */
+            /** @description First affiliation recorded */
             200: {
                 headers: {
                     /** @description no-store */
@@ -2577,7 +2577,7 @@ export interface operations {
                     "application/json": components["schemas"]["Failure"];
                 };
             };
-            /** @description request_mismatch or state_conflict */
+            /** @description state_conflict */
             409: {
                 headers: {
                     /** @description no-store */

@@ -21,8 +21,7 @@ export type CurrentAffiliationResult =
   | { kind: "unset" }
   | Failure;
 export type AffiliationValuesResult =
-  | { kind: "values"; affiliations: readonly NamedAffiliation[] }
-  | Failure;
+  { kind: "values"; affiliations: readonly NamedAffiliation[] } | Failure;
 export type AffiliationWriteResult = { kind: "ok" } | Failure;
 
 /** Fixed GB/T 4762 codes in their only display order. Names come from the API. */
@@ -221,7 +220,7 @@ export async function createAffiliation(
     );
     if (!value) return { kind: "untrusted" };
     if (response.status !== 200) return failure(response, value);
-    // A receipt confirms only the original operation. It never carries the
+    // A receipt confirms only this write. It never carries the
     // current value, effective time or a result identity.
     if (value.code !== "ok" || !exactKeys(value, ["code"]))
       return { kind: "untrusted" };
