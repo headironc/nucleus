@@ -19,7 +19,7 @@ import {
 
 export function meta() {
   return [
-    { title: "验证手机号 · 司籍处" },
+    { title: "手机号登录 · 司籍处" },
     { name: "robots", content: "noindex" },
   ];
 }
@@ -91,100 +91,60 @@ function useLogin() {
 function description(state: LoginState): [string, string, string?] {
   switch (state.kind) {
     case "preparing":
-      return ["正在打开登录页面", "请稍候。"];
+      return ["正在打开登录页面…", "请稍候。"];
     case "submitting":
-      return [
-        "正在登录",
-        "请稍候，正在验证你填写的验证码。",
-        "请勿重复提交或重新获取验证码。",
-      ];
+      return ["正在登录…", "请稍候。"];
     case "pending":
       if (!state.sent)
-        return [
-          "登录尚未提交",
-          "请点击“继续登录”，无需重新填写验证码。",
-          "请勿重新获取验证码。",
-        ];
-      return [
-        "登录结果待确认",
-        "请点击“查看登录结果”，核对本次登录的处理结果。",
-        "请勿重新获取验证码。",
-      ];
+        return ["尚未提交登录", "请继续登录，无需重新填写验证码。"];
+      return ["暂时无法确认是否已登录", "请稍后查看登录结果。"];
     case "limited":
       if (!state.sent)
-        return [
-          "请稍后继续验证",
-          "本次登录尚未受理，请稍后继续验证。",
-          "无需重新填写或获取验证码。",
-        ];
-      return [
-        "请稍后查看登录结果",
-        "暂时无法处理，请稍后查看本次登录结果。",
-        "无需重新填写或获取验证码。",
-      ];
+        return ["暂时无法登录", "请稍后继续，无需重新填写验证码。"];
+      return ["暂时无法查看登录结果", "请稍后再试。"];
     case "reload":
-      return [
-        "请重新加载页面",
-        "页面暂时无法继续登录，请重新加载后继续。",
-        "请勿重复获取验证码。",
-      ];
+      return ["请重新加载", "页面暂时无法继续登录，请重新加载后再试。"];
     case "missing":
     case "expired":
       return [
-        "登录状态待确认",
-        "请先检查当前登录状态，暂时不用再次获取验证码。",
+        "暂时无法确认此前的登录结果",
+        "可以检查当前登录状态，再按页面提示继续。",
       ];
     case "changed":
-      return ["登录状态有变化", "请检查当前登录状态，再按页面提示继续。"];
+      return ["登录状态有变化", "请检查登录状态，再按页面提示继续。"];
     case "storage":
-      return [
-        "暂时无法继续登录",
-        "浏览器无法读取或保存登录信息，请重新加载页面。",
-        "请勿重新获取验证码。若仍无法继续，请检查浏览器是否允许此网站保存数据。",
-      ];
+      return ["登录信息暂时无法使用", "请重新加载后再试。"];
     case "session-storage":
-      return [
-        "暂时无法打开个人账户",
-        "请点击“重试”继续。",
-        "请保留本页，暂时不要刷新或关闭。",
-      ];
+      return ["暂时无法打开个人账户", "请重试打开个人账户。"];
     case "random":
-      return ["暂时无法登录", "请重新加载页面后再试。", "本页尚未提交登录。"];
+      return ["暂时无法开始登录", "本次尚未提交登录，请重新加载后再试。"];
     case "delivery-failed":
-      return [
-        "短信发送未成功",
-        "本次验证码未能发送，请返回验证码页面重新获取。",
-        "本页不会自动重新发送短信。",
-      ];
+      return ["验证码未能发送", "请返回验证码页面重新获取。"];
     case "registration":
-      return ["手机号已验证", "正在打开注册页面。"];
+      return ["手机号已验证", "正在打开注册页面…"];
     case "session":
-      return ["正在打开个人账户", "请稍候。"];
+      return ["正在打开个人账户…", "请稍候。"];
     case "rejected":
       if (state.reason === "verification_required")
-        return [
-          "请重新获取验证码",
-          "这个验证码已无法使用。",
-          "请重新完成安全验证后再继续。",
-        ];
+        return ["请重新获取验证码", "验证码已无法使用，请重新获取。"];
       if (state.reason === "request_mismatch")
         return [
-          "登录状态待确认",
-          "请先检查当前登录状态，暂时不用再次获取验证码。",
+          "暂时无法确认此前的登录结果",
+          "可以检查当前登录状态，再按页面提示继续。",
         ];
       if (state.reason === "authentication_invalid")
         return [
-          "登录状态待确认",
-          "请先检查当前登录状态，暂时不用再次获取验证码。",
+          "暂时无法确认此前的登录结果",
+          "可以检查当前登录状态，再按页面提示继续。",
         ];
       if (state.uncertain)
         return [
-          "登录状态待确认",
-          "请先检查当前登录状态，暂时不用再次获取验证码。",
+          "暂时无法确认此前的登录结果",
+          "可以检查当前登录状态，再按页面提示继续。",
         ];
-      return ["暂时无法登录", "本次登录未能完成。", "请联系医院管理员。"];
+      return ["目前无法登录", "可以返回首页。"];
     default:
-      return ["验证手机号", "请输入短信验证码。", ""];
+      return ["手机号登录", "请输入本次短信中的 6 位验证码。"];
   }
 }
 
@@ -265,12 +225,11 @@ function LoginForm({ controller }: { controller: Login }) {
       >
         {editable ? (
           <>
-            <p className="eyebrow">手机号登录</p>
             <h1 ref={title} tabIndex={-1}>
-              请输入验证码
+              手机号登录
             </h1>
             <p className="card-intro">
-              验证手机号 {state.code.mobile.slice(0, 3)} ****{" "}
+              手机号 {state.code.mobile.slice(0, 3)} ****{" "}
               {state.code.mobile.slice(-4)}
             </p>
             <form
@@ -311,9 +270,7 @@ function LoginForm({ controller }: { controller: Login }) {
                 验证并继续
               </Button>
             </form>
-            <p className="scope-note">
-              请使用本次收到的短信验证码，验证成功后继续。
-            </p>
+            <p className="scope-note">首次使用时，验证后还需创建个人账户。</p>
           </>
         ) : (
           <div className="result">
@@ -348,7 +305,7 @@ function LoginForm({ controller }: { controller: Login }) {
               )}
               {["storage", "reload", "random"].includes(state.kind) && (
                 <Button className="primary" onClick={() => location.reload()}>
-                  重新加载页面
+                  重新加载
                 </Button>
               )}
               {state.kind === "session-storage" && (
@@ -356,7 +313,7 @@ function LoginForm({ controller }: { controller: Login }) {
                   className="primary"
                   onClick={() => void controller.initialize()}
                 >
-                  重试
+                  重试打开个人账户
                 </Button>
               )}
               {["changed", "missing", "expired"].includes(state.kind) && (
