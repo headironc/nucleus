@@ -332,7 +332,7 @@ async fn review(
     request_body(content = application::CancellationInput, description = "At most 8 KiB; explicit self or manager mode and the confirmed submitted or approved state; a manager reason is required"),
     responses((status = 200, body = Cancellation, description = "Expected state cancelled and audited atomically; prior application facts remain retained"),
         (status = 400, body = Failure, description = "invalid_input"), (status = 401, body = Failure, description = "authentication_invalid"), (status = 403, body = Failure, description = "permission_denied"), (status = 404, body = Failure, description = "target_unavailable"),
-        (status = 409, body = Failure, description = "state_changed; refresh and confirm again"), (status = 413, body = Failure, description = "invalid_input"), (status = 415, body = Failure, description = "invalid_input"),
+        (status = 409, body = Failure, description = "state_changed; refresh and confirm again"), (status = 413, body = Failure, description = "invalid_input"), (status = 415, body = Failure, description = "invalid_input"), (status = 422, body = Failure, description = "invalid_input"),
         (status = 429, body = Failure, description = "rate_limited", headers(("Retry-After" = u64, description = "Wait seconds"))), (status = 500, body = Failure, description = "internal_error"), (status = 503, body = Failure, description = "dependency_unavailable or outcome_unknown; only refresh current state without automatically resending")))]
 async fn cancel(
     State(service): State<application::Service>,

@@ -242,7 +242,9 @@ fn fixed_badges_use_trusted_preview_and_private_resources_without_request_dedupl
             let cancellation_path = |id: &str| format!("/api/v1/workforce/applications/{id}/cancellations");
             for input in [json!({"mode":"self"}),json!({"mode":"self","expectedStatus":"submitted","reason":"unexpected"}),json!({"mode":"manager","expectedStatus":"approved","reason":"  "}),json!({"mode":"self","expectedStatus":"ready"})] {
                 cadence.tick().await;
-                assert_eq!(post(&cancellation_path(&ids[2]),&manager).json(&input).send().await.expect("invalid cancellation").status(),422);
+                let response=post(&cancellation_path(&ids[2]),&manager).json(&input).send().await.expect("invalid cancellation");
+                assert_eq!(response.status(),422);
+                assert_eq!(response.json::<serde_json::Value>().await.expect("invalid input response"),json!({"code":"invalid_input"}));
             }
             assert_eq!(post(&cancellation_path(&ids[2]),&manager).header("content-type","application/json").body(" ".repeat(8193)).send().await.expect("cancellation body budget").status(),413);
             for (actor,input,status) in [
