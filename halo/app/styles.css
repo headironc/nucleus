@@ -3,6 +3,7 @@
 @import "./workforce/application.css";
 @import "./workforce/reviews.css";
 @import "./workforce/cancellation-dialog.css";
+@import "./workforce/badge-display.css";
 
 @layer components {
   .admission-layout {

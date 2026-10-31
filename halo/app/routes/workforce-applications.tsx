@@ -15,6 +15,7 @@ import { Workforce } from "../workforce/status";
 import { Applications, type ApplicationMode } from "../workforce/applications";
 import { ApplicationFields } from "../workforce/application-fields";
 import { ApplicationPhotoPanel } from "../workforce/photo-panel";
+import { BadgePreview, BadgeProduction } from "../workforce/badge-display";
 import {
   APPLICATION_KINDS as KINDS,
   APPLICATION_STATUSES as STATUSES,
@@ -218,10 +219,16 @@ export function ApplicationsPanel({
       ) : (
         <>
           {(state.kind === "hidden" || state.kind === "loading") && (
-            <p role="status">正在读取工牌申请，请稍候。</p>
+            <div role="status">
+              {state.kind === "loading" && state.notice && (
+                <p className="application-notice">{state.notice}</p>
+              )}
+              <p>正在读取工牌申请，请稍候。</p>
+            </div>
           )}
           {(state.kind === "error" || state.kind === "blocked") && (
             <div className="application-notice" role="status">
+              {state.notice && <p>{state.notice}</p>}
               <p>{state.message}</p>
               <div className="application-actions">
                 <Button
@@ -375,7 +382,7 @@ export function ApplicationsPanel({
                 )}
               {state.result.access === "restricted" && (
                 <p className="application-notice">
-                  当前仅可查看待审核和审核通过的申请摘要。
+                  当前仅可查看可取消申请的类型、状态和提交时间。
                 </p>
               )}
               {!state.result.applications.length ? (
@@ -441,40 +448,63 @@ export function ApplicationsPanel({
               </p>
               <p>提交时间：{date(state.result.application.submittedAt)}</p>
               {state.result.access === "full" ? (
-                <div className="review-columns">
-                  <section className="review-panel">
-                    <div className="review-panel-heading">
-                      <h2>申请内容</h2>
-                    </div>
-                    <div className="review-panel-content">
-                      {state.artwork ? (
-                        <PreviewFigure
-                          artwork={state.artwork}
-                          failed={() => controller.previewFailed()}
-                          caption="申请提交时确认的工牌内容。"
+                <div className="review-columns badge-own-layout">
+                  <div className="badge-content-stack">
+                    <section className="review-panel">
+                      <div className="review-panel-heading">
+                        <h2>申请内容</h2>
+                      </div>
+                      <div className="review-panel-content">
+                        {state.artwork ? (
+                          <PreviewFigure
+                            artwork={state.artwork}
+                            failed={() => controller.previewFailed()}
+                            caption="申请提交时确认的工牌内容。"
+                          />
+                        ) : (
+                          <p className="application-notice" role="status">
+                            {state.media === "loading"
+                              ? "正在加载工牌预览…"
+                              : "工牌预览暂时无法显示，请刷新详情。"}
+                          </p>
+                        )}
+                        <SnapshotDetails
+                          snapshot={state.result.application.snapshot}
                         />
-                      ) : (
-                        <p className="application-notice" role="status">
-                          {state.media === "loading"
-                            ? "正在加载工牌预览…"
-                            : "工牌预览暂时无法显示，请刷新详情。"}
-                        </p>
-                      )}
-                      <SnapshotDetails
-                        snapshot={state.result.application.snapshot}
+                      </div>
+                    </section>
+                    {state.badge && (
+                      <BadgePreview
+                        media={state.badge}
+                        retained={
+                          state.result.application.status === "cancelled"
+                        }
+                        now={now}
+                        retry={() => void controller.load()}
+                        failed={() => controller.badgeFailed()}
                       />
-                    </div>
-                  </section>
-                  <aside
-                    className="review-panel review-panel-content review-decision"
-                    aria-label="审核结果"
-                  >
-                    <h2>
-                      {state.result.application.status === "submitted"
-                        ? "审核进度"
-                        : "审核结果"}
-                    </h2>
-                    <ReviewFacts application={state.result.application} />
+                    )}
+                  </div>
+                  <aside className="review-aside">
+                    <section
+                      className="review-panel review-panel-content review-decision"
+                      aria-label="审核结果"
+                    >
+                      <h2>
+                        {state.result.application.status === "submitted"
+                          ? "审核进度"
+                          : "审核结果"}
+                      </h2>
+                      <ReviewFacts application={state.result.application} />
+                    </section>
+                    <BadgeProduction
+                      application={state.result.application}
+                      now={now}
+                      media={state.badge}
+                      download={state.download}
+                      submit={() => controller.downloadBadge()}
+                      failed={() => controller.badgeFailed()}
+                    />
                   </aside>
                 </div>
               ) : (
@@ -490,7 +520,8 @@ export function ApplicationsPanel({
                 {wait > 0 ? `${wait} 秒后可刷新详情` : "刷新详情"}
               </Button>
               {(state.result.application.status === "submitted" ||
-                state.result.application.status === "approved") && (
+                state.result.application.status === "approved" ||
+                state.result.application.status === "ready") && (
                 <Button
                   ref={cancelTrigger}
                   className="review-danger"

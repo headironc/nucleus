@@ -16,5 +16,12 @@ export default {
         "font/otf"
       ]
     }
+  },
+  "GET /api/v1/workforce/badges/{image}": {
+    "responses": {
+      "200": [
+        "image/webp"
+      ]
+    }
   }
 };
