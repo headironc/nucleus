@@ -330,7 +330,28 @@ export async function cancelBadgeApplications(page: Page, context: Context) {
     ).toBeVisible();
     const afterSelf = await own(pending, 2);
     await observe("self", "after", pending, self, afterSelf);
+    const hiddenDetail = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        new URL(response.url()).pathname ===
+          `/api/v1/workforce/current/applications/${pending.id}`,
+      { timeout: 35_000 },
+    );
     await page.goto(`/workforce/applications/${pending.id}`);
+    const hidden = await trusted<{ code: string }>(
+      await wire(await hiddenDetail),
+      "GET /api/v1/workforce/current/applications/{id}",
+      404,
+    );
+    expect(hidden.code).toBe("target_unavailable");
+    await expect(
+      page.getByText("无法使用这项内容，请刷新后重新准备。", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.locator(
+        ".own-application-detail, .application-preview, .application-snapshot, .review-facts, .review-reason",
+      ),
+    ).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "取消申请", exact: true }),
     ).toHaveCount(0);
@@ -409,6 +430,14 @@ export async function cancelBadgeApplications(page: Page, context: Context) {
     await expect(
       page.getByRole("button", { name: "取消申请", exact: true }),
     ).toHaveCount(0);
+    const preview = page.getByRole("img", { name: "工牌预览", exact: true });
+    await expect(preview).toBeVisible({ timeout: 35_000 });
+    await expect
+      .poll(() => preview.evaluate((node) => {
+        const canvas = node as HTMLCanvasElement;
+        return canvas.width > 0 && canvas.height > 0;
+      }))
+      .toBe(true);
     await picture("manager-refreshed-retained-review");
     const restricted = await own(approved, 1);
     await observe("refresh", "after", approved, null, restricted, managed);
