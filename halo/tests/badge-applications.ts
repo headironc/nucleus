@@ -58,7 +58,9 @@ export type BadgeObservation = {
   resourceId: string | null;
 };
 
-export async function wire(response: APIResponse | PageResponse): Promise<Wire> {
+export async function wire(
+  response: APIResponse | PageResponse,
+): Promise<Wire> {
   const headers = response.headers();
   return {
     status: response.status(),
@@ -487,7 +489,8 @@ export async function ownBadgeApplications(
         .click();
       await expect(
         page.getByRole("heading", {
-          name: phase === "lost" ? "未能确认，请刷新查看" : "工牌申请已提交",
+          name:
+            phase === "lost" ? "暂时无法确认申请是否已提交" : "工牌申请已提交",
           exact: true,
         }),
       ).toBeVisible();
@@ -601,7 +604,9 @@ export async function ownBadgeApplications(
     );
     expect(empty.access).toBe("full");
     expect(empty.count).toBe(0);
-    await expect(page.getByText("暂无申请", { exact: true })).toBeVisible();
+    await expect(
+      page.getByText("暂无工牌申请。", { exact: true }),
+    ).toBeVisible();
     await picture(page, "foreign-own-history");
     await observe("foreign", "after", {
       accountId: other.account.id,
@@ -620,7 +625,10 @@ export async function ownBadgeApplications(
     );
     await expect(page.getByRole("dialog")).toHaveCount(0);
     await expect(
-      page.getByRole("heading", { name: "未能确认，请刷新查看", exact: true }),
+      page.getByRole("heading", {
+        name: "暂时无法确认申请是否已提交",
+        exact: true,
+      }),
     ).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "预览工牌", exact: true }),

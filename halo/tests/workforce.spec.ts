@@ -206,6 +206,10 @@ test("account entry, four states, keyboard, responsive long name and read-only m
   await expect(applications).toBeFocused();
   await expect(applications).toHaveAttribute("href", "/workforce/applications");
   await page.keyboard.press("Tab");
+  const reviews = page.getByRole("link", { name: "工牌审核", exact: true });
+  await expect(reviews).toBeFocused();
+  await expect(reviews).toHaveAttribute("href", "/workforce/reviews");
+  await page.keyboard.press("Tab");
   await expect(
     page.getByRole("button", { name: "刷新服务状态" }),
   ).toBeFocused();
