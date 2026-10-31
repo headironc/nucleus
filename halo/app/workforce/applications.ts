@@ -80,12 +80,12 @@ export type ApplicationState =
 
 const READ_ERROR = "暂时无法加载，请刷新后重试。";
 export const APPLICATION_FAILURE_COPY: Record<string, string> = {
-  data_changed: "工牌内容已变化，请刷新办理内容后重新预览并确认。",
-  number_required: "当前没有可用工号，请先申请工号。",
+  data_changed: "工牌内容已变化，请重新加载申请表后预览并确认。",
+  number_required: "当前没有可用工号，暂时无法申请工牌。",
   selection_unavailable:
-    "所选科室、职务、职称或领取地点已不可用，请刷新后重新选择。",
-  missing_glyph: "工牌字体无法显示全部文字，请联系管理员调整字体后再办理。",
-  text_overflow: "完整文字无法放入当前工牌，请联系管理员调整模板后再办理。",
+    "所选科室、职务、职称或领取地点已不可用，请重新加载申请表后选择。",
+  missing_glyph: "工牌文字无法完整显示，请联系工牌管理人员处理。",
+  text_overflow: "工牌文字无法完整显示，请联系工牌管理人员处理。",
   target_unavailable: "无法使用这项内容，请刷新后重新准备。",
   invalid_input: "请检查填写内容和照片后重试。",
   rate_limited: "暂时无法处理，请稍后再试。",
@@ -333,6 +333,7 @@ export class Applications {
     },
     binding: CurrentBinding,
     editing = false,
+    displayMessage?: string,
   ) {
     if (
       result.kind === "failure" &&
@@ -346,9 +347,10 @@ export class Applications {
     this.retryAt = retryAt;
     this.waitingSelection = `${binding.selection.id}/${binding.selection.revision}`;
     const message =
-      result.kind === "artwork-error"
-        ? "工牌预览无法完整显示，请联系管理员检查字体、照片和模板。"
-        : (APPLICATION_FAILURE_COPY[result.code ?? ""] ?? READ_ERROR);
+      displayMessage ??
+      (result.kind === "artwork-error"
+        ? "工牌预览无法完整显示，请联系工牌管理人员处理。"
+        : (APPLICATION_FAILURE_COPY[result.code ?? ""] ?? READ_ERROR));
     if (editing && this.context)
       this.show({ kind: "edit", context: this.context, message, retryAt });
     else {
@@ -393,8 +395,7 @@ export class Applications {
         if (service.kind !== "ready" || service.status !== "active") {
           this.show({
             kind: "blocked",
-            message:
-              "当前员工服务不可用于新申请。你仍可查看允许访问的申请记录。",
+            message: "目前无法提交新的工牌申请。可在“我的申请”查看记录。",
             retryAt: 0,
           });
           return;
@@ -482,7 +483,15 @@ export class Applications {
           scope.signal,
         );
         if (!(await scope.guard())) return;
-        if (result.kind !== "ok") return this.failure(result, scope.binding);
+        if (result.kind !== "ok")
+          return this.failure(
+            result,
+            scope.binding,
+            false,
+            result.kind === "failure" && result.status === 404
+              ? "目前无法查看这份申请。"
+              : undefined,
+          );
         this.retryAt = 0;
         const uncertain = this.uncertainCancellation === this.account();
         this.uncertainCancellation = undefined;
@@ -849,7 +858,7 @@ export class Applications {
           ? { kind: "unknown" }
           : {
               kind: "error",
-              message: "工牌预览无法完整显示，请刷新后重试。",
+              message: "工牌预览无法完整显示，请重新加载申请表后重试。",
               retryAt: 0,
             },
       );

@@ -26,9 +26,8 @@ function Fixture() {
   const [value, setValue] = useState<ApplicationChoices>({ kind: "issuance", departmentId: id(2), departmentConfirmed: false, rosterId: "", titleId: "", pickup: "" });
   window.applicationChoices = value;
   return <main className="application-layout">
-    <p className="eyebrow">员工服务 / 工牌申请</p>
     <h1>申请工牌</h1>
-    <p className="application-introduction">选择本次工牌使用的内容，预览后再提交。</p>
+    <p className="application-introduction">选择工牌内容和照片，预览确认后提交。</p>
     <ApplicationFields selection={location.pathname === "/missing" ? { ...selection, rules: selection.rules.filter((rule) => rule.id !== 902), missing: [902] } : selection} subtype={location.pathname === "/intern" ? 902 : 100} pickups={["主院区综合服务大厅一层工牌办理窗口", "分院区行政服务中心"]} value={value} onChange={setValue} />
     <ApplicationPhotoPanel photo={photo} frame={{ width: 3, height: 4 }} />
   </main>;

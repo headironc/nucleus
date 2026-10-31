@@ -297,14 +297,11 @@
   .application-photo legend {
     font-weight: 600;
   }
-  .application-photo input[type="file"] {
-    width: 100%;
-    min-width: 0;
-    font: inherit;
-    color: var(--sub);
-    overflow-wrap: anywhere;
-  }
-  .application-photo input::file-selector-button {
+  .application-photo-picker {
+    position: relative;
+    justify-self: start;
+    display: inline-flex;
+    align-items: center;
     padding: 0.6rem 0.8rem;
     min-height: 44px;
     border: 1px solid var(--control-line);
@@ -312,7 +309,15 @@
     background: var(--surface);
     color: var(--ink);
     font: inherit;
-    margin-right: 0.75rem;
+    cursor: pointer;
+  }
+  .application-photo-picker:focus-within {
+    outline: 2px solid var(--accent);
+    outline-offset: 4px;
+  }
+  .application-photo-picker[aria-disabled="true"] {
+    opacity: 0.55;
+    cursor: default;
   }
   .application-photo-editor {
     display: grid;
