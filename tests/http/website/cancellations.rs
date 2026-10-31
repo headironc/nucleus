@@ -68,7 +68,7 @@ struct Bindings {
 struct Window {
     request: Request,
     applications: BTreeMap<Uuid, Value>,
-    audit: BTreeMap<Uuid, Value>,
+    audit: BTreeMap<i64, Value>,
     related: String,
     observed_at: DateTime<Utc>,
 }
@@ -273,7 +273,7 @@ impl Observer {
             };
             assert_eq!(value["status"], expected);
         }
-        let audit: BTreeMap<Uuid,Value> = client.query("SELECT id,to_jsonb(event)::text AS value FROM audit.events event WHERE action='workforce.application.cancelled' ORDER BY id", &[]).await.expect("independent cancellation audits").into_iter().map(|row| (row.get("id"),serde_json::from_str(row.get("value")).expect("audit JSON"))).collect();
+        let audit: BTreeMap<i64,Value> = client.query("SELECT id,to_jsonb(event)::text AS value FROM audit.events event WHERE action='workforce.application.cancelled' ORDER BY id", &[]).await.expect("independent cancellation audits").into_iter().map(|row| (row.get("id"),serde_json::from_str(row.get("value")).expect("audit JSON"))).collect();
         assert_eq!(audit.len(), expected_count);
         let related = badge::related_facts(client, &["workforce.application.cancelled"]).await;
         if position == "before" {
