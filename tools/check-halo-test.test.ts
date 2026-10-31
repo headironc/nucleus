@@ -44,6 +44,10 @@ function fixture(
     join(directory, "halo/tools/evidence.ts"),
   );
   copyFileSync(
+    new URL("../halo/tools/browser-scope.ts", import.meta.url),
+    join(directory, "halo/tools/browser-scope.ts"),
+  );
+  copyFileSync(
     new URL("../halo/tools/process.ts", import.meta.url),
     join(directory, "halo/tools/process.ts"),
   );
@@ -623,6 +627,26 @@ test("a failed runner record cannot pass despite a clean cargo exit", () => {
   expect(result.error).toBeUndefined();
   expect(result.status).toBe(1);
   expect(result.stderr).toContain("browser runner recorded a failed outcome");
+});
+
+test("an unsupported browser scope fails before executing the Rust fixture", () => {
+  const sample = fixture();
+  Object.assign(sample.env, { HALO_TEST_SCOPE: "unrestricted-filter" });
+  const result = sample.run("browser");
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("HALO_TEST_SCOPE");
+  expect(existsSync(join(sample.directory, "executed"))).toBe(false);
+});
+
+test("a successful Rust fixture cannot substitute a different browser scope", () => {
+  const sample = fixture();
+  Object.assign(sample.env, { HALO_TEST_SCOPE: "badge-cancellation" });
+  const result = sample.run("browser");
+  expect(result.error).toBeUndefined();
+  expect(result.status).toBe(1);
+  expect(result.stderr).toContain("did not execute the requested cancellation scope");
+  expect(readFileSync(join(sample.directory, "executed"), "utf8")).toBe("browser");
 });
 
 function evidenceRun(sample: ReturnType<typeof fixture>) {

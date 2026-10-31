@@ -202,6 +202,22 @@ bun run test:browser -- tests/reviews.spec.ts tests/cancellation-dialog.spec.ts 
 
 受控浏览器检查覆盖本人完整及受限读取、显式管理模式、取消说明、状态竞争、未知结果与历史展示。后端事务及真实组合分别按[申请验收](../docs/workforce/applications.md#验收)取证。
 
+### 真实取消组合
+
+`tests/badge-cancellations.ts` 接在原审批的十六个观察点之后，继续使用同一组四份申请、固定照片及原会话。17 已结束参与资格，仍以正常账户取消一份待审核申请；18 在观察窗口外恢复当前审批权，再取消失格申请人的已批准申请。管理说明只进入审计，不向本人或管理详情返回。
+
+`badge-cancellation-{phase}-{before|after}` 发布原子请求并等待独立 Rust 观察器确认。`self` 核对本人取消及受限记录隐藏；`manager` 核对唯一取消审计后丢弃真实成功回包；`refresh` 只通过 GET 读取当前结果。六个观察点保留全部快照、审批事实、照片字节和非目标数据，受限本人列表由三项降为两项，再降为一项。截图存入本轮 `badge-cancellations/`。
+
+具备[宿主环境](#浏览器隔离验收)后，在仓库根运行：
+
+```bash
+HALO_TEST_SCOPE=badge-cancellation HALO_NGINX=/usr/sbin/nginx bun tools/check-halo-test.ts browser
+```
+
+该范围必须恰好完成 `login.spec.ts` 的两个真实场景：手机号变更，以及原登录、恢复与业务长场景。入口与 runner 同时核对实际 inventory、完成状态及零重试；缺项、多项、重复、跳过或范围不一致均失败。原身份、参与、工号、申请与审批观察，以及 21 个号码和 29 次供应商调用要求继续有效。它不是仅执行取消的场景，也不等于重跑全部控件检查。
+
+未指定 `HALO_TEST_SCOPE` 时仍执行原完整选集。两种范围保留同一超时、子进程终态、后端 drain 和私人目录清理要求。真实组合的候选、环境、SQL 原件、清理及原图接纳分别取证；脚本、类型和受控检查通过不代替真实运行。
+
 ## 头像本地选择与预览
 
 `app/avatar/candidate.ts` 读取本地文件，核对大小、实际格式、动画和正方形尺寸后解码预览。`format.ts` 检查图片容器，并仅为预览去除方向元数据。候选保留原 `File`，不会裁剪、缩放或改写待提交字节。重新选择、取消和关闭时释放旧解码资源；迟到的解码结果不能覆盖后来选择。

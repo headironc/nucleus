@@ -28,6 +28,11 @@ import {
   type ServiceTask,
 } from "./runner-lifecycle.ts";
 import { redactText } from "./redact.ts";
+import {
+  browserScope,
+  playwrightArguments,
+  verifyBrowserScope,
+} from "./browser-scope.ts";
 
 // Allow bounded variation across the full suite, including real SMS cooldowns.
 // The Rust fixture retains another 120 seconds for cleanup and final assertions.
@@ -66,6 +71,16 @@ function record(event: string, data: Record<string, unknown> = {}): void {
 function message(error: unknown): string {
   return redactText(error instanceof Error ? error.message : String(error)).text;
 }
+
+const scope = (() => {
+  try {
+    return browserScope(process.env.HALO_TEST_SCOPE);
+  } catch (error) {
+    record("configuration_error", { message: message(error) });
+    record("run_end", { ok: false, reasons: ["configuration_error"] });
+    process.exit(1);
+  }
+})();
 
 let playwrightExit: ExitObservation | null = null;
 
@@ -131,6 +146,7 @@ record("run_start", {
   startedAt,
   executionDeadlineMs: EXECUTION_DEADLINE_MS,
   runId: run.runId,
+  scope,
 });
 
 async function start(
@@ -487,7 +503,7 @@ ${routes}
   const test = await start(
     "playwright",
     process.execPath,
-    ["node_modules/@playwright/test/cli.js", "test"],
+    playwrightArguments(scope),
     {
       env: {
         ...process.env,
@@ -565,6 +581,8 @@ ${routes}
   const cleanExit =
     exit?.observed === true && exit.code === 0 && exit.signal === null;
   const verification = verifyReporter(report, { childExitCleanly: cleanExit });
+  verification.reasons.push(...verifyBrowserScope(scope, report));
+  verification.ok = verification.reasons.length === 0;
   record("report_verification", {
     ok: verification.ok,
     reasons: verification.reasons,
@@ -583,6 +601,7 @@ ${routes}
   const summary = {
     version: 1,
     runId: run.runId,
+    scope,
     ok: reasons.length === 0 && !evidenceFailure,
     reasons,
     startedAt,
