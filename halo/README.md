@@ -214,7 +214,9 @@ bun run test:browser -- tests/reviews.spec.ts tests/cancellation-dialog.spec.ts 
 HALO_TEST_SCOPE=badge-cancellation HALO_NGINX=/usr/sbin/nginx bun tools/check-halo-test.ts browser
 ```
 
-该范围必须恰好完成 `login.spec.ts` 的两个真实场景：手机号变更，以及原登录、恢复与业务长场景。入口与 runner 同时核对实际 inventory、完成状态及零重试；缺项、多项、重复、跳过或范围不一致均失败。原身份、参与、工号、申请与审批观察，以及 21 个号码和 29 次供应商调用要求继续有效。它不是仅执行取消的场景，也不等于重跑全部控件检查。
+该范围必须恰好完成十三项真实前置场景。`login.spec.ts` 的两项覆盖手机号变更，以及原登录、恢复与业务长场景。`codes.spec.ts` 的十一项覆盖发送接受与限额、回包丢失、供应商拒绝与未知结果、三种不可信响应、持有发送，以及四种重放失败；它们提供号码尾号 `01–12` 的十二次原始发送。
+
+入口与 runner 同时核对实际 inventory、文件与标题、完成状态及零重试；缺项、多项、重复、跳过或范围不一致均失败。原身份、参与、工号、申请与审批观察，以及 21 个号码和 29 次供应商调用要求继续有效。它不是仅执行取消的场景，也不等于重跑全部控件检查。
 
 未指定 `HALO_TEST_SCOPE` 时仍执行原完整选集。两种范围保留同一超时、子进程终态、后端 drain 和私人目录清理要求。真实组合的候选、环境、SQL 原件、清理及原图接纳分别取证；脚本、类型和受控检查通过不代替真实运行。
 

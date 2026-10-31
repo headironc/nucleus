@@ -14,8 +14,22 @@ const mobile =
   "real self mobile change revokes both original sessions and reads its result after login";
 const identity =
   "real SMS login, original recovery, cookie-backed identity and cross-tab concealment";
+const supplier = [
+  "normal supplier acceptance, terminal reload and real quota refusal",
+  "lost response and refresh reuse the exact input and original proof",
+  "PNVS refusal and unknown supplier outcome are distinct",
+  "untrusted media response never completes the operation",
+  "untrusted shape response never completes the operation",
+  "untrusted code response never completes the operation",
+  "a held send expires after full-document navigation home without another SMS",
+  "a replay invalid_input cannot imply that the original SMS was not sent",
+  "a replay permission_denied cannot imply that the original SMS was not sent",
+  "a replay authentication_invalid cannot imply that the original SMS was not sent",
+  "a replay request_mismatch cannot imply that the original SMS was not sent",
+];
+const required = [...supplier, mobile, identity];
 
-function report(titles = [mobile, identity]) {
+function report(titles = required) {
   const event = (
     event: string,
     facts: Record<string, unknown> = {},
@@ -29,8 +43,8 @@ function report(titles = [mobile, identity]) {
   const tests = titles.map((title, index) => ({
     id: String(index),
     title,
-    titlePath: ["login.spec.ts", title],
-    file: "/repo/halo/tests/login.spec.ts",
+    titlePath: [title === mobile || title === identity ? "login.spec.ts" : "codes.spec.ts", title],
+    file: `/repo/halo/tests/${title === mobile || title === identity ? "login.spec.ts" : "codes.spec.ts"}`,
     line: index + 1,
     expectedStatus: "passed",
     project: null,
@@ -65,23 +79,41 @@ test("full remains the default and arbitrary filtering is rejected", () => {
     expect(() => browserScope(value)).toThrow("HALO_TEST_SCOPE");
 });
 
-test("the cancellation consumer selects both real cases from Playwright's full title", () => {
+test("the cancellation consumer selects all thirteen real prerequisites from Playwright's full title", () => {
   const args = playwrightArguments(browserScope("badge-cancellation"));
   const expression = new RegExp(args[args.indexOf("--grep") + 1]!);
   expect(expression.test(`chromium login.spec.ts ${mobile}`)).toBe(true);
   expect(expression.test(`chromium login.spec.ts ${identity}`)).toBe(true);
+  for (const title of supplier)
+    expect(expression.test(`chromium codes.spec.ts ${title}`)).toBe(true);
   expect(
     expression.test("chromium login.spec.ts damaged closed login records"),
   ).toBe(false);
   expect(args).toContain("tests/login.spec.ts");
+  expect(args).toContain("tests/codes.spec.ts");
   expect(args).toContain("--retries=0");
   expect(args).toContain("--workers=1");
 });
 
 test("complete successful real-case evidence satisfies both report and scope checks", () => {
   const actual = report();
+  expect(actual.inventoryCount).toBe(13);
   expect(verifyReporter(actual, { childExitCleanly: true }).ok).toBe(true);
   expect(verifyBrowserScope("badge-cancellation", actual)).toEqual([]);
+});
+
+test("the two long scenarios alone omit the actual PNVS prerequisite consumers", () => {
+  expect(verifyBrowserScope("badge-cancellation", report([mobile, identity]))).not.toEqual([]);
+});
+
+test("a replacement or duplicate cannot hide an omitted supplier consumer behind a correct count", () => {
+  for (const replacement of ["unexpected supplier case", supplier[1]!]) {
+    const titles = [...required];
+    titles[0] = replacement;
+    const actual = report(titles);
+    expect(actual.inventoryCount).toBe(13);
+    expect(verifyBrowserScope("badge-cancellation", actual)).not.toEqual([]);
+  }
 });
 
 test.each([
