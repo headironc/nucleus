@@ -45,6 +45,8 @@ describe("the actual OpenAPI / Ajv generator combination", () => {
       "/api/v1/workforce/application-template",
       "/api/v1/workforce/applications",
       "/api/v1/workforce/applications/preview",
+      "/api/v1/workforce/applications/{id}",
+      "/api/v1/workforce/applications/{id}/reviews",
       "/api/v1/workforce/current/applications",
       "/api/v1/workforce/current/applications/{id}",
       "/api/v1/workforce/current/grant",
