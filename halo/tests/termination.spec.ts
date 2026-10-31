@@ -225,7 +225,7 @@ test.beforeEach(async ({ page }) => {
 async function openEntry(page: Page) {
   await page.goto(origin + "/workforce");
   await expect(
-    page.getByRole("heading", { name: "员工服务已开通" }),
+    page.getByRole("heading", { name: "已加入员工服务" }),
   ).toBeVisible();
   await page.getByRole("link", { name: "结束员工服务", exact: true }).click();
   await expect(page).toHaveURL(origin + "/workforce/termination");

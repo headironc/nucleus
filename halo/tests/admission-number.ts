@@ -346,7 +346,7 @@ export async function admissionAndFirstNumber(
     const grant = (await (await grantRead).json()).grant;
     expect(grant).toMatchObject({ id: admission!.grant.id, status: "active" });
     await expect(
-      page.getByRole("heading", { name: "员工服务已开通", exact: true }),
+      page.getByRole("heading", { name: "已加入员工服务", exact: true }),
     ).toBeVisible();
     const refreshedGrant = responseFor(
       page,
@@ -361,13 +361,13 @@ export async function admissionAndFirstNumber(
       status: "active",
     });
     await expect(
-      page.getByRole("heading", { name: "员工服务已开通", exact: true }),
+      page.getByRole("heading", { name: "已加入员工服务", exact: true }),
     ).toBeVisible();
     await admissionObservation("current", "after");
     await picture(page, "admission-self-active");
 
     // The admission observer compares all number facts. Finish it before allocating.
-    await page.getByRole("link", { name: "首次领取工号", exact: true }).click();
+    await page.getByRole("link", { name: "申请工号", exact: true }).click();
     await expect(
       page.getByRole("heading", { name: "领取我的工号", exact: true }),
     ).toBeVisible();
