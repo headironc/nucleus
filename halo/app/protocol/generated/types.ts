@@ -1145,7 +1145,7 @@ export interface components {
             name: string;
         };
         /** @enum {string} */
-        "application.Status": "submitted" | "approved" | "rejected";
+        "application.Status": "submitted" | "approved" | "rejected" | "cancelled";
         "application.ManagedListResponse": components["schemas"]["application.ManagedList"] & {
             code: string;
         };
@@ -1188,14 +1188,10 @@ export interface components {
         "application.Decision": {
             /** @enum {string} */
             status: "submitted";
-        } | {
-            /** Format: date-time */
-            reviewedAt: string;
-            reviewerId: components["schemas"]["person.Id"];
-            reviewerName: string;
+        } | (components["schemas"]["application.Approval"] & {
             /** @enum {string} */
             status: "approved";
-        } | {
+        }) | {
             rejectionReason: components["schemas"]["application.Reason"];
             /** Format: date-time */
             reviewedAt: string;
@@ -1203,6 +1199,24 @@ export interface components {
             reviewerName: string;
             /** @enum {string} */
             status: "rejected";
+        } | (({
+            reviewedAt?: string & null;
+            reviewerId?: string & null;
+            reviewerName?: string & null;
+        } | {
+            /** Format: date-time */
+            reviewedAt: string;
+            reviewerId: components["schemas"]["person.Id"];
+            reviewerName: string;
+        }) & {
+            /** @enum {string} */
+            status: "cancelled";
+        });
+        "application.Approval": {
+            /** Format: date-time */
+            reviewedAt: string;
+            reviewerId: components["schemas"]["person.Id"];
+            reviewerName: string;
         };
         "application.Reason": string;
         "application.ManagedDetailResponse": components["schemas"]["application.ManagedDetail"] & {

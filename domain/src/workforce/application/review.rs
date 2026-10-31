@@ -3,7 +3,7 @@
 use super::*;
 
 impl Service {
-    async fn manager(
+    pub(super) async fn manager(
         &self,
         client: &Client,
         actor: &Actor,

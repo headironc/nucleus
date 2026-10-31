@@ -3,7 +3,13 @@
 use chrono::{DateTime, Utc};
 use postgres_types::{FromSql, ToSql};
 use serde::{Deserialize, Serialize};
-use utoipa::ToSchema;
+use utoipa::{
+    PartialSchema, ToSchema,
+    openapi::{
+        RefOr, Schema,
+        schema::{AllOfBuilder, ObjectBuilder, OneOfBuilder, Type},
+    },
+};
 use uuid::Uuid;
 
 use crate::{
@@ -63,6 +69,16 @@ pub enum Status {
     Submitted,
     Approved,
     Rejected,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize, ToSchema)]
+#[serde(rename_all = "camelCase")]
+#[schema(as = application::Approval)]
+pub struct Approval {
+    pub(super) reviewer_id: person::Id,
+    pub(super) reviewer_name: String,
+    pub(super) reviewed_at: DateTime<Utc>,
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema)]
@@ -71,12 +87,8 @@ pub enum Status {
 pub enum Decision {
     Submitted,
     Approved {
-        #[serde(rename = "reviewerId")]
-        reviewer_id: person::Id,
-        #[serde(rename = "reviewerName")]
-        reviewer_name: String,
-        #[serde(rename = "reviewedAt")]
-        reviewed_at: DateTime<Utc>,
+        #[serde(flatten)]
+        approval: Approval,
     },
     Rejected {
         #[serde(rename = "reviewerId")]
@@ -88,6 +100,30 @@ pub enum Decision {
         #[serde(rename = "rejectionReason")]
         rejection_reason: Reason,
     },
+    Cancelled {
+        #[serde(flatten)]
+        #[schema(schema_with = cancelled_approval)]
+        approval: Option<Approval>,
+    },
+}
+
+fn cancelled_approval() -> RefOr<Schema> {
+    // A cancelled application has either the complete prior approval or none of its fields.
+    // Utoipa's automatic optional flatten would require the approval even when Serde omits it.
+    // Incompatible types forbid any supplied value in the branch without approval fields.
+    let absent: RefOr<Schema> = AllOfBuilder::new()
+        .item(ObjectBuilder::new().schema_type(Type::String))
+        .item(ObjectBuilder::new().schema_type(Type::Null))
+        .into();
+    OneOfBuilder::new()
+        .item(
+            ObjectBuilder::new()
+                .property("reviewerId", absent.clone())
+                .property("reviewerName", absent.clone())
+                .property("reviewedAt", absent),
+        )
+        .item(Approval::schema())
+        .into()
 }
 
 #[derive(Debug, Clone, Serialize, ToSchema, ToSql)]
@@ -108,7 +144,7 @@ impl TryFrom<String> for Reason {
     fn try_from(value: String) -> Result<Self, Self::Error> {
         let value = value.trim();
         if value.is_empty() || value.contains('\0') {
-            return Err("a nonempty rejection reason without NUL is required");
+            return Err("a nonempty reason without NUL is required");
         }
         Ok(Self(value.to_owned()))
     }
@@ -120,6 +156,32 @@ impl TryFrom<String> for Reason {
 pub enum ReviewInput {
     Approve {},
     Reject { reason: Reason },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[schema(as = application::CancellableStatus)]
+pub enum CancellableStatus {
+    Submitted,
+    Approved,
+}
+
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(tag = "mode", rename_all = "snake_case", deny_unknown_fields)]
+#[schema(as = application::CancellationInput)]
+pub enum CancellationInput {
+    #[serde(rename = "self")]
+    #[schema(max_properties = 2)]
+    SelfService {
+        #[serde(rename = "expectedStatus")]
+        expected_status: CancellableStatus,
+    },
+    #[schema(max_properties = 3)]
+    Manager {
+        #[serde(rename = "expectedStatus")]
+        expected_status: CancellableStatus,
+        reason: Reason,
+    },
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -190,6 +252,95 @@ mod review_input_tests {
                 "{value}"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod cancellation_tests {
+    use super::*;
+
+    #[test]
+    fn inputs_require_an_explicit_mode_exact_expected_state_and_manager_reason() {
+        for value in [
+            r#"{"mode":"self","expectedStatus":"submitted"}"#,
+            r#"{"mode":"self","expectedStatus":"approved"}"#,
+            r#"{"mode":"manager","expectedStatus":"submitted","reason":" Correct the application "}"#,
+            r#"{"mode":"manager","expectedStatus":"approved","reason":"Duplicate"}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<CancellationInput>(value).is_ok(),
+                "{value}"
+            );
+        }
+        for value in [
+            r#"{"expectedStatus":"submitted"}"#,
+            r#"{"mode":"self"}"#,
+            r#"{"mode":"self","expectedStatus":null}"#,
+            r#"{"mode":"self","expectedStatus":"rejected"}"#,
+            r#"{"mode":"self","expectedStatus":"ready"}"#,
+            r#"{"mode":"self","expectedStatus":"cancelled"}"#,
+            r#"{"mode":"self","expectedStatus":"submitted","reason":"Not accepted"}"#,
+            r#"{"mode":"self_service","expectedStatus":"submitted"}"#,
+            r#"{"mode":"manager","expectedStatus":"submitted"}"#,
+            r#"{"mode":"manager","expectedStatus":"approved","reason":null}"#,
+            r#"{"mode":"manager","expectedStatus":"approved","reason":"\u3000\n"}"#,
+            r#"{"mode":"manager","expectedStatus":"approved","reason":"\u0000"}"#,
+            r#"{"mode":"manager","expectedStatus":"approved","reason":"Duplicate","personId":"supplied"}"#,
+        ] {
+            assert!(
+                serde_json::from_str::<CancellationInput>(value).is_err(),
+                "{value}"
+            );
+        }
+        let input = serde_json::from_str::<CancellationInput>(
+            r#"{"mode":"manager","expectedStatus":"approved","reason":"  Duplicate\n "}"#,
+        )
+        .expect("valid manager cancellation");
+        let CancellationInput::Manager { reason, .. } = input else {
+            panic!("manager mode");
+        };
+        assert_eq!(reason.0, "Duplicate");
+    }
+
+    #[test]
+    fn cancellation_omits_or_preserves_the_whole_prior_approval() {
+        use serde_json::json;
+
+        let reviewer_id: person::Id = "11111111-1111-4111-8111-111111111111"
+            .parse()
+            .expect("fixture person id");
+        let reviewed_at = "2026-10-31T01:15:00Z"
+            .parse::<DateTime<Utc>>()
+            .expect("fixture approval time");
+        let approval = Approval {
+            reviewer_id,
+            reviewer_name: "林*".to_owned(),
+            reviewed_at,
+        };
+        let fields = json!({
+            "status":"cancelled", "reviewerId":reviewer_id,
+            "reviewerName":"林*", "reviewedAt":"2026-10-31T01:15:00Z"
+        });
+        assert_eq!(
+            serde_json::to_value(Decision::Cancelled { approval: None })
+                .expect("unreviewed cancellation"),
+            json!({"status":"cancelled"})
+        );
+        assert_eq!(
+            serde_json::to_value(Decision::Cancelled {
+                approval: Some(approval.clone())
+            })
+            .expect("approved cancellation"),
+            fields
+        );
+        assert_eq!(
+            serde_json::to_value(Decision::Approved { approval })
+                .expect("unchanged approval shape"),
+            json!({
+                "status":"approved", "reviewerId":reviewer_id,
+                "reviewerName":"林*", "reviewedAt":"2026-10-31T01:15:00Z"
+            })
+        );
     }
 }
 
