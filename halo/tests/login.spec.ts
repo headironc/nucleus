@@ -2803,7 +2803,9 @@ async function ownCancellation(page: Page, context: BrowserContext, manager: str
     page.getByRole("heading", { level: 1, name: "账户已注销", exact: true }),
   ).toBeVisible();
   await expect(
-    page.getByText("本次注销已经生效。", { exact: true }),
+    page.getByText("全部登录和员工服务已结束，原账户无法恢复。", {
+      exact: true,
+    }),
   ).toBeVisible();
   expect(successPosts).toBe(1);
   expect(
@@ -2916,18 +2918,16 @@ async function ownCancellation(page: Page, context: BrowserContext, manager: str
       await route.abort("connectionclosed");
     },
   );
-  await lostPage
-    .getByRole("button", { name: "确认注销", exact: true })
-    .click();
+  await lostPage.getByRole("button", { name: "确认注销", exact: true }).click();
   await expect(
     lostPage.getByRole("heading", {
-      level: 2,
-      name: "暂时无法确认注销结果",
+      level: 1,
+      name: "注销结果尚不确定",
       exact: true,
     }),
   ).toBeVisible();
   await expect(
-    lostPage.getByText("登录失效不代表注销成功", { exact: true }),
+    lostPage.getByText("暂时不要重复提交，可先检查登录状态。", { exact: true }),
   ).toBeVisible();
   expect(lostPosts).toBe(1);
   const lostMaterial = await material(lostPage);
@@ -2955,7 +2955,7 @@ async function ownCancellation(page: Page, context: BrowserContext, manager: str
   await expect(
     lostPage.getByRole("heading", {
       level: 2,
-      name: "当前登录已无法使用",
+      name: "请重新登录",
       exact: true,
     }),
   ).toBeVisible();
@@ -2969,16 +2969,18 @@ async function ownCancellation(page: Page, context: BrowserContext, manager: str
     hidden: false,
     result: null,
   });
-  expect(
-    await lostPage.getByText("账户已注销", { exact: true }).count(),
-  ).toBe(0);
+  expect(await lostPage.getByText("账户已注销", { exact: true }).count()).toBe(
+    0,
+  );
   const loginLink = lostPage.getByRole("link", {
     name: "手机号登录",
     exact: true,
   });
   await expect(loginLink).toBeVisible();
   await loginLink.click();
-  await expect(lostPage.getByRole("heading", { name: "离开前请留意注销结果", exact: true })).toBeVisible();
+  await expect(
+    lostPage.getByRole("heading", { name: "注销结果尚未确认", exact: true }),
+  ).toBeVisible();
   await lostPage.getByRole("button", { name: "离开页面", exact: true }).click();
   await expect(lostPage).toHaveURL(/\/authentication\/codes$/);
   const remaining = lost.sentAt + 61_000 - Date.now();
