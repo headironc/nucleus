@@ -178,6 +178,10 @@ function Detail({
   const eligible =
     state.result.current.accountActive &&
     state.result.current.participationActive;
+  const mediaWait =
+    state.media.kind === "failed"
+      ? Math.max(0, Math.ceil((state.media.retryAt - now) / 1000))
+      : 0;
   return (
     <>
       <div className="review-meta">
@@ -280,10 +284,10 @@ function Detail({
       <div className="review-actions">
         <Button
           className="secondary"
-          disabled={state.pending}
+          disabled={state.pending || mediaWait > 0}
           onClick={() => void controller.load()}
         >
-          刷新详情
+          {mediaWait > 0 ? `${mediaWait} 秒后可刷新详情` : "刷新详情"}
         </Button>
         <a href="/workforce/reviews">返回审核列表</a>
       </div>

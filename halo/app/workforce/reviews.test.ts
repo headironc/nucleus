@@ -210,9 +210,9 @@ it("permission rejection synchronously hides application and media without clear
   expect(sessions.clear).not.toHaveBeenCalled();
   controller.close();
 });
-it("read limits retain no private data and obey the supplied wait before another GET", async () => {
+it("read limits retain a non-private retry state across foreground identity checks", async () => {
   vi.useFakeTimers();
-  const { controller, api } = await setup();
+  const { controller, identity, api, detail } = await setup();
   vi.mocked(api.detail).mockResolvedValue({
     kind: "failure",
     status: 429,
@@ -224,8 +224,121 @@ it("read limits retain no private data and obey the supplied wait before another
   const reads = vi.mocked(api.detail).mock.calls.length;
   await controller.load();
   expect(api.detail).toHaveBeenCalledTimes(reads);
+  identity.suspend();
+  await identity.verify();
+  expect(controller.snapshot()).toMatchObject({ kind: "error" });
+  expect(api.detail).toHaveBeenCalledTimes(reads);
   await vi.advanceTimersByTimeAsync(12001);
+  vi.mocked(api.detail).mockResolvedValue({ kind: "ok", value: detail });
   await controller.load();
   expect(api.detail).toHaveBeenCalledTimes(reads + 1);
+  expect(controller.snapshot()).toMatchObject({ kind: "detail" });
   controller.close();
 });
+it("media limits block detail refresh and foreground reads while retaining explicit rejection", async () => {
+  vi.useFakeTimers();
+  const { controller, identity, api, detail } = await setup();
+  vi.mocked(api.resource).mockResolvedValue({
+    kind: "failure",
+    status: 429,
+    code: "rate_limited",
+    retryAfter: 12000,
+  });
+  await controller.load();
+  expect(controller.snapshot()).toMatchObject({
+    kind: "detail",
+    media: { kind: "failed" },
+  });
+  const reads = vi.mocked(api.detail).mock.calls.length;
+  const media = vi.mocked(api.resource).mock.calls.length;
+  await controller.load();
+  expect(api.detail).toHaveBeenCalledTimes(reads);
+  expect(api.resource).toHaveBeenCalledTimes(media);
+  controller.confirm("reject");
+  expect(controller.snapshot()).toMatchObject({ confirmation: "reject" });
+  vi.mocked(api.review).mockResolvedValue({
+    kind: "failure",
+    status: 409,
+    code: "state_changed",
+    retryAfter: 0,
+  });
+  await controller.submit("需要正面照片");
+  expect(api.review).toHaveBeenCalledOnce();
+  expect(controller.snapshot()).toMatchObject({ kind: "error" });
+  identity.suspend();
+  await identity.verify();
+  expect(controller.snapshot()).toMatchObject({ kind: "error" });
+  expect(api.detail).toHaveBeenCalledTimes(reads);
+  await vi.advanceTimersByTimeAsync(12001);
+  vi.mocked(api.resource).mockResolvedValue({
+    kind: "ok",
+    value: { blob: new Blob(["fixture"]), mediaType: "image/webp" },
+  });
+  await controller.load();
+  expect(controller.snapshot()).toMatchObject({
+    kind: "detail",
+    result: detail,
+    media: { kind: "ready" },
+  });
+  controller.close();
+});
+it.each(["submitted", "rejected"] as const)(
+  "a media deadline preserves trusted %s facts and releases a late resource",
+  async (status) => {
+    vi.useFakeTimers();
+    const { controller, api, detail } = await setup();
+    const value =
+      status === "submitted"
+        ? detail
+        : {
+            ...detail,
+            application: {
+              ...detail.application,
+              status,
+              reviewerId: accountId,
+              reviewerName: "林*",
+              reviewedAt: "2026-10-31T01:15:00Z",
+              rejectionReason: "需要正面照片",
+            },
+          };
+    vi.mocked(api.detail).mockResolvedValue({ kind: "ok", value });
+    let release!: (result: Awaited<ReturnType<API["artwork"]>>) => void;
+    vi.mocked(api.artwork).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    const reading = controller.load();
+    await vi.waitFor(() =>
+      expect(controller.snapshot()).toMatchObject({
+        kind: "detail",
+        media: { kind: "loading" },
+      }),
+    );
+    await vi.advanceTimersByTimeAsync(35001);
+    expect(controller.snapshot()).toMatchObject({
+      kind: "detail",
+      result: value,
+      media: { kind: "failed" },
+      pending: false,
+    });
+    if (status === "submitted") {
+      controller.confirm("approve");
+      expect(controller.snapshot()).not.toHaveProperty("confirmation");
+      controller.confirm("reject");
+      expect(controller.snapshot()).toMatchObject({ confirmation: "reject" });
+    }
+    const discarded = { close: vi.fn() } as unknown as TemplateArtwork;
+    release({ kind: "ok", value: discarded });
+    await reading;
+    expect(discarded.close).toHaveBeenCalledOnce();
+    expect(controller.snapshot()).toMatchObject({
+      kind: "detail",
+      result: value,
+      media: { kind: "failed" },
+    });
+    expect(api.review).not.toHaveBeenCalled();
+    controller.close();
+  },
+);

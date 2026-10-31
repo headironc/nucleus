@@ -91,12 +91,14 @@ function control() {
     expired: false,
     restricted: false,
     mediaFailed: false,
+    mediaLimited: false,
     readFailure: false,
     limited: false,
     loseResponse: false,
     stateChanged: false,
     gate: undefined as Promise<void> | undefined,
     decisionGate: undefined as Promise<void> | undefined,
+    mediaGate: undefined as Promise<void> | undefined,
     photo: Buffer.alloc(0),
     background: Buffer.alloc(0),
     listQueries: [] as string[],
@@ -250,6 +252,13 @@ async function install(page: Page, state: Control) {
     }
     if (path.startsWith("/api/v1/workforce/application-resources/")) {
       state.resourceReads.push(path);
+      if (state.mediaGate) await state.mediaGate;
+      if (state.mediaLimited)
+        return route.fulfill({
+          status: 429,
+          headers: { "Retry-After": "12" },
+          json: { code: "rate_limited" },
+        });
       if (state.mediaFailed)
         return route.fulfill({
           status: 404,
@@ -546,11 +555,103 @@ test("a management rate limit hides data and waits for an explicit refresh", asy
   ).toBeDisabled();
   await expect(page.getByRole("table")).toHaveCount(0);
   state.limited = false;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(
+    page.getByRole("heading", { name: "工牌申请暂时无法加载", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /秒后可刷新$/ }),
+  ).toBeDisabled();
   await page.clock.fastForward(7100);
   expect(state.listQueries).toHaveLength(0);
   await page.getByRole("button", { name: "重新加载", exact: true }).click();
   await expect(page.getByRole("table")).toBeVisible();
   expect(state.listQueries).toHaveLength(1);
+});
+
+test("media limits protect both refresh paths across focus while allowing an explicit rejection", async ({
+  page,
+}, testInfo) => {
+  const state = control();
+  state.mediaLimited = true;
+  await page.clock.install();
+  await install(page, state);
+  await page.goto(origin + "/workforce/reviews/" + state.records[0].id);
+  await expect(
+    page.getByText("工牌预览暂时无法显示，请重新加载。", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: /秒后可刷新详情$/ }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: /秒后可重新加载$/ }),
+  ).toBeDisabled();
+  const reads = state.detailReads,
+    media = state.resourceReads.length;
+  await page.getByRole("button", { name: "驳回申请", exact: true }).click();
+  await page
+    .getByRole("textbox", { name: "驳回理由" })
+    .fill("请使用正面照片。");
+  await page.getByRole("button", { name: "确认驳回", exact: true }).click();
+  await expect(page.locator(".review-reason p")).toHaveText("请使用正面照片。");
+  expect(state.decisions).toHaveLength(1);
+  state.mediaLimited = false;
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(
+    page.getByRole("heading", { name: "工牌申请暂时无法加载", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".application-snapshot")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: /秒后可刷新$/ }),
+  ).toBeDisabled();
+  expect(state.detailReads).toBe(reads);
+  expect(state.resourceReads).toHaveLength(media);
+  await page.screenshot({
+    path: testInfo.outputPath("media-retry-after-focus.png"),
+    fullPage: true,
+  });
+  await page.clock.fastForward(12100);
+  await page.getByRole("button", { name: "刷新详情", exact: true }).click();
+  await expect(page.getByRole("img", { name: "工牌预览" })).toBeVisible();
+  await expect(page.locator(".review-reason p")).toHaveText("请使用正面照片。");
+  expect(state.detailReads).toBe(reads + 1);
+  expect(state.decisions).toHaveLength(1);
+});
+
+test("a media deadline keeps trusted details readable and rejection available", async ({
+  page,
+}, testInfo) => {
+  const state = control();
+  let release!: () => void;
+  state.mediaGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.clock.install();
+  await page.setViewportSize({ width: 320, height: 640 });
+  await install(page, state);
+  await page.goto(origin + "/workforce/reviews/" + state.records[0].id);
+  await expect(page.locator(".application-snapshot")).toContainText("测试同事");
+  await page.clock.fastForward(35001);
+  await expect(
+    page.getByText("工牌预览暂时无法显示，请重新加载。", { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".application-snapshot")).toContainText("测试同事");
+  await expect(
+    page.getByRole("heading", { name: "工牌申请暂时无法加载", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "批准申请", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "驳回申请", exact: true }),
+  ).toBeEnabled();
+  await page.screenshot({
+    path: testInfo.outputPath("media-deadline-trusted-detail-320.png"),
+    fullPage: true,
+  });
+  release();
+  await expect(page.locator(".application-snapshot")).toContainText("测试同事");
+  expect(state.decisions).toHaveLength(0);
 });
 
 test("own history shows all actual states and full reasons, while restricted history exposes only cancellable summaries", async ({

@@ -156,9 +156,23 @@ export class Reviews {
     this.timer = setTimeout(() => {
       if (!active()) return;
       const writing = !!this.writingAccount;
+      const state = this.state;
       this.cancel();
       this.clearMedia();
       this.retryAt = writing ? 0 : this.dependencies.now() + 5000;
+      this.waitingSelection = `${binding.selection.id}/${binding.selection.revision}`;
+      if (
+        !writing &&
+        state.kind === "detail" &&
+        !state.pending &&
+        state.media.kind === "loading"
+      ) {
+        this.show({
+          ...state,
+          media: { kind: "failed", retryAt: this.retryAt },
+        });
+        return;
+      }
       this.show(
         writing || this.uncertainAccount === this.account()
           ? {
@@ -224,7 +238,21 @@ export class Reviews {
     status = this.filter,
     notice?: string,
   ) {
-    if (this.dependencies.now() < this.retryAt) return;
+    if (this.dependencies.now() < this.retryAt) {
+      if (
+        this.dependencies.current.binding() &&
+        (this.state.kind !== "detail" || this.state.pending)
+      ) {
+        this.clearMedia();
+        const uncertain = this.uncertainAccount === this.account();
+        this.show({
+          kind: uncertain ? "unknown" : "error",
+          message: uncertain ? UNKNOWN_COPY : READ_ERROR,
+          retryAt: this.retryAt,
+        });
+      }
+      return;
+    }
     const scope = this.scope();
     if (!scope) return;
     this.clearMedia();
@@ -329,23 +357,30 @@ export class Reviews {
       await this.dependencies.current.reject(binding, result.status);
       return;
     }
-    if (this.state.kind === "detail")
+    if (this.state.kind === "detail") {
+      this.retryAt =
+        this.dependencies.now() + Math.max(5000, result.retryAfter ?? 0);
+      this.waitingSelection = `${binding.selection.id}/${binding.selection.revision}`;
       this.show({
         ...this.state,
         media: {
           kind: "failed",
-          retryAt:
-            this.dependencies.now() + Math.max(5000, result.retryAfter ?? 0),
+          retryAt: this.retryAt,
         },
       });
+    }
   }
   mediaFailed() {
     if (this.state.kind !== "detail" || this.state.pending) return;
+    const binding = this.dependencies.current.binding();
+    if (!binding) return;
     this.clearMedia();
+    this.retryAt = this.dependencies.now() + 5000;
+    this.waitingSelection = `${binding.selection.id}/${binding.selection.revision}`;
     this.show({
       ...this.state,
       confirmation: undefined,
-      media: { kind: "failed", retryAt: this.dependencies.now() + 5000 },
+      media: { kind: "failed", retryAt: this.retryAt },
     });
   }
   confirm(decision: ReviewInput["decision"]) {
