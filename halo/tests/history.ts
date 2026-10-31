@@ -123,7 +123,7 @@ export async function ownHistory(
       Date.parse(record.correctedAt) + 8 * 60 * 60 * 1000,
     );
     const time = `${beijing.getUTCFullYear()}年${beijing.getUTCMonth() + 1}月${beijing.getUTCDate()}日 ${String(beijing.getUTCHours()).padStart(2, "0")}:${String(beijing.getUTCMinutes()).padStart(2, "0")}`;
-    await expect(panel.locator("time").nth(index)).toHaveText(time);
+    await expect(panel.locator("time").nth(index)).toHaveText(`${time}（北京时间）`);
   }
   await expect(panel.getByText("共 3 条记录", { exact: true })).toBeVisible();
   expect(await panel.innerText()).not.toMatch(
