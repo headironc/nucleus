@@ -171,14 +171,14 @@
 
 ## Workforce
 
-| 文档                                   | 职责                             |
-| -------------------------------------- | -------------------------------- |
-| [工号](workforce/numbers.md)           | 号码池、分配、更正、撤销和恢复   |
-| [目录](workforce/directories.md)       | 科室、职务、职称及分类规则       |
-| [配置完成](workforce/completions.md)   | 可变配置的原操作结果             |
-| [模板与照片](workforce/media.md)       | 模板内容、字体、照片和排版       |
-| [申请](workforce/applications.md)      | 固定提交、分类、审批和终止       |
-| [成品与发放](workforce/fulfillment.md) | Render、Badge、Delivery 及原结果 |
+| 文档                                   | 职责                           |
+| -------------------------------------- | ------------------------------ |
+| [工号](workforce/numbers.md)           | 号码池、分配、更正、撤销和恢复 |
+| [目录](workforce/directories.md)       | 科室、职务、职称及分类规则     |
+| [配置完成](workforce/completions.md)   | 可变配置的原操作结果           |
+| [模板与照片](workforce/media.md)       | 模板内容、字体、照片和排版     |
+| [申请](workforce/applications.md)      | 固定提交、分类、审批和终止     |
+| [成品与发放](workforce/fulfillment.md) | 成品图片、发放及保留           |
 
 ## Content
 

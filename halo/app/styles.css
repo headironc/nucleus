@@ -138,7 +138,7 @@
 
 @layer components {
   .mobile-change-layout {
-    max-width: 1080px;
+    max-width: 784px;
     min-height: 680px;
     margin: auto;
     padding: 40px 32px 72px;
@@ -171,15 +171,11 @@
   }
   .mobile-change-columns {
     display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     gap: 28px;
     align-items: start;
   }
-  .mobile-change-columns > :only-child {
-    grid-column: 1 / -1;
-  }
-  .mobile-change-panel,
-  .mobile-change-guide {
+  .mobile-change-panel {
     min-width: 0;
     padding: 32px;
     border: 1px solid var(--line);
@@ -191,19 +187,11 @@
     margin-bottom: 12px;
     overflow-wrap: anywhere;
   }
-  .mobile-change-panel p,
-  .mobile-change-guide p {
+  .mobile-change-panel p {
     font-size: 14px;
     line-height: 1.9;
     color: var(--sub);
     overflow-wrap: anywhere;
-  }
-  .mobile-change-status {
-    display: inline-block;
-    margin-bottom: 14px;
-    color: var(--accent);
-    font-size: 12px;
-    letter-spacing: 0.08em;
   }
   .mobile-change-steps {
     display: flex;
@@ -279,19 +267,6 @@
     border: 1px solid var(--control-line);
     cursor: wait;
   }
-  .mobile-change-guide {
-    border-top: 2px solid var(--accent);
-  }
-  .mobile-change-guide h2 {
-    font-size: 19px;
-    line-height: 1.7;
-    margin: 4px 0 10px;
-  }
-  .mobile-change-guide hr {
-    border: 0;
-    border-top: 1px solid var(--line);
-    margin: 18px 0;
-  }
   .mobile-change-dialog {
     position: fixed;
     inset: 0;
@@ -331,8 +306,7 @@
     .mobile-change-columns {
       grid-template-columns: minmax(0, 1fr);
     }
-    .mobile-change-panel,
-    .mobile-change-guide {
+    .mobile-change-panel {
       padding: 24px 20px;
     }
     .mobile-change-heading h1 {
@@ -1215,14 +1189,16 @@
     margin-bottom: 28px;
   }
   .authentication-card label,
-  .mobile-change-panel form > label {
+  .mobile-change-panel form > label,
+  .mobile-change-panel .code-field label {
     display: block;
     font-size: 14px;
     font-weight: 600;
     margin-bottom: 8px;
   }
   .authentication-card input,
-  .mobile-change-panel input[type="tel"] {
+  .mobile-change-panel input[type="tel"],
+  .mobile-change-panel .code-slots input {
     width: 100%;
     min-height: 48px;
     border: 1px solid var(--control-line);
@@ -1238,7 +1214,8 @@
     font-size: 13px;
   }
   .authentication-card input[aria-invalid="true"],
-  .mobile-change-panel input[type="tel"][aria-invalid="true"] {
+  .mobile-change-panel input[type="tel"][aria-invalid="true"],
+  .mobile-change-panel .code-slots input[aria-invalid="true"] {
     border-color: var(--danger);
   }
   .field-hint,
@@ -1292,7 +1269,8 @@
     grid-template-columns: repeat(6, minmax(0, 1fr));
     gap: 7px;
   }
-  .authentication-card .code-slots input {
+  .authentication-card .code-slots input,
+  .mobile-change-panel .code-slots input {
     min-width: 0;
     padding: 10px 0;
     text-align: center;
@@ -1344,11 +1322,6 @@
     padding: 8px 0;
     flex-shrink: 0;
   }
-  .correction-explanation {
-    color: var(--sub);
-    font-size: 14px;
-    margin: 12px 0 20px;
-  }
   .correction-list { list-style: none; padding: 0; margin: 0; }
   .correction-list li { padding: 20px 0; border-top: 1px solid var(--line); }
   .correction-panel h3 { margin: 0; font-size: 15px; font-weight: 550; }
@@ -1396,11 +1369,6 @@
     margin: 22px 0;
   }
   .registration-field ~ .notice {
-    margin-bottom: 24px;
-  }
-  .current-help {
-    font-size: 14px;
-    color: var(--sub);
     margin-bottom: 24px;
   }
   .current-summary {
@@ -1699,7 +1667,7 @@
 
 @layer components {
   .logout-layout {
-    max-width: 1080px;
+    max-width: 784px;
     min-height: 680px;
     margin: auto;
     padding: 48px 32px 72px;
@@ -1712,7 +1680,8 @@
   }
   .logout-columns {
     display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
+    max-width: 720px;
     gap: 28px;
     align-items: start;
   }
@@ -1726,26 +1695,16 @@
     font-size: 27px;
     margin: 18px 0;
     overflow-wrap: anywhere;
+    text-wrap: balance;
   }
   .logout-panel .result-actions {
     align-items: stretch;
   }
+  .logout-panel .result-copy {
+    text-wrap: balance;
+  }
   .logout-panel .result-actions > * {
     text-align: center;
-  }
-  .logout-guide {
-    border-top: 2px solid var(--accent);
-    padding: 24px 8px;
-  }
-  .logout-guide h2 {
-    font-size: 22px;
-    margin: 8px 0 16px;
-  }
-  .logout-guide ul {
-    padding-left: 20px;
-  }
-  .logout-guide li {
-    margin-bottom: 14px;
   }
   .logout-leave {
     width: min(480px, calc(100% - 32px));
@@ -1811,10 +1770,6 @@
   .logout-consequences p {
     font-size: 15px;
   }
-  .logout-preserved {
-    color: var(--sub);
-    font-size: 14px;
-  }
   .result-meta {
     margin: 24px 0 0;
     padding-top: 20px;
@@ -1834,24 +1789,6 @@
   .result-meta dd {
     margin: 0;
     color: var(--ink);
-  }
-  .current-login {
-    margin-top: 24px;
-    padding: 16px 20px;
-    background: var(--ok-soft);
-    border-left: 3px solid var(--ok-rule);
-  }
-  .current-login strong {
-    display: block;
-  }
-  .current-login p {
-    font-size: 14px;
-    margin-top: 4px;
-  }
-  .logout-panel .minor {
-    color: var(--sub);
-    font-size: 14px;
-    margin-top: 18px;
   }
   .logout-leave {
     position: fixed;
@@ -1883,9 +1820,6 @@
     }
     .logout-panel h2 {
       font-size: 24px;
-    }
-    .logout-guide {
-      padding: 20px 4px;
     }
     .logout-person {
       align-items: flex-start;

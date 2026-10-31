@@ -493,11 +493,11 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
   });
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "暂时无法检查登录状态" }),
+    page.getByRole("heading", { name: "登录信息暂时无法使用" }),
   ).toBeVisible();
   await page.getByRole("button", { name: "重新检查", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "暂时无法检查登录状态" }),
+    page.getByRole("heading", { name: "登录信息暂时无法使用" }),
   ).toBeVisible();
   for (const width of [1440, 768, 320]) {
     await page.setViewportSize({ width, height: 900 });
@@ -787,7 +787,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
   );
   await page.getByRole("button", { name: "查看登录结果", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "当前已登录", exact: true }),
+    page.getByRole("heading", { name: "个人账户", exact: true }),
   ).toBeVisible();
   await expect(
     page.getByText("Fixture Operator", { exact: true }),
@@ -910,7 +910,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     await page.evaluate(() => Reflect.get(window, "restoreLoginStorage")());
     await retry.click();
     await expect(
-      page.getByRole("heading", { name: "当前已登录", exact: true }),
+      page.getByRole("heading", { name: "个人账户", exact: true }),
     ).toBeVisible();
     expect(requests).toHaveLength(4);
   });
@@ -975,7 +975,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
       .getByRole("button", { name: "重试打开个人账户", exact: true })
       .click();
     await expect(
-      page.getByRole("heading", { name: "当前已登录", exact: true }),
+      page.getByRole("heading", { name: "个人账户", exact: true }),
     ).toBeVisible();
     expect(
       await page.evaluate(() => sessionStorage.getItem("halo.login.message")),
@@ -1053,7 +1053,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
       .getByRole("button", { name: "重试打开个人账户", exact: true })
       .click();
     await expect(
-      page.getByRole("heading", { name: "当前已登录", exact: true }),
+      page.getByRole("heading", { name: "个人账户", exact: true }),
     ).toBeVisible();
     expect(
       await page.evaluate(() => sessionStorage.getItem("halo.login.message")),
@@ -1171,7 +1171,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     });
     await choose(contender, original!);
     await expect(
-      page.getByRole("heading", { name: "当前已登录", exact: true }),
+      page.getByRole("heading", { name: "个人账户", exact: true }),
     ).toBeVisible();
     expect(requests).toHaveLength(6);
     await contender.close();
@@ -1579,7 +1579,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
   );
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(
-    page.getByRole("heading", { name: "暂时无法检查登录状态" }),
+    page.getByRole("heading", { name: "个人资料暂时无法加载" }),
   ).toBeVisible();
   await expect(page.getByText("Second Fixture", { exact: true })).toHaveCount(
     0,
@@ -1620,7 +1620,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
       });
       await page.evaluate(() => window.dispatchEvent(new Event("focus")));
       await expect(
-        page.getByRole("heading", { name: "请重新加载页面", exact: true }),
+        page.getByRole("heading", { name: "请重新加载", exact: true }),
       ).toBeVisible();
       await expect(
         page.getByText("Second Fixture", { exact: true }),
@@ -1636,7 +1636,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
       expect(accountReads).toBe(observed);
       await page.unroute("**/api/v1/accounts/current");
       await page
-        .getByRole("button", { name: "重新加载页面", exact: true })
+        .getByRole("button", { name: "重新加载", exact: true })
         .click();
       await expect(
         page.locator(".current-summary").getByText("Second Fixture", { exact: true }),
@@ -1653,7 +1653,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
       const observed = accountReads;
       await page.evaluate(() => window.dispatchEvent(new Event("focus")));
       await expect(
-        page.getByRole("heading", { name: "请重新加载页面", exact: true }),
+        page.getByRole("heading", { name: "请重新加载", exact: true }),
       ).toBeVisible();
       await expect(
         page.getByText("Second Fixture", { exact: true }),
@@ -1666,7 +1666,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
       });
       await page.unroute("**/build.json");
       await page
-        .getByRole("button", { name: "重新加载页面", exact: true })
+        .getByRole("button", { name: "重新加载", exact: true })
         .click();
       await expect(
         page.locator(".current-summary").getByText("Second Fixture", { exact: true }),
@@ -1678,27 +1678,27 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
   await context.setOffline(true);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(
-    page.getByRole("heading", { name: "请重新加载页面", exact: true }),
+    page.getByRole("heading", { name: "请重新加载", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("Second Fixture", { exact: true })).toHaveCount(
     0,
   );
   await context.setOffline(false);
-  await page.getByRole("button", { name: "重新加载页面", exact: true }).click();
+  await page.getByRole("button", { name: "重新加载", exact: true }).click();
   await expect(page.locator(".current-summary").getByText("Second Fixture", { exact: true })).toBeVisible();
 
   await failResource(page);
   await expect(
-    page.getByRole("heading", { name: "请重新加载页面", exact: true }),
+    page.getByRole("heading", { name: "请重新加载", exact: true }),
   ).toBeVisible();
   await expect(page.getByText("Second Fixture", { exact: true })).toHaveCount(
     0,
   );
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(
-    page.getByRole("heading", { name: "请重新加载页面", exact: true }),
+    page.getByRole("heading", { name: "请重新加载", exact: true }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "重新加载页面", exact: true }).click();
+  await page.getByRole("button", { name: "重新加载", exact: true }).click();
   await expect(page.locator(".current-summary").getByText("Second Fixture", { exact: true })).toBeVisible();
 
   const replacement =
@@ -1770,20 +1770,20 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
         await route.fulfill({ response });
       });
       await page
-        .getByRole("link", { name: "退出本次登录", exact: true })
+        .getByRole("link", { name: "退出登录", exact: true })
         .click();
       await expect(
-        page.getByRole("heading", { name: "确认退出本次登录？", exact: true }),
+        page.getByRole("heading", { name: "退出登录？", exact: true }),
       ).toBeVisible();
       expect(writes).toEqual([]);
       await page
-        .getByRole("button", { name: "确认退出本次登录", exact: true })
+        .getByRole("button", { name: "退出登录", exact: true })
         .click();
       await expect(
-        page.getByRole("heading", { name: "请登录后继续", exact: true }),
+        page.getByRole("heading", { name: "请重新登录", exact: true }),
       ).toBeVisible();
       await expect(
-        page.getByText("此前退出的结果仍待确认", { exact: false }),
+        page.getByText("退出结果尚未确认。请使用原账户的手机号登录，继续查看退出结果。", { exact: false }),
       ).toBeVisible();
       expect(writes).toHaveLength(1);
       expect(writes[0].session).toBe(original!.id);
@@ -1857,14 +1857,14 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
       await page.getByRole("button", { name: "验证并继续" }).click();
       await expect(page).toHaveURL(/\/sessions\/logout\?return=logout-result$/);
       await expect(
-        page.getByRole("heading", { name: "本次退出结果待确认", exact: true }),
+        page.getByRole("heading", { name: "退出结果尚不确定", exact: true }),
       ).toBeVisible();
       expect(fresh?.id).toBeTruthy();
       expect(fresh!.id).not.toBe(original!.id);
       expect(reads).toEqual([]);
       await page.reload();
       await expect(
-        page.getByRole("heading", { name: "本次退出结果待确认", exact: true }),
+        page.getByRole("heading", { name: "退出结果尚不确定", exact: true }),
       ).toBeVisible();
       expect(reads).toEqual([]);
       const freshCookie = (await context.cookies()).find(
@@ -1872,13 +1872,13 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
       )!;
       expect(Boolean(freshCookie)).toBe(true);
       await page
-        .getByRole("button", { name: "查看本次退出结果", exact: true })
+        .getByRole("button", { name: "查看退出结果", exact: true })
         .click();
       await expect(
-        page.getByRole("heading", { name: "此前登录已退出", exact: true }),
+        page.getByRole("heading", { name: "此前的退出已完成", exact: true }),
       ).toBeVisible();
       await expect(
-        page.getByText("当前的新登录仍然有效", { exact: false }),
+        page.getByText("请打开个人账户，查看当前登录状态。", { exact: false }),
       ).toBeVisible();
       expect(reads).toHaveLength(1);
       expect(reads[0]).toMatchObject({
@@ -2088,7 +2088,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
       await expect(
         expiryPage.locator('.avatar-slot[data-state="failed"]'),
       ).toBeVisible();
-      await expect(expiryPage.getByText("图片暂时无法加载。")).toBeVisible();
+      await expect(expiryPage.getByText("头像暂时无法显示。")).toBeVisible();
       await expect(
         expiryPage.locator('.avatar-slot[data-state="failed"] img'),
       ).toHaveCount(0);
@@ -2322,14 +2322,14 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
       },
       { times: 1 },
     );
-    await page.getByRole("link", { name: "退出全部设备", exact: true }).click();
+    await page.getByRole("link", { name: "退出全部登录", exact: true }).click();
     await page
-      .getByRole("button", { name: "退出全部设备", exact: true })
+      .getByRole("button", { name: "退出全部登录", exact: true })
       .click();
     await expect(page.getByRole("dialog")).toBeVisible();
     expect(writes).toBe(0);
     await page
-      .getByRole("button", { name: "确认退出全部设备", exact: true })
+      .getByRole("button", { name: "全部退出", exact: true })
       .click();
     await commit;
     await page.getByRole("link", { name: "返回首页", exact: true }).click();
@@ -2343,7 +2343,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     ).toBe("pending");
     await page.goto("/sessions/logout-all");
     await expect(
-      page.getByRole("heading", { name: "请登录后继续", exact: true }),
+      page.getByRole("heading", { name: "请重新登录", exact: true }),
     ).toBeVisible();
     expect(writes).toBe(1);
     const cookies = await context.cookies();
@@ -2431,7 +2431,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
       .getByRole("button", { name: "查看退出结果", exact: true })
       .click();
     await expect(
-      page.getByRole("heading", { name: "本次全部退出已完成", exact: true }),
+      page.getByRole("heading", { name: "此前的退出已完成", exact: true }),
     ).toBeVisible();
     expect(reads).toBe(1);
     expect(writes).toBe(1);
@@ -2501,16 +2501,16 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
       { times: 1 },
     );
     await single
-      .getByRole("link", { name: "退出全部设备", exact: true })
+      .getByRole("link", { name: "退出全部登录", exact: true })
       .click();
     await single
-      .getByRole("button", { name: "退出全部设备", exact: true })
+      .getByRole("button", { name: "退出全部登录", exact: true })
       .click();
     await single
-      .getByRole("button", { name: "确认退出全部设备", exact: true })
+      .getByRole("button", { name: "全部退出", exact: true })
       .click();
     await expect(
-      single.getByRole("heading", { name: "暂时无法继续", exact: true }),
+      single.getByRole("heading", { name: "登录信息暂时无法使用", exact: true }),
     ).toBeVisible();
     expect(
       await single.evaluate(
@@ -2519,7 +2519,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     ).toBe("pending");
     await single.reload();
     await expect(
-      single.getByRole("heading", { name: "请登录后继续", exact: true }),
+      single.getByRole("heading", { name: "请重新登录", exact: true }),
     ).toBeVisible();
     await single.getByRole("link", { name: "手机号登录", exact: true }).click();
     await single.getByRole("button", { name: "仍然离开", exact: true }).click();
@@ -2591,7 +2591,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
       .getByRole("button", { name: "查看退出结果", exact: true })
       .click();
     await expect(
-      single.getByRole("heading", { name: "本次全部退出已完成", exact: true }),
+      single.getByRole("heading", { name: "此前的退出已完成", exact: true }),
     ).toBeVisible();
     expect(singleReads).toBe(1);
     expect(
@@ -3056,7 +3056,7 @@ for (const denied of ["sessionStorage", "BroadcastChannel"] as const) {
     if (denied === "BroadcastChannel") {
       await page.goto("/account");
       await expect(
-        page.getByRole("heading", { name: "暂时无法检查登录状态" }),
+        page.getByRole("heading", { name: "登录信息暂时无法使用" }),
       ).toBeVisible();
       expect(errors).toEqual([]);
     }
@@ -3076,7 +3076,7 @@ for (const path of ["/authentication/login", "/account"]) {
     await page.goto(path);
     await expect(
       page.getByRole("heading", {
-        name: path === "/authentication/login" ? "请重新加载" : "请重新加载页面",
+        name: "请重新加载",
         exact: true,
       }),
     ).toBeVisible();
