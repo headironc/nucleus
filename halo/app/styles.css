@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "../../design/assets/tokens.css";
 @import "./workforce/application.css";
+@import "./workforce/reviews.css";
 
 @layer components {
   .admission-layout {
