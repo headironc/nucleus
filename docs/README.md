@@ -51,7 +51,6 @@
 | 工号生命周期与封印状态                    | 已交付   | [工号](workforce/numbers.md)                                                                                                                                               |
 | Workforce 目录、分类规则与配置完成        | 已交付   | [目录](workforce/directories.md)、[配置完成](workforce/completions.md)                                                                                                     |
 | 工牌模板读取、照片准备、本人提交与历史    | 已交付   | [模板与照片](workforce/media.md)、[申请](workforce/applications.md)                                                                                                        |
-| Halo 网站工牌审核与本人审核结果           | 待验收   | [工牌审核页面](client/pages.md#网站工牌审核)、[网站检查](../halo/README.md#工牌审核)；客户端源码与受控检查随本片交付，真实后端组合另验                                     |
 | 工牌管理审批与附理由驳回                  | 已交付   | [申请](workforce/applications.md)；后端管理查询、审批及本人审核结果，网站兼容与页面组合验收由客户端集成覆盖                                                                |
 | Halo 网站工牌审核与本人审核结果           | 待验收   | [工牌审核页面](client/pages.md#网站工牌审核)、[网站检查](../halo/README.md#工牌审核)；客户端源码与受控检查随本片交付，真实后端组合另验                                     |
 | 工牌取消、成品与发放                      | 目标     | [申请](workforce/applications.md)、[成品与发放](workforce/fulfillment.md)                                                                                                  |
