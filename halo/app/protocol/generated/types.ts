@@ -389,6 +389,22 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/workforce/applications/{id}/cancellations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post: operations["workforceApplicationCancellation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/workforce/current/applications": {
         parameters: {
             query?: never;
@@ -1145,7 +1161,7 @@ export interface components {
             name: string;
         };
         /** @enum {string} */
-        "application.Status": "submitted" | "approved" | "rejected";
+        "application.Status": "submitted" | "approved" | "rejected" | "cancelled";
         "application.ManagedListResponse": components["schemas"]["application.ManagedList"] & {
             code: string;
         };
@@ -1188,14 +1204,10 @@ export interface components {
         "application.Decision": {
             /** @enum {string} */
             status: "submitted";
-        } | {
-            /** Format: date-time */
-            reviewedAt: string;
-            reviewerId: components["schemas"]["person.Id"];
-            reviewerName: string;
+        } | (components["schemas"]["application.Approval"] & {
             /** @enum {string} */
             status: "approved";
-        } | {
+        }) | {
             rejectionReason: components["schemas"]["application.Reason"];
             /** Format: date-time */
             reviewedAt: string;
@@ -1203,6 +1215,24 @@ export interface components {
             reviewerName: string;
             /** @enum {string} */
             status: "rejected";
+        } | (({
+            reviewedAt?: string & null;
+            reviewerId?: string & null;
+            reviewerName?: string & null;
+        } | {
+            /** Format: date-time */
+            reviewedAt: string;
+            reviewerId: components["schemas"]["person.Id"];
+            reviewerName: string;
+        }) & {
+            /** @enum {string} */
+            status: "cancelled";
+        });
+        "application.Approval": {
+            /** Format: date-time */
+            reviewedAt: string;
+            reviewerId: components["schemas"]["person.Id"];
+            reviewerName: string;
         };
         "application.Reason": string;
         "application.ManagedDetailResponse": components["schemas"]["application.ManagedDetail"] & {
@@ -1232,6 +1262,27 @@ export interface components {
             /** @enum {string} */
             decision: "reject";
             reason: components["schemas"]["application.Reason"];
+        };
+        "application.CancellationInput": {
+            expectedStatus: components["schemas"]["application.CancellableStatus"];
+            /** @enum {string} */
+            mode: "self";
+        } | {
+            expectedStatus: components["schemas"]["application.CancellableStatus"];
+            /** @enum {string} */
+            mode: "manager";
+            reason: components["schemas"]["application.Reason"];
+        };
+        /** @enum {string} */
+        "application.CancellableStatus": "submitted" | "approved";
+        "application.Cancellation": {
+            application: components["schemas"]["application.Cancelled"];
+            code: string;
+        };
+        "application.Cancelled": {
+            id: components["schemas"]["application.Id"];
+            /** @enum {string} */
+            status: "cancelled";
         };
         "application.ListResponse": components["schemas"]["application.List"] & {
             code: string;
@@ -4559,6 +4610,163 @@ export interface operations {
                 };
             };
             /** @description dependency_unavailable or outcome_unknown; refresh management detail without automatically resending */
+            503: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+        };
+    };
+    workforceApplicationCancellation: {
+        parameters: {
+            query?: never;
+            header: {
+                /** @description Diagnostic only; refresh after an unknown outcome */
+                "Operation-Id": string;
+                "Session-Id": string;
+                Origin: string;
+            };
+            path: {
+                id: components["schemas"]["application.Id"];
+            };
+            cookie?: never;
+        };
+        /** @description At most 8 KiB; explicit self or manager mode and the confirmed submitted or approved state; a manager reason is required */
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["application.CancellationInput"];
+            };
+        };
+        responses: {
+            /** @description Expected state cancelled and audited atomically; prior application facts remain retained */
+            200: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["application.Cancellation"];
+                };
+            };
+            /** @description invalid_input */
+            400: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description authentication_invalid */
+            401: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description permission_denied */
+            403: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description target_unavailable */
+            404: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description state_changed; refresh and confirm again */
+            409: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            413: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            415: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description invalid_input */
+            422: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description rate_limited */
+            429: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    /** @description Wait seconds */
+                    "Retry-After"?: number;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description internal_error */
+            500: {
+                headers: {
+                    /** @description no-store */
+                    "Cache-Control"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Failure"];
+                };
+            };
+            /** @description dependency_unavailable or outcome_unknown; only refresh current state without automatically resending */
             503: {
                 headers: {
                     /** @description no-store */
