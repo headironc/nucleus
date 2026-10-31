@@ -561,52 +561,59 @@ for (const status of ["submitted", "approved"] as const) {
   });
 }
 
-for (const failedRead of ["disconnected", "503", "429"] as const) {
-  test(`cancellation manager: unknown GET ${failedRead} and cooldown retain the cancellation operation`, async ({
-    page,
-  }, info) => {
-    const state = control();
-    state.cancellationLost = true;
-    await install(page, state);
-    await page.clock.install();
-    await page.goto(origin + "/workforce/reviews/" + state.records[0].id);
-    await page.getByRole("button", { name: "取消申请", exact: true }).click();
-    await page.getByRole("textbox", { name: "取消说明" }).fill("重复申请");
-    await page
-      .getByRole("dialog")
-      .getByRole("button", { name: "取消申请", exact: true })
-      .click();
-    await expect(
-      page.getByRole("heading", { name: "暂时无法确认取消结果" }),
-    ).toBeVisible();
-    state.readDisconnected = failedRead === "disconnected";
-    state.readFailure = failedRead === "503";
-    state.limited = failedRead === "429";
-    await page.getByRole("button", { name: "刷新详情", exact: true }).click();
-    await expect(
-      page.getByRole("button", { name: /秒后可刷新/ }),
-    ).toBeDisabled();
-    await expect(
-      page.getByRole("heading", { name: "暂时无法确认取消结果" }),
-    ).toBeVisible();
-    await expect(page.getByRole("status")).toHaveText(
-      "请刷新详情查看当前状态，暂时不要重复提交。",
-    );
-    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    await expect(
-      page.getByRole("heading", { name: "暂时无法确认取消结果" }),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("button", { name: /秒后可刷新/ }),
-    ).toBeDisabled();
-    await expect(
-      page.getByRole("heading", { name: "暂时无法确认审核结果" }),
-    ).toHaveCount(0);
-    expect(state.cancellations).toHaveLength(1);
-    await page.screenshot({
-      path: info.outputPath(`manager-unknown-get-${failedRead}.png`),
+for (const mode of ["self", "manager"] as const) {
+  for (const failedRead of ["disconnected", "503", "429"] as const) {
+    test(`cancellation ${mode}: unknown GET ${failedRead} and cooldown retain the cancellation operation`, async ({
+      page,
+    }, info) => {
+      const state = control();
+      state.cancellationLost = true;
+      await install(page, state);
+      await page.clock.install();
+      await page.goto(
+        origin +
+          `/workforce/${mode === "self" ? "applications" : "reviews"}/` +
+          state.records[0].id,
+      );
+      await page.getByRole("button", { name: "取消申请", exact: true }).click();
+      if (mode === "manager")
+        await page.getByRole("textbox", { name: "取消说明" }).fill("重复申请");
+      await page
+        .getByRole("dialog")
+        .getByRole("button", { name: "取消申请", exact: true })
+        .click();
+      await expect(
+        page.getByRole("heading", { name: "暂时无法确认取消结果" }),
+      ).toBeVisible();
+      state.readDisconnected = failedRead === "disconnected";
+      state.readFailure = failedRead === "503";
+      state.limited = failedRead === "429";
+      await page.getByRole("button", { name: "刷新详情", exact: true }).click();
+      await expect(
+        page.getByRole("button", { name: /秒后可刷新/ }),
+      ).toBeDisabled();
+      await expect(
+        page.getByRole("heading", { name: "暂时无法确认取消结果" }),
+      ).toBeVisible();
+      await expect(page.getByRole("status")).toHaveText(
+        "请刷新详情查看当前状态，暂时不要重复提交。",
+      );
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      await expect(
+        page.getByRole("heading", { name: "暂时无法确认取消结果" }),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("button", { name: /秒后可刷新/ }),
+      ).toBeDisabled();
+      await expect(
+        page.getByRole("heading", { name: "暂时无法确认审核结果" }),
+      ).toHaveCount(0);
+      expect(state.cancellations).toHaveLength(1);
+      await page.screenshot({
+        path: info.outputPath(`${mode}-unknown-get-${failedRead}.png`),
+      });
     });
-  });
+  }
 }
 
 for (const mode of ["self", "manager"] as const) {

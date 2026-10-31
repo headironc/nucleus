@@ -369,7 +369,15 @@ export class Applications {
   }
   async load(page = 1, notice?: string): Promise<void> {
     if (this.dependencies.now() < this.retryAt) {
-      this.show({ kind: "error", message: READ_ERROR, retryAt: this.retryAt });
+      this.show(
+        this.uncertainCancellation === this.account()
+          ? {
+              kind: "cancellation-unknown",
+              message: "请刷新详情查看当前状态，暂时不要重复提交。",
+              retryAt: this.retryAt,
+            }
+          : { kind: "error", message: READ_ERROR, retryAt: this.retryAt },
+      );
       return;
     }
     const scope = this.scope();
