@@ -117,6 +117,15 @@ function control() {
     detailReads: 0,
     resourceReads: [] as string[],
     decisions: [] as ReviewInput[],
+    renders: 0,
+    renderStatus: 0,
+    renderCode: "dependency_unavailable",
+    renderLost: false,
+    renderReadFailure: false,
+    badgeFailure: 0,
+    managementUnavailable: false,
+    badgeGate: undefined as Promise<void> | undefined,
+    badgeReads: [] as { session: string | undefined; path: string }[],
   };
 }
 type Control = ReturnType<typeof control>;
@@ -204,6 +213,75 @@ async function install(page: Page, state: Control) {
         });
       if (state.readDisconnected && request.method() === "GET")
         return route.abort("connectionfailed");
+    }
+    if (path.endsWith("/renders") && request.method() === "POST") {
+      state.renders++;
+      expect(request.postDataJSON()).toEqual({});
+      const index = state.records.findIndex((item) =>
+        path.endsWith(`/${item.id}/renders`),
+      );
+      const item = state.records[index];
+      if (state.renderStatus) {
+        if (
+          state.renderStatus === 422 ||
+          state.renderCode === "dependency_unavailable"
+        )
+          state.records[index] = {
+            ...(reviewed(item, "approve") as Extract<
+              Application,
+              { status: "approved" }
+            >),
+            status: "approved",
+            renderError: state.renderCode as
+              "missing_glyph" | "text_overflow" | "dependency_unavailable",
+          };
+        if (state.renderReadFailure) state.readFailure = true;
+        return route.fulfill({
+          status: state.renderStatus,
+          json: { code: state.renderCode },
+        });
+      }
+      const { renderError: _error, ...approved } = reviewed(
+        item,
+        "approve",
+      ) as Extract<Application, { status: "approved" }>;
+      state.records[index] = {
+        ...approved,
+        status: "ready",
+        badge: { id: id(91) },
+      };
+      if (state.renderLost) return route.abort("connectionfailed");
+      return route.fulfill({
+        json: {
+          code: "ok",
+          application: { id: item.id, status: "ready", badge: { id: id(91) } },
+        },
+      });
+    }
+    if (path.startsWith("/api/v1/workforce/badges/")) {
+      state.badgeReads.push({ session, path });
+      if (state.badgeGate) await state.badgeGate;
+      if (state.badgeFailure)
+        return route.fulfill({
+          status: state.badgeFailure,
+          json: {
+            code:
+              state.badgeFailure === 404
+                ? "target_unavailable"
+                : state.badgeFailure === 403
+                  ? "permission_denied"
+                  : "dependency_unavailable",
+          },
+        });
+      return route.fulfill({
+        contentType: "image/webp",
+        headers: {
+          "Content-Length": String(state.background.length),
+          "Cache-Control": "no-store",
+          "Content-Disposition": `attachment; filename="badge-${id(91)}.webp"`,
+        },
+        body: state.background,
+      });
     }
     if (path.endsWith("/cancellations") && request.method() === "POST") {
       const item = state.records.find((item) =>
@@ -348,6 +426,13 @@ async function install(page: Page, state: Control) {
       request.method() === "GET"
     ) {
       state.detailReads++;
+      if (state.managementUnavailable) {
+        if (state.gate) await state.gate;
+        return route.fulfill({
+          status: 403,
+          json: { code: "permission_denied" },
+        });
+      }
       const item = state.records.find((item) => path.endsWith(item.id));
       if (!item)
         return route.fulfill({
@@ -371,7 +456,8 @@ async function install(page: Page, state: Control) {
         (item) =>
           !state.restricted ||
           item.status === "submitted" ||
-          item.status === "approved",
+          item.status === "approved" ||
+          item.status === "ready",
       );
       // The adapter must strip accidental extra private fields even from a restricted response.
       const selected = matching.find((item) => path.endsWith(item.id));
@@ -436,6 +522,351 @@ async function chooseSession(page: Page, account: string) {
     window.dispatchEvent(new Event("focus"));
   }, account);
 }
+
+function readyRecord(item: Application): Application {
+  return {
+    ...reviewed(item, "approve"),
+    status: "ready",
+    badge: { id: id(91) },
+  } as Application;
+}
+
+for (const manager of [false, true]) {
+  test(`WebP download404 conceals private material before rechecking access, manager=${manager}`, async ({
+    page,
+  }) => {
+    const state = control();
+    state.records[0] = readyRecord(state.records[0]);
+    let releasePreview!: () => void;
+    state.mediaGate = new Promise<void>((resolve) => {
+      releasePreview = resolve;
+    });
+    await install(page, state);
+    await page.goto(
+      origin +
+        (manager ? "/workforce/reviews/" : "/workforce/applications/") +
+        state.records[0].id,
+    );
+    const image = page.getByRole("img", { name: "已保存的工牌图片" });
+    await expect(image).toBeVisible();
+    const source = await image.getAttribute("src");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    state.badgeFailure = 404;
+    if (manager) {
+      state.managementUnavailable = true;
+      state.gate = gate;
+    } else {
+      state.restricted = true;
+      state.ownGate = gate;
+    }
+    await page.getByRole("button", { name: "下载图片", exact: true }).click();
+    await expect(page.getByRole("img")).toHaveCount(0);
+    expect(
+      await page.evaluate(async (url) => {
+        try {
+          await fetch(url!);
+          return true;
+        } catch {
+          return false;
+        }
+      }, source),
+    ).toBe(false);
+    await expect(
+      page.getByText(state.records[0].snapshot.name, { exact: true }),
+    ).toHaveCount(0);
+    release();
+    if (manager)
+      await expect(
+        page.getByText("目前无法查看工牌审核。", { exact: true }),
+      ).toBeVisible();
+    else
+      await expect(
+        page.getByText("当前仅可查看申请类型、状态和提交时间。", {
+          exact: true,
+        }),
+      ).toBeVisible();
+    releasePreview();
+    await expect(page.getByRole("img")).toHaveCount(0);
+    expect(state.badgeReads).toHaveLength(2);
+    expect(
+      (await page.evaluate(() => window.reviewSessions.read()))?.session?.id,
+    ).toBe(accountId);
+  });
+}
+
+test("WebP deadline preserves a completed badge while submitted resources remain stalled", async ({
+  page,
+}) => {
+  await page.clock.install();
+  const state = control();
+  state.records[0] = readyRecord(state.records[0]);
+  let release!: () => void;
+  state.mediaGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await install(page, state);
+  await page.goto(origin + "/workforce/reviews/" + state.records[0].id);
+  const image = page.getByRole("img", { name: "已保存的工牌图片" });
+  await expect(image).toBeVisible();
+  await page.clock.fastForward(36000);
+  await expect(image).toBeVisible();
+  await expect(
+    page.getByText("工牌预览暂时无法显示，请重新加载。", { exact: true }),
+  ).toBeVisible();
+  release();
+  await expect(image).toBeVisible();
+  expect(state.renders).toBe(0);
+});
+
+test("WebP generation refreshes actual detail and every download performs a new authorized GET", async ({
+  page,
+}, info) => {
+  const state = control();
+  state.records[0] = reviewed(state.records[0], "approve");
+  await install(page, state);
+  await page.goto(origin + "/workforce/reviews/" + state.records[0].id);
+  await page.getByRole("button", { name: "生成工牌图片", exact: true }).click();
+  await expect(
+    page.getByRole("img", { name: "已保存的工牌图片" }),
+  ).toBeVisible();
+  expect(state.renders).toBe(1);
+  expect(state.detailReads).toBeGreaterThanOrEqual(2);
+  expect(state.badgeReads).toHaveLength(1);
+  for (let count = 2; count <= 3; count++) {
+    const downloaded = page.waitForEvent("download");
+    await page.getByRole("button", { name: "下载图片", exact: true }).click();
+    const file = await downloaded;
+    expect(file.suggestedFilename()).toBe(`badge-${id(91)}.webp`);
+    expect(await readFile((await file.path())!)).toEqual(state.background);
+    expect(state.badgeReads).toHaveLength(count);
+  }
+  expect(
+    state.badgeReads.every(
+      (read) =>
+        read.session === accountId && read.path.endsWith(id(91) + ".webp"),
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: info.outputPath("webp-manager-ready.png"),
+    fullPage: true,
+  });
+});
+
+test("WebP 503 refreshes first, conceals uncertain content and never resends generation", async ({
+  page,
+}) => {
+  await page.clock.install();
+  const state = control();
+  state.records[0] = reviewed(state.records[0], "approve");
+  state.renderStatus = 503;
+  state.renderCode = "outcome_unknown";
+  state.renderReadFailure = true;
+  await install(page, state);
+  await page.goto(origin + "/workforce/reviews/" + state.records[0].id);
+  await page.getByRole("button", { name: "生成工牌图片", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "暂时无法确认生成结果" }),
+  ).toBeVisible();
+  await expect(page.getByRole("img")).toHaveCount(0);
+  expect(state.renders).toBe(1);
+  state.readFailure = false;
+  state.renderStatus = 0;
+  await page.clock.fastForward(6000);
+  await page.getByRole("button", { name: "刷新详情", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "生成工牌图片", exact: true }),
+  ).toBeVisible();
+  expect(state.renders).toBe(1);
+  await page.getByRole("button", { name: "生成工牌图片", exact: true }).click();
+  await expect(
+    page.getByRole("img", { name: "已保存的工牌图片" }),
+  ).toBeVisible();
+  expect(state.renders).toBe(2);
+});
+
+test("WebP confirmed missing glyph is read from refreshed detail and remains a manual retry", async ({
+  page,
+}) => {
+  const state = control();
+  state.records[0] = reviewed(state.records[0], "approve");
+  state.renderStatus = 422;
+  state.renderCode = "missing_glyph";
+  await install(page, state);
+  await page.goto(origin + "/workforce/reviews/" + state.records[0].id);
+  await page.getByRole("button", { name: "生成工牌图片", exact: true }).click();
+  await expect(
+    page.getByText("部分文字无法显示，工牌图片未生成。", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "重试生成", exact: true }),
+  ).toBeEnabled();
+  expect(state.detailReads).toBeGreaterThanOrEqual(2);
+  expect(state.renders).toBe(1);
+});
+
+test("WebP download failure preserves the ready image and retries only a new file GET", async ({
+  page,
+}) => {
+  await page.clock.install();
+  const state = control();
+  state.records[0] = readyRecord(state.records[0]);
+  await install(page, state);
+  await page.goto(origin + "/workforce/reviews/" + state.records[0].id);
+  const image = page.getByRole("img", { name: "已保存的工牌图片" });
+  await expect(image).toBeVisible();
+  const source = await image.getAttribute("src");
+  state.badgeFailure = 503;
+  await page.getByRole("button", { name: "下载图片", exact: true }).click();
+  await expect(
+    page.getByText("暂时无法取得下载文件，请重新下载。", { exact: true }),
+  ).toBeVisible();
+  await expect(image).toHaveAttribute("src", source!);
+  expect(state.records[0].status).toBe("ready");
+  expect(state.renders).toBe(0);
+  await page.clock.fastForward(6000);
+  state.badgeFailure = 0;
+  const downloaded = page.waitForEvent("download");
+  await page.getByRole("button", { name: "重新下载", exact: true }).click();
+  await downloaded;
+  expect(state.badgeReads).toHaveLength(3);
+  await expect(image).toHaveAttribute("src", source!);
+});
+
+for (const manager of [false, true]) {
+  test(`WebP ready cancellation retains its stored image, manager=${manager}`, async ({
+    page,
+  }, info) => {
+    const state = control();
+    state.records[0] = readyRecord(state.records[0]);
+    await install(page, state);
+    if (!manager) {
+      await page.setViewportSize({ width: 320, height: 740 });
+      await page.emulateMedia({ colorScheme: "dark" });
+    }
+    await page.goto(
+      origin +
+        (manager ? "/workforce/reviews/" : "/workforce/applications/") +
+        state.records[0].id,
+    );
+    await expect(
+      page.getByRole("img", { name: "已保存的工牌图片" }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "取消申请", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toContainText("工牌图片已生成，取消后仍会保留。");
+    if (manager)
+      await dialog.getByRole("textbox").fill("申请人确认不再办理本次工牌。");
+    await dialog.getByRole("button", { name: "取消申请", exact: true }).click();
+    await expect(
+      page.getByRole("heading", { name: "工牌图片已保留", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("img", { name: "已保存的工牌图片" }),
+    ).toBeVisible();
+    expect(state.cancellations[0]).toMatchObject({
+      mode: manager ? "manager" : "self",
+      expectedStatus: "ready",
+    });
+    await page.screenshot({
+      path: info.outputPath(
+        `webp-cancelled-${manager ? "manager" : "self-dark-320"}.png`,
+      ),
+      fullPage: true,
+    });
+  });
+}
+
+test("WebP restricted ready exposes four summary fields and never reads private files", async ({
+  page,
+}) => {
+  const state = control();
+  state.records[0] = readyRecord(state.records[0]);
+  state.restricted = true;
+  state.grantFailure = true;
+  await install(page, state);
+  await page.goto(origin + "/workforce/applications/" + state.records[0].id);
+  await expect(
+    page.getByText("当前仅可查看申请类型、状态和提交时间。", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("img")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "下载图片", exact: true }),
+  ).toHaveCount(0);
+  expect(state.badgeReads).toHaveLength(0);
+  expect(state.resourceReads).toHaveLength(0);
+  await page.getByRole("button", { name: "取消申请", exact: true }).click();
+  await expect(page.getByRole("dialog").locator("dt")).toHaveText([
+    "申请编号",
+    "申请类型",
+    "申请状态",
+    "提交时间",
+  ]);
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "取消申请", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "申请已取消", exact: true }),
+  ).toBeVisible();
+  expect(state.cancellations[0]).toEqual({
+    mode: "self",
+    expectedStatus: "ready",
+  });
+});
+
+test("WebP stored image remains readable when submitted preview resources fail", async ({
+  page,
+}) => {
+  const state = control();
+  state.records[0] = readyRecord(state.records[0]);
+  state.mediaFailed = true;
+  await install(page, state);
+  await page.goto(origin + "/workforce/reviews/" + state.records[0].id);
+  await expect(
+    page.getByRole("img", { name: "已保存的工牌图片" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "下载图片", exact: true }),
+  ).toBeEnabled();
+  await expect(
+    page.getByText("工牌预览暂时无法显示，请重新加载。", { exact: true }),
+  ).toBeVisible();
+});
+
+test("WebP hide revokes the visible image and rejects a late file response", async ({
+  page,
+}) => {
+  const state = control();
+  state.records[0] = readyRecord(state.records[0]);
+  await install(page, state);
+  await page.goto(origin + "/workforce/reviews/" + state.records[0].id);
+  const image = page.getByRole("img", { name: "已保存的工牌图片" });
+  await expect(image).toBeVisible();
+  const source = await image.getAttribute("src");
+  let release!: () => void;
+  state.badgeGate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.getByRole("button", { name: "下载图片", exact: true }).click();
+  await expect.poll(() => state.badgeReads.length).toBe(2);
+  await page.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  await expect(page.getByRole("img")).toHaveCount(0);
+  release();
+  expect(
+    await page.evaluate(async (url) => {
+      try {
+        await fetch(url!);
+        return true;
+      } catch {
+        return false;
+      }
+    }, source),
+  ).toBe(false);
+  await expect(page.getByRole("img")).toHaveCount(0);
+});
 
 for (const restricted of [false, true]) {
   for (const status of ["submitted", "approved"] as const) {
@@ -1167,7 +1598,7 @@ test("own restricted reads remain available when the unrelated Grant read fails"
   await install(page, state);
   await page.goto(origin + "/workforce/applications");
   await expect(
-    page.getByText("当前仅可查看未发放申请的类型、状态和提交时间。", {
+    page.getByText("当前仅可查看可取消申请的类型、状态和提交时间。", {
       exact: true,
     }),
   ).toBeVisible();
@@ -1237,7 +1668,7 @@ test("an own media deadline retains fixed facts and trusted review results", asy
   await expect(page.locator(".review-facts")).toContainText("林*");
   await page.clock.fastForward(35001);
   await expect(
-    page.getByText("工牌预览暂时无法显示，请重新加载。", { exact: true }),
+    page.getByText("工牌预览暂时无法显示，请刷新详情。", { exact: true }),
   ).toBeVisible();
   await expect(page.locator(".application-snapshot").first()).toContainText(
     "测试同事",
@@ -1282,7 +1713,7 @@ test("own history shows all actual states and full reasons, while restricted his
   await expect(page.locator(".review-reason p")).toHaveText(reason);
   await expect(page.locator(".review-facts")).toContainText("林*");
   await expect(
-    page.getByText("工牌预览暂时无法显示，请重新加载。"),
+    page.getByText("工牌预览暂时无法显示，请刷新详情。"),
   ).toBeVisible();
   await page.screenshot({
     path: info.outputPath("own-rejected-full-reason-desktop.png"),

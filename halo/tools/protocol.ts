@@ -37,6 +37,8 @@ const endpoints: Record<string, readonly Method[]> = {
   "/api/v1/workforce/applications/{id}": ["get"],
   "/api/v1/workforce/applications/{id}/reviews": ["post"],
   "/api/v1/workforce/applications/{id}/cancellations": ["post"],
+  "/api/v1/workforce/applications/{id}/renders": ["post"],
+  "/api/v1/workforce/badges/{image}": ["get"],
   "/api/v1/workforce/current/applications": ["get"],
   "/api/v1/workforce/current/applications/{id}": ["get"],
   "/api/v1/workforce/grants/{id}/terminations": ["post"],

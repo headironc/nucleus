@@ -1602,6 +1602,109 @@ export default {
       ]
     }
   },
+  "POST /api/v1/workforce/applications/{id}/renders": {
+    "200": {
+      "validator": "workforceApplicationRender_200",
+      "codes": [
+        "ok"
+      ]
+    },
+    "400": {
+      "validator": "workforceApplicationRender_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "workforceApplicationRender_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "403": {
+      "validator": "workforceApplicationRender_403",
+      "codes": [
+        "permission_denied"
+      ]
+    },
+    "404": {
+      "validator": "workforceApplicationRender_404",
+      "codes": [
+        "target_unavailable"
+      ]
+    },
+    "409": {
+      "validator": "workforceApplicationRender_409",
+      "codes": [
+        "state_changed",
+        "applicant_unavailable"
+      ]
+    },
+    "413": {
+      "validator": "workforceApplicationRender_413",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "415": {
+      "validator": "workforceApplicationRender_415",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "422": {
+      "validator": "workforceApplicationRender_422",
+      "codes": [
+        "missing_glyph",
+        "text_overflow"
+      ]
+    },
+    "429": {
+      "validator": "workforceApplicationRender_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "503": {
+      "validator": "workforceApplicationRender_503",
+      "codes": [
+        "dependency_unavailable",
+        "outcome_unknown"
+      ]
+    }
+  },
+  "GET /api/v1/workforce/badges/{image}": {
+    "400": {
+      "validator": "workforceBadge_400",
+      "codes": [
+        "invalid_input"
+      ]
+    },
+    "401": {
+      "validator": "workforceBadge_401",
+      "codes": [
+        "authentication_invalid"
+      ]
+    },
+    "404": {
+      "validator": "workforceBadge_404",
+      "codes": [
+        "target_unavailable"
+      ]
+    },
+    "429": {
+      "validator": "workforceBadge_429",
+      "codes": [
+        "rate_limited"
+      ]
+    },
+    "503": {
+      "validator": "workforceBadge_503",
+      "codes": [
+        "dependency_unavailable"
+      ]
+    }
+  },
   "GET /api/v1/workforce/current/applications": {
     "200": {
       "validator": "workforceCurrentApplications_200",

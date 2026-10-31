@@ -27,6 +27,10 @@ import {
   type ApplicationArtwork,
 } from "./artwork";
 import type { ApplicationChoices } from "./application-fields";
+import { applicationBadge } from "../protocol/applications";
+import { loadBadgeImage, type BadgeImage } from "./badge-image";
+import { BadgeDownloads } from "./badge-downloads";
+import type { BadgeMedia, BadgeDownload } from "./badge-display";
 
 export type ApplicationMode =
   { kind: "new" } | { kind: "list" } | { kind: "detail"; id: string };
@@ -76,6 +80,8 @@ export type ApplicationState =
       cancellation?: boolean;
       pending?: boolean;
       notice?: string;
+      badge?: BadgeMedia;
+      download?: BadgeDownload;
     };
 
 const READ_ERROR = "暂时无法加载，请刷新后重试。";
@@ -103,13 +109,15 @@ const DEFAULT_API = {
   detail: application,
   resource: applicationResource,
   artwork: loadTemplateArtwork,
+  badge: loadBadgeImage,
 };
 type Dependencies = {
   current: Current;
   workforce: Workforce;
   build(): Promise<boolean>;
   now(): number;
-  api?: typeof DEFAULT_API;
+  api?: Omit<typeof DEFAULT_API, "badge"> &
+    Partial<Pick<typeof DEFAULT_API, "badge">>;
 };
 
 /** Owns one visible application page. No business material is persisted or replayed. */
@@ -138,11 +146,22 @@ export class Applications {
     application: Pick<Application, "id" | "kind" | "status" | "submittedAt">;
   };
   private closed = false;
+  private badgeImage?: BadgeImage;
+  private readonly downloads: BadgeDownloads;
   constructor(
     readonly mode: ApplicationMode,
     private readonly dependencies: Dependencies,
   ) {
-    this.api = dependencies.api ?? DEFAULT_API;
+    this.api = { ...DEFAULT_API, ...dependencies.api };
+    this.downloads = new BadgeDownloads({
+      ...dependencies,
+      read: this.api.badge,
+      unavailable: () => this.badgeUnavailable(),
+      changed: (download) => {
+        if (this.state.kind === "detail")
+          this.show({ ...this.state, download });
+      },
+    });
     this.unwatch = [
       dependencies.current.subscribe(this.changed),
       dependencies.workforce.subscribe(this.changed),
@@ -166,6 +185,7 @@ export class Applications {
     return state.kind === "ready" ? state.account.id : undefined;
   }
   private cancel() {
+    this.downloads.clear();
     if (this.cancellingAccount)
       this.uncertainCancellation = this.cancellingAccount;
     this.cancellingAccount = undefined;
@@ -178,6 +198,12 @@ export class Applications {
     this.timer = undefined;
   }
   private clear() {
+    this.clearPreview();
+    this.badgeImage?.close();
+    this.badgeImage = undefined;
+    this.downloads.clear();
+  }
+  private clearPreview() {
     this.previewArtwork?.close();
     this.previewArtwork = undefined;
     this.templateArtwork?.close();
@@ -260,13 +286,13 @@ export class Applications {
       const cancelling = !!this.cancellingAccount;
       const state = this.state;
       this.cancel();
-      this.clear();
       const retryAt = this.dependencies.now() + 5000;
       if (this.mode.kind !== "new") {
         this.retryAt = retryAt;
         this.waitingSelection = `${binding.selection.id}/${binding.selection.revision}`;
       }
       if (cancelling || this.uncertainCancellation === this.account()) {
+        this.clear();
         this.show({
           kind: "cancellation-unknown",
           retryAt,
@@ -278,16 +304,22 @@ export class Applications {
         !unknown &&
         state.kind === "detail" &&
         state.result.access === "full" &&
-        state.media === "loading"
+        (state.media === "loading" || state.badge?.kind === "loading")
       ) {
+        if (state.media === "loading") this.clearPreview();
         this.show({
-          kind: "detail",
-          result: state.result,
-          media: "failed",
-          retryAt,
+          ...state,
+          media: state.media === "loading" ? "failed" : state.media,
+          retryAt: state.media === "loading" ? retryAt : state.retryAt,
+          badge:
+            state.badge?.kind === "loading"
+              ? { kind: "failed", retryAt }
+              : state.badge,
+          download: { kind: "idle" },
         });
         return;
       }
+      this.clear();
       this.show(
         unknown
           ? { kind: "unknown" }
@@ -369,7 +401,11 @@ export class Applications {
       );
     }
   }
-  async load(page = 1, notice?: string): Promise<void> {
+  async load(
+    page = 1,
+    notice?: string,
+    badgeUnavailable = false,
+  ): Promise<void> {
     if (this.dependencies.now() < this.retryAt) {
       this.show(
         this.uncertainCancellation === this.account()
@@ -507,59 +543,18 @@ export class Applications {
           kind: "detail",
           result: result.value,
           media: "loading",
+          badge: applicationBadge(item)
+            ? badgeUnavailable
+              ? { kind: "failed", retryAt: this.dependencies.now() + 5000 }
+              : { kind: "loading" }
+            : undefined,
+          download: { kind: "idle" },
           notice,
         });
-        const resources = await this.api.artwork(
-          session,
-          item.snapshot.template,
-          scope.signal,
-        );
-        if (!scope.active()) {
-          if (resources.kind === "ok") resources.value.close();
-          return;
-        }
-        if (!(await scope.guard())) {
-          if (resources.kind === "ok") resources.value.close();
-          return;
-        }
-        if (resources.kind !== "ok")
-          return this.detailMediaFailure(
-            resources,
-            scope.binding,
-            result.value,
-          );
-        this.templateArtwork = resources.value;
-        const photo = await this.api.resource(
-          session,
-          item.photo.resourceId,
-          scope.signal,
-        );
-        if (!(await scope.guard())) return;
-        if (photo.kind !== "ok")
-          return this.detailMediaFailure(photo, scope.binding, result.value);
-        const artwork = await resources.value.preview(
-          item.snapshot,
-          item.photo,
-          photo.value.blob,
-        );
-        if (!scope.active()) {
-          if (artwork.kind === "ok") artwork.value.close();
-          return;
-        }
-        if (!(await scope.guard())) {
-          if (artwork.kind === "ok") artwork.value.close();
-          return;
-        }
-        if (artwork.kind !== "ok")
-          return this.detailMediaFailure(artwork, scope.binding, result.value);
-        this.previewArtwork = artwork.value;
-        this.show({
-          ...(this.state.kind === "detail" ? this.state : {}),
-          kind: "detail",
-          result: result.value,
-          artwork: artwork.value,
-          media: undefined,
-        });
+        await Promise.all([
+          this.detailPreview(result.value, scope),
+          badgeUnavailable ? undefined : this.detailBadge(result.value, scope),
+        ]);
       }
     } catch {
       if (scope.active()) {
@@ -575,12 +570,148 @@ export class Applications {
       scope.finish();
     }
   }
+  private async detailPreview(
+    detail: ApplicationDetail,
+    scope: NonNullable<ReturnType<Applications["scope"]>>,
+  ) {
+    if (detail.access !== "full") return;
+    const session = scope.binding.selection.id;
+    const item = detail.application;
+    try {
+      const resources = await this.api.artwork(
+        session,
+        item.snapshot.template,
+        scope.signal,
+      );
+      if (!scope.active()) {
+        if (resources.kind === "ok") resources.value.close();
+        return;
+      }
+      if (!(await scope.guard())) {
+        if (resources.kind === "ok") resources.value.close();
+        return;
+      }
+      if (resources.kind !== "ok")
+        return this.detailMediaFailure(resources, scope.binding, detail);
+      this.templateArtwork = resources.value;
+      const photo = await this.api.resource(
+        session,
+        item.photo.resourceId,
+        scope.signal,
+      );
+      if (!(await scope.guard())) return;
+      if (photo.kind !== "ok")
+        return this.detailMediaFailure(photo, scope.binding, detail);
+      const artwork = await resources.value.preview(
+        item.snapshot,
+        item.photo,
+        photo.value.blob,
+      );
+      if (!scope.active()) {
+        if (artwork.kind === "ok") artwork.value.close();
+        return;
+      }
+      if (!(await scope.guard())) {
+        if (artwork.kind === "ok") artwork.value.close();
+        return;
+      }
+      if (artwork.kind !== "ok")
+        return this.detailMediaFailure(artwork, scope.binding, detail);
+      this.previewArtwork = artwork.value;
+      this.show({
+        ...(this.state.kind === "detail" ? this.state : {}),
+        kind: "detail",
+        result: detail,
+        artwork: artwork.value,
+        media: undefined,
+      });
+    } catch {
+      if (scope.active()) {
+        if (this.state.kind === "detail")
+          await this.detailMediaFailure(
+            { kind: "disconnected" },
+            scope.binding,
+            this.state.result,
+          );
+        else await this.failure({ kind: "disconnected" }, scope.binding);
+      }
+    }
+  }
+  private async detailBadge(
+    detail: ApplicationDetail,
+    scope: NonNullable<ReturnType<Applications["scope"]>>,
+  ) {
+    if (detail.access !== "full") return;
+    const badge = applicationBadge(detail.application);
+    if (!badge) return;
+    const image = await this.api
+      .badge(scope.binding.selection.id, badge.id, scope.signal)
+      .catch(() => ({ kind: "disconnected" }) as const);
+    if (!(await scope.guard())) {
+      if (image.kind === "ok") image.value.close();
+      return;
+    }
+    if (image.kind !== "ok") {
+      if (image.kind === "failure" && image.status === 404) {
+        this.badgeUnavailable();
+        return;
+      }
+      if (
+        image.kind === "failure" &&
+        (image.status === 401 || image.status === 403)
+      ) {
+        await this.dependencies.current.reject(scope.binding, image.status);
+        return;
+      }
+      this.badgeFailed(image.kind === "failure" ? image.retryAfter : 0);
+      return;
+    }
+    this.badgeImage = image.value;
+    if (this.state.kind === "detail")
+      this.show({
+        ...this.state,
+        badge: { kind: "ready", image: image.value },
+      });
+  }
+  private badgeUnavailable() {
+    this.cancel();
+    this.clear();
+    this.retryAt = 0;
+    this.show({ kind: "loading" });
+    void this.load(this.page, undefined, true);
+  }
+  badgeFailed(delay = 0) {
+    if (this.state.kind !== "detail" || !this.state.badge) return;
+    this.badgeImage?.close();
+    this.badgeImage = undefined;
+    this.show({
+      ...this.state,
+      badge: {
+        kind: "failed",
+        retryAt: this.dependencies.now() + Math.max(5000, delay),
+      },
+    });
+  }
+  downloadBadge() {
+    const state = this.state;
+    if (
+      state.kind !== "detail" ||
+      state.pending ||
+      state.result.access !== "full" ||
+      state.badge?.kind !== "ready"
+    )
+      return;
+    const badge = applicationBadge(state.result.application);
+    if (badge) void this.downloads.start(badge.id);
+  }
   confirmCancellation() {
     const state = this.state;
     if (
       state.kind !== "detail" ||
       state.pending ||
-      !["submitted", "approved"].includes(state.result.application.status)
+      !["submitted", "approved", "ready"].includes(
+        state.result.application.status,
+      )
     )
       return;
     this.show({ ...state, cancellation: true });
@@ -593,7 +724,12 @@ export class Applications {
     const state = this.state;
     if (state.kind !== "detail" || !state.cancellation || state.pending) return;
     const expectedStatus = state.result.application.status;
-    if (expectedStatus !== "submitted" && expectedStatus !== "approved") return;
+    if (
+      expectedStatus !== "submitted" &&
+      expectedStatus !== "approved" &&
+      expectedStatus !== "ready"
+    )
+      return;
     const scope = this.scope();
     if (!scope) return;
     this.show({ ...state, pending: true });
@@ -611,7 +747,9 @@ export class Applications {
       if (result.kind === "ok") {
         this.uncertainCancellation = undefined;
         this.clear();
-        this.show({ kind: "cancelled" });
+        if (expectedStatus === "ready" && state.result.access === "full")
+          await this.load(1, "申请已取消，已生成的工牌图片仍保留。");
+        else this.show({ kind: "cancelled" });
       } else if (result.kind !== "failure" || result.status >= 500) {
         this.uncertainCancellation = this.account();
         this.clear();
@@ -652,14 +790,16 @@ export class Applications {
       (result.status === 401 || result.status === 403)
     )
       return this.failure(result, binding);
-    this.clear();
+    this.clearPreview();
     this.retryAt =
       this.dependencies.now() + Math.max(5000, result.retryAfter ?? 0);
     this.waitingSelection = `${binding.selection.id}/${binding.selection.revision}`;
     this.show({
+      ...(this.state.kind === "detail" ? this.state : {}),
       kind: "detail",
       result: detail,
       media: "failed",
+      artwork: undefined,
       retryAt: this.retryAt,
     });
   }
@@ -836,10 +976,13 @@ export class Applications {
   previewFailed() {
     if (this.state.kind === "detail" && this.state.pending) return;
     if (this.state.kind === "detail") {
-      const result = this.state.result;
-      this.cancel();
-      this.clear();
-      this.show({ kind: "detail", result, media: "failed", retryAt: 0 });
+      this.clearPreview();
+      this.show({
+        ...this.state,
+        artwork: undefined,
+        media: "failed",
+        retryAt: this.dependencies.now() + 5000,
+      });
     } else if (this.state.kind === "preview" && this.context) {
       this.previewArtwork?.close();
       this.previewArtwork = undefined;

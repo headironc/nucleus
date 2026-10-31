@@ -6,6 +6,8 @@ import {
   cancelApplication,
   applicationResource,
   sameApplicationContent,
+  applicationBadge,
+  renderApplication,
   type ApplicationStatus,
   type ManagedApplicationDetail,
   type ManagedApplicationList,
@@ -16,6 +18,9 @@ import {
   type ApplicationArtwork,
   type TemplateArtwork,
 } from "./artwork";
+import { loadBadgeImage, type BadgeImage } from "./badge-image";
+import { BadgeDownloads } from "./badge-downloads";
+import type { BadgeMedia, BadgeDownload } from "./badge-display";
 
 export type ReviewMode = { kind: "list" } | { kind: "detail"; id: string };
 type Media =
@@ -26,6 +31,9 @@ export type ReviewDetail = {
   kind: "detail";
   result: ManagedApplicationDetail;
   media: Media;
+  badge?: BadgeMedia;
+  download?: BadgeDownload;
+  renderRetryAt?: number;
   confirmation?: ReviewInput["decision"] | "cancel";
   pending: boolean;
   notice?: string;
@@ -35,7 +43,7 @@ export type ReviewsState =
   | { kind: "error" | "missing"; message: string; retryAt: number }
   | {
       kind: "unknown";
-      operation: "review" | "cancellation";
+      operation: "review" | "cancellation" | "generation";
       message: string;
       retryAt: number;
     }
@@ -54,6 +62,8 @@ const API = {
   cancellation: cancelApplication,
   resource: applicationResource,
   artwork: loadTemplateArtwork,
+  badge: loadBadgeImage,
+  render: renderApplication,
 };
 const READ_ERROR = "工牌申请暂时无法加载，请重试。";
 const UNKNOWN_COPY = "请刷新详情查看，暂时不要重复提交。";
@@ -75,6 +85,10 @@ export class Reviews {
   private uncertainAccount?: string;
   private writingAccount?: string;
   private cancellationUnknown = false;
+  private renderingUnknown = false;
+  private renderRetryAt = 0;
+  private badgeImage?: BadgeImage;
+  private readonly downloads: BadgeDownloads;
   private page = 1;
   private filter: ApplicationStatus = "submitted";
   constructor(
@@ -83,10 +97,20 @@ export class Reviews {
       current: Current;
       build(): Promise<boolean>;
       now(): number;
-      api?: typeof API;
+      api?: Omit<typeof API, "badge" | "render"> &
+        Partial<Pick<typeof API, "badge" | "render">>;
     },
   ) {
-    this.api = dependencies.api ?? API;
+    this.api = { ...API, ...dependencies.api };
+    this.downloads = new BadgeDownloads({
+      ...dependencies,
+      read: this.api.badge,
+      unavailable: () => this.badgeUnavailable(),
+      changed: (download) => {
+        if (this.state.kind === "detail")
+          this.show({ ...this.state, download });
+      },
+    });
     this.unwatch = dependencies.current.subscribe(this.changed);
     this.changed();
   }
@@ -103,12 +127,18 @@ export class Reviews {
   private unknown(retryAt = 0, message?: string) {
     this.show({
       kind: "unknown",
-      operation: this.cancellationUnknown ? "cancellation" : "review",
+      operation: this.renderingUnknown
+        ? "generation"
+        : this.cancellationUnknown
+          ? "cancellation"
+          : "review",
       message:
         message ??
-        (this.cancellationUnknown
-          ? "请刷新详情查看当前状态，暂时不要重复提交。"
-          : UNKNOWN_COPY),
+        (this.renderingUnknown
+          ? "暂时无法确认工牌图片是否已生成，请刷新申请状态后查看结果。"
+          : this.cancellationUnknown
+            ? "请刷新详情查看当前状态，暂时不要重复提交。"
+            : UNKNOWN_COPY),
       retryAt,
     });
   }
@@ -117,6 +147,7 @@ export class Reviews {
     return identity.kind === "ready" ? identity.account.id : undefined;
   }
   private cancel() {
+    this.downloads.clear();
     if (this.writingAccount) this.uncertainAccount = this.writingAccount;
     this.writingAccount = undefined;
     this.generation++;
@@ -126,6 +157,12 @@ export class Reviews {
     this.timer = undefined;
   }
   private clearMedia() {
+    this.clearPreview();
+    this.badgeImage?.close();
+    this.badgeImage = undefined;
+    this.downloads.clear();
+  }
+  private clearPreview() {
     this.artwork?.close();
     this.artwork = undefined;
     this.template?.close();
@@ -140,8 +177,10 @@ export class Reviews {
     if (
       this.waitingSelection !==
       `${binding.selection.id}/${binding.selection.revision}`
-    )
+    ) {
       this.retryAt = 0;
+      this.renderRetryAt = 0;
+    }
     void this.load(this.page, this.filter);
   };
   close() {
@@ -180,21 +219,30 @@ export class Reviews {
       const writing = !!this.writingAccount;
       const state = this.state;
       this.cancel();
-      this.clearMedia();
       this.retryAt = writing ? 0 : this.dependencies.now() + 5000;
       this.waitingSelection = `${binding.selection.id}/${binding.selection.revision}`;
       if (
         !writing &&
         state.kind === "detail" &&
         !state.pending &&
-        state.media.kind === "loading"
+        (state.media.kind === "loading" || state.badge?.kind === "loading")
       ) {
+        if (state.media.kind === "loading") this.clearPreview();
         this.show({
           ...state,
-          media: { kind: "failed", retryAt: this.retryAt },
+          media:
+            state.media.kind === "loading"
+              ? { kind: "failed", retryAt: this.retryAt }
+              : state.media,
+          badge:
+            state.badge?.kind === "loading"
+              ? { kind: "failed", retryAt: this.retryAt }
+              : state.badge,
+          download: { kind: "idle" },
         });
         return;
       }
+      this.clearMedia();
       if (writing || this.uncertainAccount === this.account())
         this.unknown(this.retryAt);
       else
@@ -266,6 +314,7 @@ export class Reviews {
     page = this.mode.kind === "list" ? 1 : this.page,
     status = this.filter,
     notice?: string,
+    badgeUnavailable = false,
   ) {
     if (this.dependencies.now() < this.retryAt) {
       if (
@@ -314,23 +363,156 @@ export class Reviews {
         const uncertain = this.uncertainAccount === this.account();
         this.uncertainAccount = undefined;
         this.cancellationUnknown = false;
+        this.renderingUnknown = false;
         this.retryAt = 0;
         this.show({
           kind: "detail",
           result: result.value,
           media: { kind: "loading" },
           pending: false,
+          badge: applicationBadge(result.value.application)
+            ? badgeUnavailable
+              ? { kind: "failed", retryAt: this.dependencies.now() + 5000 }
+              : { kind: "loading" }
+            : undefined,
+          download: { kind: "idle" },
+          renderRetryAt: this.renderRetryAt,
           notice:
             notice ??
             (uncertain && result.value.application.status === "submitted"
               ? "当前仍待审核，请查看申请内容后再作决定。"
               : undefined),
         });
-        await this.media(result.value, scope);
+        await Promise.all([
+          this.media(result.value, scope).catch(() =>
+            scope.active()
+              ? this.mediaFailure({ kind: "disconnected" }, scope.binding)
+              : undefined,
+          ),
+          badgeUnavailable ? undefined : this.badgeMedia(result.value, scope),
+        ]);
       }
     } catch {
       if (scope.active())
         await this.failure({ kind: "disconnected" }, scope.binding);
+    } finally {
+      scope.finish();
+    }
+  }
+  private async badgeMedia(
+    result: ManagedApplicationDetail,
+    scope: NonNullable<ReturnType<Reviews["scope"]>>,
+  ) {
+    const badge = applicationBadge(result.application);
+    if (!badge) return;
+    const image = await this.api
+      .badge(scope.binding.selection.id, badge.id, scope.signal)
+      .catch(() => ({ kind: "disconnected" }) as const);
+    if (!(await scope.guard())) {
+      if (image.kind === "ok") image.value.close();
+      return;
+    }
+    if (image.kind !== "ok") {
+      if (image.kind === "failure" && image.status === 404) {
+        this.badgeUnavailable();
+        return;
+      }
+      if (
+        image.kind === "failure" &&
+        (image.status === 401 || image.status === 403)
+      ) {
+        await this.dependencies.current.reject(scope.binding, image.status);
+        return;
+      }
+      this.badgeFailed(image.kind === "failure" ? image.retryAfter : 0);
+      return;
+    }
+    this.badgeImage = image.value;
+    if (this.state.kind === "detail")
+      this.show({
+        ...this.state,
+        badge: { kind: "ready", image: image.value },
+      });
+  }
+  badgeFailed(delay = 0) {
+    if (this.state.kind !== "detail" || !this.state.badge) return;
+    this.badgeImage?.close();
+    this.badgeImage = undefined;
+    this.show({
+      ...this.state,
+      badge: {
+        kind: "failed",
+        retryAt: this.dependencies.now() + Math.max(5000, delay),
+      },
+    });
+  }
+  private badgeUnavailable() {
+    this.cancel();
+    this.clearMedia();
+    this.retryAt = 0;
+    this.show({ kind: "loading" });
+    void this.load(this.page, this.filter, undefined, true);
+  }
+  downloadBadge() {
+    const state = this.state;
+    if (
+      state.kind !== "detail" ||
+      state.pending ||
+      state.badge?.kind !== "ready"
+    )
+      return;
+    const badge = applicationBadge(state.result.application);
+    if (badge) void this.downloads.start(badge.id);
+  }
+  async render() {
+    const state = this.state;
+    if (
+      state.kind !== "detail" ||
+      state.pending ||
+      state.result.application.status !== "approved" ||
+      !state.result.current.accountActive ||
+      !state.result.current.participationActive ||
+      this.renderRetryAt > this.dependencies.now()
+    )
+      return;
+    const scope = this.scope();
+    if (!scope) return;
+    this.show({ ...state, pending: true });
+    try {
+      if (!(await scope.guard())) return;
+      this.writingAccount = this.account();
+      this.renderingUnknown = true;
+      const result = await this.api.render(
+        scope.binding.selection.id,
+        state.result.application.id,
+        scope.signal,
+      );
+      if (!(await scope.guard())) return;
+      this.writingAccount = undefined;
+      this.uncertainAccount = this.account();
+      this.clearMedia();
+      if (
+        result.kind === "failure" &&
+        (result.status === 401 || result.status === 403)
+      ) {
+        await this.dependencies.current.reject(scope.binding, result.status);
+        return;
+      }
+      this.renderRetryAt =
+        result.kind === "failure"
+          ? this.dependencies.now() + result.retryAfter
+          : 0;
+      this.waitingSelection = `${scope.binding.selection.id}/${scope.binding.selection.revision}`;
+      this.retryAt = 0;
+      this.unknown();
+      await this.load();
+    } catch {
+      if (scope.active()) {
+        this.writingAccount = undefined;
+        this.uncertainAccount = this.account();
+        this.clearMedia();
+        this.unknown();
+      }
     } finally {
       scope.finish();
     }
@@ -381,7 +563,7 @@ export class Reviews {
     result: { kind: string; status?: number; retryAfter?: number },
     binding: CurrentBinding,
   ) {
-    this.clearMedia();
+    this.clearPreview();
     if (
       result.kind === "failure" &&
       (result.status === 401 || result.status === 403)
@@ -406,7 +588,7 @@ export class Reviews {
     if (this.state.kind !== "detail" || this.state.pending) return;
     const binding = this.dependencies.current.binding();
     if (!binding) return;
-    this.clearMedia();
+    this.clearPreview();
     this.retryAt = this.dependencies.now() + 5000;
     this.waitingSelection = `${binding.selection.id}/${binding.selection.revision}`;
     this.show({
@@ -421,7 +603,9 @@ export class Reviews {
       state.kind !== "detail" ||
       state.pending ||
       (decision === "cancel"
-        ? !["submitted", "approved"].includes(state.result.application.status)
+        ? !["submitted", "approved", "ready"].includes(
+            state.result.application.status,
+          )
         : state.result.application.status !== "submitted")
     )
       return;
@@ -553,7 +737,12 @@ export class Reviews {
     )
       return;
     const expectedStatus = state.result.application.status;
-    if (expectedStatus !== "submitted" && expectedStatus !== "approved") return;
+    if (
+      expectedStatus !== "submitted" &&
+      expectedStatus !== "approved" &&
+      expectedStatus !== "ready"
+    )
+      return;
     const input = { mode: "manager", expectedStatus, reason } as const;
     if (new TextEncoder().encode(JSON.stringify(input)).byteLength > 8192)
       return;
@@ -576,7 +765,13 @@ export class Reviews {
         this.uncertainAccount = undefined;
         this.cancellationUnknown = false;
         this.clearMedia();
-        this.show({ kind: "cancelled" });
+        if (expectedStatus === "ready")
+          await this.load(
+            this.page,
+            this.filter,
+            "申请已取消，已生成的工牌图片仍保留。",
+          );
+        else this.show({ kind: "cancelled" });
       } else if (result.kind !== "failure" || result.status >= 500) {
         this.uncertainAccount = this.account();
         this.clearMedia();

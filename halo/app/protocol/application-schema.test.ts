@@ -100,7 +100,7 @@ describe("the actual badge cancellation schemas", () => {
 
   it("requires explicit mode, confirmed unfinished state and a manager reason", () => {
     for (const mode of ["self", "manager"]) {
-      for (const expectedStatus of ["submitted", "approved"]) {
+      for (const expectedStatus of ["submitted", "approved", "ready"]) {
         const value = {
           mode,
           expectedStatus,
@@ -111,7 +111,6 @@ describe("the actual badge cancellation schemas", () => {
     }
     for (const value of [
       { mode: "self" },
-      { mode: "self", expectedStatus: "ready" },
       { mode: "self", expectedStatus: "cancelled" },
       { mode: "self", expectedStatus: "submitted", reason: "Unexpected" },
       { mode: "manager", expectedStatus: "approved" },

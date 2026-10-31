@@ -3,6 +3,7 @@ import binary from "./generated/binary.js";
 import { decode, retryAfter } from "./response";
 import type contracts from "./generated/contracts.js";
 import type { Failure } from "./session";
+import { readBadgeBytes } from "./badge-media";
 
 export type ApplicationSnapshot = components["schemas"]["application.Snapshot"];
 export type ApplicationTemplate =
@@ -27,6 +28,65 @@ export type CancellationInput =
   components["schemas"]["application.CancellationInput"];
 export type PhotoMetadata = components["schemas"]["application.Photo"];
 export type ApplicationResult<T> = { kind: "ok"; value: T } | Failure;
+
+export function applicationBadge(application: Application) {
+  return application.status === "ready" || application.status === "cancelled"
+    ? application.badge
+    : undefined;
+}
+
+export async function renderApplication(
+  session: string,
+  id: string,
+  signal: AbortSignal,
+) {
+  const result = await request<components["schemas"]["application.Rendered"]>(
+    "POST /api/v1/workforce/applications/{id}/renders",
+    `/api/v1/workforce/applications/${encodeURIComponent(id)}/renders`,
+    session,
+    signal,
+    {},
+  );
+  if (result.kind === "ok" && result.value.application.id !== id)
+    return { kind: "untrusted" } as const;
+  return result;
+}
+
+export async function badgeResource(
+  session: string,
+  id: string,
+  signal: AbortSignal,
+): Promise<ApplicationResult<Blob>> {
+  try {
+    const response = await fetch(
+      `/api/v1/workforce/badges/${encodeURIComponent(id + ".webp")}`,
+      {
+        headers: { "Session-Id": session, Accept: "image/webp" },
+        credentials: "same-origin",
+        cache: "no-store",
+        redirect: "error",
+        signal,
+      },
+    );
+    if (response.status !== 200) {
+      const value = await decode(
+        response,
+        "GET /api/v1/workforce/badges/{image}",
+      );
+      return value
+        ? {
+            kind: "failure",
+            code: String(value.code),
+            status: response.status,
+            retryAfter: retryAfter(response),
+          }
+        : { kind: "untrusted" };
+    }
+    return await readBadgeBytes(response, signal);
+  } catch {
+    return { kind: "disconnected" };
+  }
+}
 
 /** Compares actual JSON content, without introducing a digest or version identity. */
 export function sameApplicationContent(left: unknown, right: unknown): boolean {
@@ -275,7 +335,10 @@ export async function applications(
   if (
     result.value.access === "restricted" &&
     result.value.applications.some(
-      (item) => item.status !== "submitted" && item.status !== "approved",
+      (item) =>
+        item.status !== "submitted" &&
+        item.status !== "approved" &&
+        item.status !== "ready",
     )
   )
     return { kind: "untrusted" };
@@ -311,7 +374,7 @@ export async function application(
     return { kind: "untrusted" };
   if (result.kind === "ok" && result.value.access === "restricted") {
     const { id, kind, status, submittedAt } = result.value.application;
-    if (status !== "submitted" && status !== "approved")
+    if (status !== "submitted" && status !== "approved" && status !== "ready")
       return { kind: "untrusted" };
     return {
       kind: "ok",

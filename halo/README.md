@@ -181,6 +181,24 @@ bun run test:browser -- tests/reviews.spec.ts tests/cancellation-dialog.spec.ts 
 
 受控浏览器检查覆盖本人完整及受限读取、显式管理模式、取消说明、状态竞争、未知结果与历史展示。后端事务及真实组合分别按[申请验收](../docs/workforce/applications.md#验收)取证。
 
+## 工牌图片
+
+管理详情在审核结果之后展示工牌图片。管理者明确生成已批准的固定快照，随后刷新详情。生成响应丢失或返回 `503` 时，只读取当前状态，不自动再次生成。可信详情仍为 `approved` 且没有成品时，管理者可明确重试。页面不提供发放动作。
+
+`ready` 显示已生成成品，完整本人和管理详情提供预览与下载。本人受限读取仍只有申请编号、类型、状态和提交时间。取消 `ready` 申请使用当前 `expectedStatus`；完整详情保留已生成的图片，受限本人不读取成品。
+
+`badge-media.ts` 按[成品预算](../docs/workforce/fulfillment.md#成品格式)有界读取编码字节。`badge-image.ts` 检查静态图像及解码尺寸，拥有原字节的预览 URL。`badge-downloads.ts` 为每次下载重新读取受保护文件，不复用预览代替授权。页面隐藏、身份变化及离页时释放媒体，并丢弃迟到结果。
+
+可信成品 `404` 会立即清除旧私有媒体，再重读所属详情。新结果决定完整、受限、不可见或拒绝访问的展示，不据此注销会话或推断写入结果。文件故障 `503` 保留已生成事实和已成功的预览，提供人工重新读取或下载。
+
+```bash
+cd halo
+bun run test -- app/protocol/badge-media.test.ts app/protocol/badge-protocol.test.ts app/workforce/badge-image.test.ts
+bun run test:browser -- tests/reviews.spec.ts --grep WebP
+```
+
+这些浏览器用例运行实际页面与控制器，使用受控 HTTP 响应。它们检查生成后的读取、逐次下载、取消保留、受限摘要、失权遮蔽及资源释放。业务无损 WebP、真实鉴权和数据库结果由准确组合候选另行验收。
+
 ## 头像本地选择与预览
 
 `app/avatar/candidate.ts` 读取本地文件，核对大小、实际格式、动画和正方形尺寸后解码预览。`format.ts` 检查图片容器，并仅为预览去除方向元数据。候选保留原 `File`，不会裁剪、缩放或改写待提交字节。重新选择、取消和关闭时释放旧解码资源；迟到的解码结果不能覆盖后来选择。

@@ -1,0 +1,154 @@
+@layer components {
+  .badge-production {
+    background: var(--ok-soft);
+  }
+  .badge-production h3 {
+    margin-top: 1rem;
+    font-size: 1rem;
+    line-height: 1.7;
+  }
+  .badge-production > p,
+  .badge-render-error {
+    margin-top: 0.65rem;
+    font-size: 0.85rem;
+    line-height: 1.9;
+    color: var(--sub);
+  }
+  .badge-render-error p + p {
+    margin-top: 0.5rem;
+  }
+  .badge-content-stack {
+    display: grid;
+    align-content: start;
+    gap: 1.25rem;
+    min-width: 0;
+  }
+  .badge-own-layout .review-decision {
+    align-self: start;
+  }
+  @media (max-width: 700px) {
+    .badge-own-layout {
+      display: flex;
+      flex-direction: column;
+    }
+    .badge-own-layout > .badge-content-stack {
+      display: contents;
+    }
+    .badge-own-layout .badge-production {
+      order: -2;
+    }
+    .badge-own-layout .badge-preview {
+      order: -1;
+    }
+    .badge-own-layout .review-aside {
+      display: contents;
+    }
+  }
+  .badge-preview-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+  }
+  .badge-preview-heading > span {
+    font-size: 0.75rem;
+    color: var(--sub);
+    white-space: nowrap;
+  }
+  .badge-preview figure {
+    margin: 0;
+    padding: 1.5rem;
+  }
+  .badge-stage {
+    padding: 1.3rem;
+    border-radius: 0.8rem;
+    background: var(--surface);
+  }
+  .badge-stage img {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: 65dvh;
+    object-fit: contain;
+  }
+  .badge-preview figcaption {
+    margin-top: 1rem;
+    font-size: 0.75rem;
+    line-height: 1.9;
+    color: var(--sub);
+  }
+  .badge-media-message {
+    display: grid;
+    justify-items: start;
+    gap: 0.85rem;
+    padding-block: 1.5rem;
+  }
+  .badge-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.65rem;
+    margin-top: 1.4rem;
+  }
+  .badge-actions > button {
+    flex: 1 1 auto;
+    min-height: 44px;
+  }
+  .badge-actions .primary:hover:not(:disabled),
+  .badge-lightbox .primary:hover:not(:disabled) {
+    background: var(--sage);
+    color: var(--paper);
+    filter: brightness(0.94);
+  }
+  .badge-download-error {
+    margin-top: 1rem;
+    font-size: 0.85rem;
+    line-height: 1.8;
+    overflow-wrap: anywhere;
+  }
+  .badge-lightbox {
+    width: min(60rem, calc(100% - 2.25rem));
+    max-height: calc(100dvh - 2.25rem);
+    overflow-y: auto;
+    padding: 1.5rem;
+  }
+  .badge-lightbox-heading {
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .badge-lightbox-heading h2 {
+    font: 500 1.4rem/1.6 var(--song);
+  }
+  .badge-lightbox-description {
+    margin-block: 0.7rem 1.2rem;
+    color: var(--sub);
+    font-size: 0.85rem;
+  }
+  .badge-lightbox-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: end;
+    gap: 1rem;
+    margin-top: 1.2rem;
+  }
+  .badge-lightbox-actions p {
+    flex: 1 1 15rem;
+    overflow-wrap: anywhere;
+  }
+  @media (max-width: 480px) {
+    .badge-preview figure {
+      padding: 1rem;
+    }
+    .badge-stage {
+      padding: 0.75rem;
+    }
+    .badge-lightbox {
+      padding: 1rem;
+    }
+    .badge-lightbox-actions > button {
+      width: 100%;
+    }
+  }
+}

@@ -15,6 +15,7 @@ import {
 } from "../workforce/reviews";
 import { ReviewDialog } from "../workforce/review-dialog";
 import { CancellationDialog } from "../workforce/cancellation-dialog";
+import { BadgePreview, BadgeProduction } from "../workforce/badge-display";
 import {
   APPLICATION_KINDS as KINDS,
   APPLICATION_STATUSES as STATUSES,
@@ -197,44 +198,55 @@ function Detail({
         </p>
       )}
       <div className="review-columns">
-        <section className="review-panel">
-          <div className="review-panel-heading">
-            <h2>申请内容</h2>
-          </div>
-          <div className="review-panel-content">
-            {state.media.kind === "ready" ? (
-              <PreviewFigure
-                artwork={state.media.artwork}
-                failed={() => controller.mediaFailed()}
-                caption="申请提交时确认的工牌内容。"
-              />
-            ) : (
-              <div
-                className="review-media"
-                role="status"
-                aria-busy={state.media.kind === "loading"}
-              >
-                <p>
-                  {state.media.kind === "loading"
-                    ? "正在加载工牌预览…"
-                    : "工牌预览暂时无法显示，请重新加载。"}
-                </p>
-                {state.media.kind === "failed" && (
-                  <Button
-                    className="secondary"
-                    disabled={state.media.retryAt > now}
-                    onClick={() => void controller.load()}
-                  >
-                    {state.media.retryAt > now
-                      ? `${Math.ceil((state.media.retryAt - now) / 1000)} 秒后可重新加载`
-                      : "重新加载预览"}
-                  </Button>
-                )}
-              </div>
-            )}
-            <SnapshotDetails snapshot={item.snapshot} />
-          </div>
-        </section>
+        <div className="badge-content-stack">
+          <section className="review-panel">
+            <div className="review-panel-heading">
+              <h2>申请内容</h2>
+            </div>
+            <div className="review-panel-content">
+              {state.media.kind === "ready" ? (
+                <PreviewFigure
+                  artwork={state.media.artwork}
+                  failed={() => controller.mediaFailed()}
+                  caption="申请提交时确认的工牌内容。"
+                />
+              ) : (
+                <div
+                  className="review-media"
+                  role="status"
+                  aria-busy={state.media.kind === "loading"}
+                >
+                  <p>
+                    {state.media.kind === "loading"
+                      ? "正在加载工牌预览…"
+                      : "工牌预览暂时无法显示，请重新加载。"}
+                  </p>
+                  {state.media.kind === "failed" && (
+                    <Button
+                      className="secondary"
+                      disabled={state.media.retryAt > now}
+                      onClick={() => void controller.load()}
+                    >
+                      {state.media.retryAt > now
+                        ? `${Math.ceil((state.media.retryAt - now) / 1000)} 秒后可重新加载`
+                        : "重新加载预览"}
+                    </Button>
+                  )}
+                </div>
+              )}
+              <SnapshotDetails snapshot={item.snapshot} />
+            </div>
+          </section>
+          {state.badge && (
+            <BadgePreview
+              media={state.badge}
+              retained={item.status === "cancelled"}
+              now={now}
+              retry={() => void controller.load()}
+              failed={() => controller.badgeFailed()}
+            />
+          )}
+        </div>
         <aside className="review-aside" aria-label="当前变化与审核">
           <CurrentChanges result={state.result} />
           <section className="review-panel review-panel-content review-decision">
@@ -274,19 +286,36 @@ function Detail({
               <>
                 <p>
                   {item.status === "approved"
-                    ? "审核通过，工牌制作和发放另行办理。"
-                    : item.status === "cancelled"
-                      ? "申请已取消。申请人如需办理，须重新申请。"
-                      : "审核未通过，申请人可修改资料后重新申请。"}
+                    ? "申请已审核通过。"
+                    : item.status === "ready"
+                      ? "工牌图片已生成。"
+                      : item.status === "cancelled"
+                        ? "申请已取消。申请人如需办理，须重新申请。"
+                        : "审核未通过，申请人可修改资料后重新申请。"}
                 </p>
                 <ReviewFacts application={item} />
               </>
             )}
           </section>
+          <BadgeProduction
+            application={item}
+            manager
+            eligible={eligible}
+            generating={state.pending && !state.confirmation}
+            retryAt={state.renderRetryAt}
+            now={now}
+            media={state.badge}
+            download={state.download}
+            generate={() => void controller.render()}
+            submit={() => controller.downloadBadge()}
+            failed={() => controller.badgeFailed()}
+          />
         </aside>
       </div>
       <div className="review-actions">
-        {(item.status === "submitted" || item.status === "approved") && (
+        {(item.status === "submitted" ||
+          item.status === "approved" ||
+          item.status === "ready") && (
           <Button
             ref={cancelTrigger}
             className="review-danger"
@@ -428,7 +457,9 @@ export function ReviewsPanel({ controllers }: { controllers: Controllers }) {
                 {state.kind === "unknown"
                   ? state.operation === "cancellation"
                     ? "暂时无法确认取消结果"
-                    : "暂时无法确认审核结果"
+                    : state.operation === "generation"
+                      ? "暂时无法确认生成结果"
+                      : "暂时无法确认审核结果"
                   : state.kind === "missing"
                     ? "目前无法查看这份申请"
                     : "工牌申请暂时无法加载"}

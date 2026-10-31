@@ -30,7 +30,9 @@ export function CancellationDialog({
   const errorMessage = useRef<HTMLParagraphElement>(null);
   const manager = mode === "manager";
   const cancellable =
-    application.status === "submitted" || application.status === "approved";
+    application.status === "submitted" ||
+    application.status === "approved" ||
+    application.status === "ready";
   useLayoutEffect(() => {
     if (error) errorMessage.current?.scrollIntoView({ block: "nearest" });
   }, [error]);
@@ -83,6 +85,8 @@ export function CancellationDialog({
                 {pending ? "正在取消申请…" : "取消申请？"}
               </Dialog.Title>
               <Dialog.Description>
+                {application.status === "ready" &&
+                  "工牌图片已生成，取消后仍会保留。"}
                 取消后无法恢复。
                 {manager
                   ? "申请人如需办理，须重新申请。"

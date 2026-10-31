@@ -13,6 +13,7 @@ export const APPLICATION_KINDS = {
 export const APPLICATION_STATUSES = {
   submitted: "待审核",
   approved: "审核通过",
+  ready: "工牌图片已生成",
   rejected: "审核未通过",
   cancelled: "已取消",
 };
