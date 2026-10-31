@@ -58,7 +58,7 @@ export type BadgeObservation = {
   resourceId: string | null;
 };
 
-async function wire(response: APIResponse | PageResponse): Promise<Wire> {
+export async function wire(response: APIResponse | PageResponse): Promise<Wire> {
   const headers = response.headers();
   return {
     status: response.status(),
@@ -71,7 +71,7 @@ async function wire(response: APIResponse | PageResponse): Promise<Wire> {
 }
 
 /** Observer facts come from the same generated contract used by the real page. */
-async function trusted<T>(
+export async function trusted<T>(
   value: Wire,
   endpoint: keyof typeof contracts,
   status: number,
@@ -450,12 +450,12 @@ export async function ownBadgeApplications(
       ])
         await expect(details.getByText(text, { exact: true })).toBeVisible();
       await expect(
-        dialog.getByRole("img", { name: "本次工牌完整预览" }),
+        dialog.getByRole("img", { name: "工牌预览", exact: true }),
       ).toBeVisible();
       await expect
         .poll(() =>
           dialog
-            .getByRole("img", { name: "本次工牌完整预览" })
+            .getByRole("img", { name: "工牌预览", exact: true })
             .evaluate((node, layout) => {
               const canvas = node as HTMLCanvasElement;
               const x = Math.floor(
@@ -538,7 +538,7 @@ export async function ownBadgeApplications(
       expect(detail.access).toBe("full");
       expect(detail.application).toEqual(expected);
       await expect(
-        page.getByRole("img", { name: "本次工牌完整预览" }),
+        page.getByRole("img", { name: "工牌预览", exact: true }),
       ).toBeVisible();
       await picture(page, `history-${index + 1}`);
     }
@@ -671,7 +671,7 @@ export async function ownBadgeApplications(
       page.getByRole("link", { name: "查看详情", exact: true }),
     ).toHaveCount(4);
     await expect(
-      page.getByRole("img", { name: "本次工牌完整预览" }),
+      page.getByRole("img", { name: "工牌预览", exact: true }),
     ).toHaveCount(0);
     await picture(page, "restricted-history");
     const restrictedDetail = responseFor(
@@ -694,7 +694,7 @@ export async function ownBadgeApplications(
     ]);
     await expect(page.locator(".application-snapshot")).toHaveCount(0);
     await expect(
-      page.getByRole("img", { name: "本次工牌完整预览" }),
+      page.getByRole("img", { name: "工牌预览", exact: true }),
     ).toHaveCount(0);
     expect(resources).toBe(resourceCount);
     const denied = await trusted<{ code: string }>(
@@ -721,6 +721,7 @@ export async function ownBadgeApplications(
         previewRequests: previews,
       }),
     );
+    return { applications: records, grantId: grant.grant.id };
   } finally {
     await page.unroute("**/api/v1/workforce/applications", submit);
     await page.unroute("**/api/v1/workforce/application-photos", photo);

@@ -9,6 +9,7 @@ import { ownNumbers } from "./numbers";
 import { ownTermination } from "./termination";
 import { admissionAndFirstNumber } from "./admission-number";
 import { ownBadgeApplications } from "./badge-applications";
+import { reviewBadgeApplications } from "./badge-reviews";
 import { ownMobileChange } from "./mobile-change";
 import { cookieDigests, identityObservation, identityReads } from "./identity";
 import { affiliationObservation } from "./affiliation";
@@ -314,7 +315,7 @@ async function prepareBadgeDirectory(
   manager: Session,
   other: { account: Account; session: Session },
 ) {
-  await page.evaluate(async ({ manager, other }) => {
+  return page.evaluate(async ({ manager, other }) => {
     const request = async (
       session: string, path: string, input: unknown, method = "POST", status = 201,
     ) => {
@@ -367,6 +368,7 @@ async function prepareBadgeDirectory(
         departmentId: department.id, position: subtype !== 902,
       }, "PUT");
     }
+    return { role, department };
   }, { manager, other });
 }
 
@@ -2193,8 +2195,12 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
       choose(page, session),
     );
     const other = await registerRealAccount(page, "13900000018", "Badge Observer", "000000200002298899");
-    await prepareBadgeDirectory(page, replacement, other);
-    await ownBadgeApplications(page, replacement, colleague, other, (session) => choose(page, session));
+    const fixture = await prepareBadgeDirectory(page, replacement, other);
+    const submitted = await ownBadgeApplications(page, replacement, colleague, other, (session) => choose(page, session));
+    await reviewBadgeApplications(page, {
+      manager: replacement, owner: colleague, reviewer: other, fixture, submitted,
+      select: (session) => choose(page, session),
+    });
   });
   await ownWorkforce(page, replacement.id, secondSession!.id);
   const recoverTermination = await ownTermination(
