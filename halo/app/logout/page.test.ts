@@ -27,10 +27,15 @@ describe("logout page disclosure and recovery links", () => {
         canStart: false,
         newLogin: false,
       });
-      expect(html).toContain("查询不会再次退出");
-      expect(html).toContain("暂未查到不表示退出失败");
-      expect(html).toContain("同一账户");
-      expect(html).toContain("<h1>此前退出结果</h1>");
+      expect(html).toContain("退出结果尚不确定");
+      expect(html).toContain("查看退出结果");
+      expect(html).toContain(
+        notice === "limited"
+          ? "暂时无法查看退出结果，请稍后再试。"
+          : "请稍后查看退出结果，暂时不要重复退出。",
+      );
+      expect(html).not.toContain("重新确认退出");
+      expect(html).toContain("<h1>退出结果</h1>");
     },
   );
   it("distinguishes a failed read from an unqueried result", () => {
@@ -43,12 +48,13 @@ describe("logout page disclosure and recovery links", () => {
       canStart: false,
       newLogin: false,
     });
-    expect(html).toContain("暂时无法读取退出结果");
-    expect(html).not.toContain("本次退出结果待确认");
+    expect(html).toContain("暂时无法查看退出结果，请稍后再试。");
+    expect(html).toContain("退出结果尚不确定");
+    expect(html).not.toContain("已退出登录");
   });
   it("names the active submission and immediate completion as the current logout", () => {
     expect(page({ kind: "submitting", pending: true })).toContain(
-      "<h1>本次退出结果</h1>",
+      "正在退出登录…",
     );
     const html = page({
       kind: "result",
@@ -59,9 +65,10 @@ describe("logout page disclosure and recovery links", () => {
       canStart: false,
       newLogin: false,
     });
-    expect(html).toContain("<h1>本次退出结果</h1>");
-    expect(html).toContain("本次登录已退出");
-    expect(html).not.toContain("此前登录已退出");
+    expect(html).toContain("<h1>退出结果</h1>");
+    expect(html).toContain("已退出登录");
+    expect(html).toContain('class="primary" href="/"');
+    expect(html).not.toContain("此前的退出已完成");
   });
   it.each([
     "checking",
@@ -91,9 +98,7 @@ describe("logout page disclosure and recovery links", () => {
   it("does not promise recovery when the original material is missing", () => {
     const html = page({ kind: "missing" });
     expect(html).toContain('href="/authentication/codes"');
-    expect(html).not.toMatch(
-      /return=logout-result|>查看本次退出结果<|>确认退出/,
-    );
+    expect(html).not.toMatch(/return=logout-result|>查看退出结果<|>退出登录</);
     expect(html).not.toContain("查询不会再次退出");
   });
   it("omits query guidance after a refused query", () => {
@@ -119,7 +124,9 @@ describe("logout page disclosure and recovery links", () => {
       pending: true,
     });
     expect(html).toContain('href="/authentication/codes?return=logout-result"');
-    expect(html).toContain("此前退出的结果仍待确认");
+    expect(html).toContain(
+      "退出结果尚未确认。请使用原账户的手机号登录，继续查看退出结果。",
+    );
   });
   it("separates the original completion from a newer login", () => {
     const html = page({
@@ -131,7 +138,9 @@ describe("logout page disclosure and recovery links", () => {
       canStart: true,
       newLogin: true,
     });
-    expect(html).toContain("当前的新登录仍然有效");
-    expect(html).not.toContain("查看本次退出结果");
+    expect(html).toContain("此前的退出已完成");
+    expect(html).toContain('href="/account"');
+    expect(html).not.toContain("当前的新登录仍然有效");
+    expect(html).not.toContain("查看退出结果");
   });
 });
