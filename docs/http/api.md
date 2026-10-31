@@ -39,7 +39,7 @@ Nginx 负责外部连接数量、请求头读取、正文读取、空闲连接�
 
 新写操作使用新标识。请求关联不等于幂等保证，新工牌不建立完成记录。短信和未迁移的原操作重试使用原标识与原输入，由所属合同负责证明、结果及保留期限。普通 GET 只校验格式，不因此建立完成记录。查询原操作时，请求头标识本次读取，路径或查询参数中的标识定位原办理，两者分别校验。已合法清理的原结果不能凭旧标识重新执行。
 
-下列后端入口按各自证明和媒体类型豁免 `Operation-Id`：签名头像 `GET /api/v1/avatars/{digest}.webp` 及其 HEAD；`GET /openapi/v1.json` 及其 HEAD；微信 `GET /api/v1/authorizations/callback`；新工牌的会话鉴权资源 GET/HEAD（照片、模板资源及成品 PDF，随真实入口显式登记）；网站公开内容的匿名图片 `GET /api/v1/public/images/{id}.webp` 与签名管理图片 `GET /api/v1/images/{id}.webp` 及其 HEAD，规则见[内容图片](../content/images.md#读取)。头像豁免精确限定单段 `.webp` 路径的 GET/HEAD，不按目录前缀放开其他方法或路径。豁免入口即使收到非法头也忽略它，不从 query、cookie 或数据库另造 HTTP 请求标识。浏览器原生图片读取和供应商回调不要求额外携带该头。业务 JSON 的公开客户端设置读取不因此豁免。新增豁免及适用方法由对应入口明确声明，不能按 HTTP GET、匿名访问或技术用途一概推导。
+下列后端入口按各自证明和媒体类型豁免 `Operation-Id`：签名头像 `GET /api/v1/avatars/{digest}.webp` 及其 HEAD；`GET /openapi/v1.json` 及其 HEAD；微信 `GET /api/v1/authorizations/callback`；新工牌的会话鉴权资源 GET/HEAD（照片、模板资源及成品图片，随真实入口显式登记）；网站公开内容的匿名图片 `GET /api/v1/public/images/{id}.webp` 与签名管理图片 `GET /api/v1/images/{id}.webp` 及其 HEAD，规则见[内容图片](../content/images.md#读取)。头像豁免精确限定单段 `.webp` 路径的 GET/HEAD，不按目录前缀放开其他方法或路径。豁免入口即使收到非法头也忽略它，不从 query、cookie 或数据库另造 HTTP 请求标识。浏览器原生图片读取和供应商回调不要求额外携带该头。业务 JSON 的公开客户端设置读取不因此豁免。新增豁免及适用方法由对应入口明确声明，不能按 HTTP GET、匿名访问或技术用途一概推导。
 
 网站页面、静态资源和微信授权完成页由独立网站托管交付，不进入 nucleus Router。它们不校验或回显 `Operation-Id`。托管归属、部署路由及后端公开设置接口见[网站交付与后端边界](site.md)。
 
