@@ -116,10 +116,10 @@ export async function ownMobileChange(
     (response) =>
       new URL(response.url()).pathname === "/api/v1/accounts/current/codes",
   );
-  await page.getByRole("button", { name: "获取当前手机号验证码" }).click();
+  await page.getByRole("button", { name: "获取验证码" }).click();
   expect((await limitedResponse).status()).toBe(429);
   await expect(
-    page.getByRole("heading", { name: "请稍后重试发送" }),
+    page.getByRole("heading", { name: "请稍后重试" }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "完成安全验证（测试替身）" }),
@@ -131,7 +131,7 @@ export async function ownMobileChange(
       new URL(response.url()).pathname === "/api/v1/accounts/current/codes",
   );
   await page
-    .getByRole("button", { name: "重试发送验证码", exact: true })
+    .getByRole("button", { name: "重试获取当前手机号验证码", exact: true })
     .click();
   const currentCode = await currentCodeResponse;
   expect(currentCode.status()).toBe(200);
@@ -224,7 +224,7 @@ export async function ownMobileChange(
     .getByRole("button", { name: "确认更换手机号", exact: true })
     .click();
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认更换结果", exact: true }),
+    page.getByRole("heading", { name: "更换结果尚不确定", exact: true }),
   ).toBeVisible();
   expect(writes).toHaveLength(5);
   expect(new Set(writes.map((write) => write.operation)).size).toBe(4);
@@ -242,9 +242,9 @@ export async function ownMobileChange(
     expect(response.headers()["set-cookie"]).toBeUndefined();
   }
   await screenshot(page, "mobile-real-unknown");
-  await page.getByRole("button", { name: "查询更换结果", exact: true }).click();
+  await page.getByRole("button", { name: "查看更换结果", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "请先登录", exact: true }),
+    page.getByRole("heading", { name: "请重新登录", exact: true }),
   ).toBeVisible();
   await page
     .locator('a[href="/authentication/codes?return=mobile-change"]')
@@ -274,7 +274,7 @@ export async function ownMobileChange(
   assertDocumentPolicy((await returnedDocument).headers(), true);
   await expect(page).toHaveURL(/\/account\/mobile\?return=mobile-change$/);
   await expect(
-    page.getByRole("heading", { name: "现在可以查询原办理", exact: true }),
+    page.getByRole("heading", { name: "查看更换结果", exact: true }),
   ).toBeVisible();
   const laterCookies = await cookieDigests(page);
   let reads = 0;
@@ -303,9 +303,9 @@ export async function ownMobileChange(
     await observe("query-after");
     await route.fulfill({ response });
   });
-  await page.getByRole("button", { name: "查询更换结果", exact: true }).click();
+  await page.getByRole("button", { name: "查看更换结果", exact: true }).click();
   await expect(
-    page.getByRole("heading", { name: "手机号已更换", exact: true }),
+    page.getByRole("heading", { name: "此前的手机号更换已完成", exact: true }),
   ).toBeVisible();
   expect(reads).toBe(1);
   expect(writes).toHaveLength(5);
