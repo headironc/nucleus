@@ -14,15 +14,16 @@ test.each(["login", "registration"])("the exported native package handles %s wit
     Page(value: unknown) { definition = value; },
     setTimeout() { return 1; }, clearTimeout() {},
     Date: class extends Date { static now() { return epoch; } },
-    ArrayBuffer, Uint8Array,
   };
+  expect(new ArrayBuffer(32) instanceof runInNewContext("ArrayBuffer", context)).toBe(false);
   runInNewContext(await readFile(packageFile("app.js"), "utf8"), context);
   application.onLaunch();
   expect(application.identity).toBeDefined();
   runInNewContext(await readFile(packageFile("pages/account/index.js"), "utf8"), context);
   const page = { ...definition, data: { ...definition.data }, setData(value: unknown) { Object.assign(this.data, value); } };
   page.onShow();
-  let work = application.identity.authorize("phone-event-code"); await platform.next(0);
+  let work = application.identity.authorize("phone-event-code");
+  await Promise.race([platform.next(0), work.then(() => { throw new Error("Native authorization ended before its first HTTP request"); })]);
   let index = 0;
   if (flow === "registration") {
     platform.reply(0, { code: "ok", registration: proof() }); await work;
@@ -40,6 +41,32 @@ test.each(["login", "registration"])("the exported native package handles %s wit
   expect(page.data.name).toBe("");
   expect(page.data.inputIdNumber).toBe("");
   application.onHide();
+});
+
+test.each([
+  ["spoofed ArrayBuffer tag", (length: number) => ({ [Symbol.toStringTag]: "ArrayBuffer", byteLength: length, length })],
+  ["matching byteLength object", (length: number) => ({ byteLength: length })],
+  ["wrong buffer length", (length: number) => new ArrayBuffer(length - 1)],
+  ["invalid UUID bytes after a valid secret", (length: number) => length === 32 ? new ArrayBuffer(32) : { byteLength: length }],
+] as const)("the actual native package rejects %s before persistence or HTTP", async (_name, value) => {
+  const platform = new FakePlatform();
+  platform.getRandomValues = ({ length, success }) => { queueMicrotask(() => success({ randomValues: value(length) as ArrayBuffer })); };
+  let application: any;
+  runInNewContext(await readFile(packageFile("app.js"), "utf8"), {
+    wx: platform, App(value: unknown) { application = value; },
+    setTimeout() { return 1; }, clearTimeout() {},
+    Date: class extends Date { static now() { return epoch; } },
+  });
+  application.onLaunch();
+  try {
+    await application.identity.show();
+    const writes = platform.writes;
+    await application.identity.authorize("explicit-invalid-random-phone-event");
+    expect(platform.requests).toHaveLength(0);
+    expect(platform.writes).toBe(writes);
+    expect(application.identity.snapshot()).toMatchObject({ phase: "unavailable", name: "", canLogin: false,
+      message: "本次尚未提交，请重新检查。" });
+  } finally { application.onHide(); }
 });
 
 test("the native build records the one actual shared OpenAPI snapshot", async () => {

@@ -43,6 +43,8 @@ ORBIT_BUILD_OUTPUT=build-review bun test tests
 
 安全随机数使用 [wx.getRandomValues](https://developers.weixin.qq.com/miniprogram/dev/api/device/crypto/wx.getRandomValues.html)，其最低基础库为 2.15.0。手机号只读取用户主动触发的 [getPhoneNumber](https://developers.weixin.qq.com/miniprogram/dev/framework/open-ability/getPhoneNumber.html) 事件 `detail.code`，不调用 `wx.login`。所选平台必须支持手机号 code 模式。随机能力缺失或失败时停止办理，不能退回伪随机数。AppSecret、供应商身份与可信来源归服务端；客户端不发送 AppID 来改变来源。
 
+随机回调通过 `ArrayBuffer` 原生内部类型与请求字节数校验，兼容原生跨 realm 返回值，不用 `instanceof` 或字符串标签替代类型检查。校验后复制实际字节，拒绝普通对象、伪标签、视图及不符长度；无效回调不会触发登录的持久化或 HTTP 请求。
+
 微信平台及真实业务链路验收还需要准确 API 与头像合法域名、开发者登录及手机号授权资格。消费真实导出、项目 JSON 可解析、包内代码可执行及静态截图均不能证明这些前提。构建命令不登录微信、不上传或发布。
 
 ## 页面与本地资料
