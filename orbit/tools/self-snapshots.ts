@@ -80,7 +80,7 @@ function recoveryActions(view: View, accountPage: boolean) {
   if (accountPage && view.phase === "complete" && view.canLogin && !view.homeAction) values.push(controls.find(value => value[2] === "使用手机号登录")![0]);
   if (!values.length) return "";
   return `<view class="self-actions">${clean(flags(values.join(""), view))
-    .replaceAll("{{phase === 'complete' && !homeAction ? 'primary' : 'secondary'}}", view.phase === "complete" && !view.homeAction ? "primary" : "secondary")
+    .replaceAll("{{!canRecover && !homeAction ? 'primary' : 'secondary'}}", !view.canRecover && !view.homeAction ? "primary" : "secondary")
     .replaceAll("{{phase === 'complete' && !homeAction ? '返回个人账户' : phase === 'unavailable' ? '重新检查' : '检查登录状态'}}", view.phase === "complete" && !view.homeAction ? "返回个人账户" : view.phase === "unavailable" ? "重新检查" : "检查登录状态")
     .replaceAll("{{recoveryLabel}}", selfPresentation(view, accountPage ? "account" : "sessions").recoveryLabel)
     .replaceAll("{{phase === 'sessions' ? '刷新列表' : phase === 'unavailable' ? '重新检查' : '检查登录状态'}}", view.phase === "sessions" ? "刷新列表" : view.phase === "unavailable" ? "重新检查" : "检查登录状态")}</view>`;
@@ -183,7 +183,9 @@ async function exitStates(scope: "current" | "all") {
     variants.push({ name: "current-complete", view: fresh.controller.snapshot(), ...location });
   }
   let index = current.platform.requests.length;
-  const pending = current.controller.logout(scope); await current.platform.next(index); current.platform.disconnect(index); await pending;
+  const pending = current.controller.logout(scope); await current.platform.next(index);
+  if (scope === "current") variants.push({ name: "current-processing", view: current.controller.snapshot(), ...location });
+  current.platform.disconnect(index); await pending;
   variants.push({ name: `${scope}-unknown`, view: current.controller.snapshot(), ...location });
   const original = current.platform.records().logouts![0];
   index = current.platform.requests.length;
@@ -203,6 +205,7 @@ async function exitStates(scope: "current" | "all") {
 }
 await mkdir(output, { recursive: true });
 let browser: Awaited<ReturnType<typeof chromium.launch>> | undefined;
+const styles: unknown[] = [];
 try {
   await entryStates(); await show(rows, true); variants.push({ name: "list", view: h.controller.snapshot() });
   variants.push({ name: "selected-confirm", view: h.controller.snapshot(), modal: { title: "退出所选登录？", content: `网站，登录于 ${date(rows[1].createdAt)}。退出后，该处需重新登录。`, confirm: "退出登录" } });
@@ -252,10 +255,17 @@ try {
       await writeFile(join(output, `${variant.name}-${width}.html`), html); await page.setContent(html);
       await page.evaluate(async () => { await Promise.all([...document.images].map(image => image.decode())); });
       if (await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)) throw new Error(`Static horizontal overflow: ${variant.name}`);
+      styles.push({ state: variant.name, width, phase: view.phase, busy: view.busy, controls: await page.evaluate(() =>
+        [...document.querySelectorAll("button, navigator")].map(element => {
+          const style = getComputedStyle(element);
+          return { text: element.textContent?.trim(), classes: element.className, disabled: element.hasAttribute("disabled"),
+            color: style.color, background: style.backgroundColor, opacity: style.opacity };
+        })) });
       await page.screenshot({ path: join(output, `${variant.name}-${width}.png`), fullPage: true });
     }
     await page.close();
   }
+  await writeFile(join(output, "style-readback.json"), JSON.stringify(styles, null, 2));
 } finally {
   for (const controller of controllers.splice(0)) controller.suspend();
   await browser?.close();

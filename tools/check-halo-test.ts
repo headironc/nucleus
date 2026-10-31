@@ -6,10 +6,17 @@ import { fileURLToPath } from "node:url";
 import {
   createRun,
   readJsonl,
+  summarizeReporter,
+  verifyReporter,
   writeJsonAtomic,
   type EvidenceRecord,
   type EvidenceRun,
 } from "../halo/tools/evidence";
+import {
+  browserScope,
+  verifyBrowserScope,
+  type BrowserScope,
+} from "../halo/tools/browser-scope.ts";
 import { groupAlive } from "../halo/tools/process";
 import { OutputCapture } from "./check-halo-output";
 
@@ -296,7 +303,7 @@ async function settleOwned(
   return { gone: settled, unknown: !settled, escalated, observations };
 }
 
-function evidenceFailure(run: EvidenceRun): {
+function evidenceFailure(run: EvidenceRun, scope: BrowserScope): {
   reason: string | null;
   runner: Record<string, unknown>;
   backend: Record<string, unknown>;
@@ -340,6 +347,20 @@ function evidenceFailure(run: EvidenceRun): {
     reason = "backend drain did not complete";
   else if (!acceptance || acceptance.outcome !== "completed")
     reason = "backend acceptance did not complete";
+  if (!reason && scope === "badge-cancellation") {
+    const start = last(runnerRead.records, "run_start");
+    if (start?.scope !== scope) reason = "browser runner did not execute the requested cancellation scope";
+    else {
+      const read = readJsonl(join(run.dir, "reporter.jsonl"), run.runId);
+      const report = summarizeReporter(read.records, run.runId, read);
+      const exit = runEnd?.exit as Partial<Observation> | undefined;
+      const verification = verifyReporter(report, {
+        childExitCleanly: exit?.observed === true && exit.code === 0 && exit.signal === null,
+      });
+      const reasons = verification.reasons.concat(verifyBrowserScope(scope, report));
+      if (reasons.length) reason = reasons.join("; ");
+    }
+  }
   return { reason, ...facts };
 }
 
@@ -347,6 +368,7 @@ async function check(): Promise<number> {
   const [mode, ...extra] = process.argv.slice(2);
   if (extra.length || (mode !== "snapshot" && mode !== "browser")) usage();
   const typedMode = mode as "snapshot" | "browser";
+  const scope = browserScope(typedMode === "browser" ? process.env.HALO_TEST_SCOPE : undefined);
   const name =
     typedMode === "snapshot"
       ? "protocol::http_validates_requests_before_business_work_and_describes_actual_routes"
@@ -397,6 +419,7 @@ async function check(): Promise<number> {
           HALO_TEST_EVIDENCE: run.root,
           HALO_TEST_RUN_ID: run.runId,
           HALO_TEST_EVIDENCE_DIR: run.dir,
+          HALO_TEST_SCOPE: scope,
         }
       : process.env;
     const startedAt = new Date().toISOString();
@@ -474,7 +497,7 @@ async function check(): Promise<number> {
         message: "cargo output streams did not close",
       };
 
-    const evidence = run ? evidenceFailure(run) : null;
+    const evidence = run ? evidenceFailure(run, scope) : null;
     if (!failure && evidence?.reason)
       failure = { kind: "evidence", message: evidence.reason };
     if (!failure && settlement.unknown)
@@ -493,6 +516,7 @@ async function check(): Promise<number> {
       version: 1,
       runId: run?.runId ?? null,
       mode: typedMode,
+      scope: typedMode === "browser" ? scope : null,
       selection: { test: name, arguments: args },
       startedAt,
       finishedAt,

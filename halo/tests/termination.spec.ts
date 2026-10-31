@@ -258,7 +258,15 @@ test("entry, confirmation focus, empty-body binding, current read and persistenc
   ).toBeVisible();
   await expect(page.getByText("结束后会发生什么")).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "只结束本人的员工服务" }),
+    page
+      .getByRole("list")
+      .getByText("结束后，将无法申请工号或继续办理工牌。", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("list").getByText("个人账户和已有工号保留。", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "已有申请按当时状态办理" }),
   ).toBeVisible();
   for (const colorScheme of ["light", "dark"] as const) {
     await page.emulateMedia({ colorScheme });
@@ -306,7 +314,7 @@ test("entry, confirmation focus, empty-body binding, current read and persistenc
     page.getByRole("heading", { name: "当前员工服务已结束" }),
   ).toBeVisible();
   expect(await page.evaluate(() => document.body.innerText)).not.toContain(
-    "暂时无法确认",
+    "结束结果尚不确定",
   );
   expect(calls).toHaveLength(1);
   expect(calls[0]).toMatchObject({ grant: grantA, session: sessionA });
@@ -357,7 +365,7 @@ test("entry, confirmation focus, empty-body binding, current read and persistenc
 for (const failure of ["throw", "silent"] as const) {
   test(`a pre-send ${failure} save sends no request and survives reload`, async ({
     page,
-  }) => {
+  }, info) => {
     await openEntry(page);
     await page.evaluate((failure) => {
       const set = Storage.prototype.setItem;
@@ -379,6 +387,12 @@ for (const failure of ["throw", "silent"] as const) {
     ).toBeFocused();
     expect(calls).toEqual([]);
     expect(await material(page)).toBeNull();
+    await page.setViewportSize({ width: 320, height: 1000 });
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.screenshot({
+      path: info.outputPath("unsubmitted-320-dark.png"),
+      fullPage: true,
+    });
     await page.reload();
     await expect(
       page.getByRole("heading", { name: "结束员工服务", exact: true }),
@@ -401,7 +415,7 @@ test("a first 429 is definitely not accepted and returns to confirmation after t
   await confirm(page);
   await expect(
     page.getByRole("heading", {
-      name: "本次申请尚未受理",
+      name: "本次结束申请未完成",
       exact: true,
     }),
   ).toBeFocused();
@@ -437,7 +451,7 @@ test("a first 429 is definitely not accepted and returns to confirmation after t
 
 test("an unknown original replays explicitly with the same operation, target and empty body", async ({
   page,
-}) => {
+}, info) => {
   let count = 0;
   terminate = async (route) => {
     count++;
@@ -454,20 +468,35 @@ test("an unknown original replays explicitly with the same operation, target and
   await confirm(page);
   await expect(
     page.getByRole("heading", {
-      name: "暂时无法确认是否已结束",
+      name: "结束结果尚不确定",
       exact: true,
     }),
   ).toBeFocused();
   await expect(
-    page.getByRole("button", { name: /秒后可继续核对/ }),
+    page.getByRole("button", { name: /秒后可查看结束结果/ }),
   ).toBeDisabled();
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({
+    path: info.outputPath("unknown-320-dark.png"),
+    fullPage: true,
+  });
+  await page.getByRole("link", { name: "打开个人账户", exact: true }).click();
+  await expect(page.getByRole("dialog", { name: "结束结果仍未确认" })).toBeVisible();
+  await page.screenshot({
+    path: info.outputPath("leave-unknown-320-dark.png"),
+    fullPage: true,
+  });
+  await page.getByRole("button", { name: "留在此页", exact: true }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(calls).toHaveLength(1);
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认是否已结束" }),
+    page.getByRole("heading", { name: "结束结果尚不确定" }),
   ).toBeVisible();
   expect(calls).toHaveLength(1);
   await page.waitForTimeout(5_100);
-  await page.getByRole("button", { name: "继续核对", exact: true }).click();
+  await page.getByRole("button", { name: "查看结束结果", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "此前的员工服务已结束" }),
   ).toBeVisible();
@@ -496,25 +525,25 @@ test("request_mismatch blocks further submission across reloads", async ({
   await openEntry(page);
   await confirm(page);
   await page.waitForTimeout(5_100);
-  await page.getByRole("button", { name: "继续核对", exact: true }).click();
+  await page.getByRole("button", { name: "查看结束结果", exact: true }).click();
   await expect(
     page.getByRole("heading", {
-      name: "暂时无法查看本次办理结果",
+      name: "结束结果尚不确定",
       exact: true,
     }),
   ).toBeFocused();
-  await expect(page.locator("main")).toContainText("核对信息与此前不一致");
+  await expect(page.locator("main")).toContainText("原结束结果仍无法确认");
   expect(await material(page)).toMatchObject({
     active: { outcome: "pending", notice: "mismatch" },
   });
   expect(calls).toHaveLength(2);
   await page.reload();
   await expect(
-    page.getByRole("heading", { name: "暂时无法查看本次办理结果" }),
+    page.getByRole("heading", { name: "结束结果尚不确定" }),
   ).toBeVisible();
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(
-    page.getByRole("heading", { name: "暂时无法查看本次办理结果" }),
+    page.getByRole("heading", { name: "结束结果尚不确定" }),
   ).toBeVisible();
   expect(calls).toHaveLength(2);
 });
@@ -526,7 +555,7 @@ test("an expired original login keeps the unknown and offers the fixed return", 
   await openEntry(page);
   await confirm(page);
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认是否已结束" }),
+    page.getByRole("heading", { name: "结束结果尚不确定" }),
   ).toBeVisible();
   delete sessions[sessionA];
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
@@ -545,12 +574,12 @@ test("an expired original login keeps the unknown and offers the fixed return", 
 test("a same-account new session replays; another account conceals the original", async ({
   page,
   context,
-}) => {
+}, info) => {
   terminate = async (route) => route.abort("connectionclosed");
   await openEntry(page);
   await confirm(page);
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认是否已结束" }),
+    page.getByRole("heading", { name: "结束结果尚不确定" }),
   ).toBeVisible();
   const tab = await context.newPage();
   await tab.route(origin + "/**", async (route) => {
@@ -569,7 +598,7 @@ test("a same-account new session replays; another account conceals the original"
   await page.bringToFront();
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await page.waitForTimeout(5_100);
-  await page.getByRole("button", { name: "继续核对", exact: true }).click();
+  await page.getByRole("button", { name: "查看结束结果", exact: true }).click();
   await expect
     .poll(() => calls.length)
     .toBe(2);
@@ -580,7 +609,7 @@ test("a same-account new session replays; another account conceals the original"
     body: null,
   });
   await expect(
-    page.getByRole("heading", { name: "暂时无法查看本次办理结果" }),
+    page.getByRole("heading", { name: "结束结果尚不确定" }),
   ).toBeVisible();
   expect(await material(page)).toMatchObject({
     active: {
@@ -595,10 +624,16 @@ test("a same-account new session replays; another account conceals the original"
   await page.bringToFront();
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(
-    page.getByRole("heading", { name: "当前账户已更新", exact: true }),
+    page.getByRole("heading", { name: "当前账户已变化", exact: true }),
   ).toBeVisible();
   await expect(page.locator("main")).not.toContainText(accountA.name);
   expect(calls).toHaveLength(2);
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.screenshot({
+    path: info.outputPath("changed-account-320-light.png"),
+    fullPage: true,
+  });
   await tab.close();
 });
 
@@ -640,7 +675,7 @@ test("lifecycle hiding rejects a late completion and revives the unknown origina
   await finished;
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认是否已结束" }),
+    page.getByRole("heading", { name: "结束结果尚不确定" }),
   ).toBeVisible();
   expect(await material(page)).toMatchObject({
     known: [],
@@ -648,15 +683,15 @@ test("lifecycle hiding rejects a late completion and revives the unknown origina
   });
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(
-    page.getByRole("heading", { name: "暂时无法确认是否已结束" }),
+    page.getByRole("heading", { name: "结束结果尚不确定" }),
   ).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "当前员工服务已结束" }),
   ).toBeVisible();
   expect(calls).toHaveLength(1);
   const original = calls[0];
-  await expect(page.getByRole("button", { name: "继续核对", exact: true })).toBeEnabled();
-  await page.getByRole("button", { name: "继续核对", exact: true }).click();
+  await expect(page.getByRole("button", { name: "查看结束结果", exact: true })).toBeEnabled();
+  await page.getByRole("button", { name: "查看结束结果", exact: true }).click();
   await expect(
     page.getByRole("heading", { name: "此前的员工服务已结束" }),
   ).toBeVisible();
@@ -666,7 +701,7 @@ test("lifecycle hiding rejects a late completion and revives the unknown origina
 
 test("a terminal save failure keeps the seen success and never fabricates a saved one", async ({
   page,
-}) => {
+}, info) => {
   await openEntry(page);
   await page.evaluate(() => {
     const set = Storage.prototype.setItem;
@@ -684,7 +719,7 @@ test("a terminal save failure keeps the seen success and never fabricates a save
   await expect(
     page.getByRole("heading", { name: "此前的员工服务已结束" }),
   ).toBeVisible();
-  await expect(page.getByText("本次结果未能保存在本页")).toBeVisible();
+  await expect(page.getByText("本页未能保存结束结果")).toBeVisible();
   await expect(
     page.getByRole("heading", { name: "当前员工服务已结束" }),
   ).toBeVisible();
@@ -696,8 +731,14 @@ test("a terminal save failure keeps the seen success and never fabricates a save
   await expect(
     page.getByRole("heading", { name: "此前的员工服务已结束" }),
   ).toBeVisible();
-  await expect(page.getByText("本次结果未能保存在本页")).toBeVisible();
+  await expect(page.getByText("本页未能保存结束结果")).toBeVisible();
   expect(calls).toHaveLength(1);
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({
+    path: info.outputPath("complete-unsaved-320-dark.png"),
+    fullPage: true,
+  });
 });
 
 test("a corrupt record shows no result and offers only the current service", async ({
@@ -709,11 +750,11 @@ test("a corrupt record shows no result and offers only the current service", asy
   await page.goto(origin + "/workforce/termination");
   await expect(
     page.getByRole("heading", {
-      name: "暂时无法查看本次办理结果",
+      name: "结束结果尚不确定",
       exact: true,
     }),
   ).toBeVisible();
-  await expect(page.locator("main")).toContainText("这不表示结束申请失败");
+  await expect(page.locator("main")).toContainText("本页无法查看原结束结果");
   await expect(
     page.getByRole("link", { name: "查看当前员工服务" }),
   ).toBeVisible();
@@ -722,7 +763,7 @@ test("a corrupt record shows no result and offers only the current service", asy
 
 test("a rejoined Grant is read independently and only an explicit new confirmation ends it", async ({
   page,
-}) => {
+}, info) => {
   await openEntry(page);
   await confirm(page);
   await expect(
@@ -737,6 +778,12 @@ test("a rejoined Grant is read independently and only an explicit new confirmati
     page.getByRole("button", { name: "结束当前员工服务", exact: true }),
   ).toBeVisible();
   expect(calls).toHaveLength(1);
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({
+    path: info.outputPath("complete-rejoined-320-dark.png"),
+    fullPage: true,
+  });
   await page
     .getByRole("button", { name: "结束当前员工服务", exact: true })
     .click();
@@ -765,17 +812,17 @@ for (const path of ["/api/v1/accounts/current", "/api/v1/workforce/current/grant
     terminate = async (route) => route.abort("connectionclosed");
     await openEntry(page);
     await confirm(page);
-    await expect(page.getByRole("heading", { name: "暂时无法确认是否已结束" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "结束结果尚不确定" })).toBeVisible();
     const untrusted = async (route: Route) => route.fulfill({ json: { code: "ok" } });
     await page.route(origin + path, untrusted);
     await page.evaluate(() => window.dispatchEvent(new Event("focus")));
-    const reload = page.getByRole("button", { name: "重新加载页面", exact: true });
+    const reload = page.getByRole("button", { name: "重新加载", exact: true });
     await expect(reload).toBeVisible();
     expect(calls).toHaveLength(1);
     await page.unroute(origin + path, untrusted);
     page.on("dialog", (dialog) => dialog.accept());
     await reload.click();
-    await expect(page.getByRole("heading", { name: "暂时无法确认是否已结束" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "结束结果尚不确定" })).toBeVisible();
     expect(calls).toHaveLength(1);
     expect(await material(page)).toMatchObject({ active: { operation: calls[0].operation, sent: true } });
   });
@@ -835,7 +882,7 @@ test("a definite conflict offers confirmation for a later Grant without submitti
   terminate = async (route) => route.fulfill({ status: 409, json: { code: "state_conflict" } });
   await openEntry(page);
   await confirm(page);
-  await expect(page.getByRole("heading", { name: "本次申请未完成" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "本次结束申请未完成" })).toBeVisible();
   await expect(page.getByRole("button", { name: "返回确认页面", exact: true })).toHaveCount(0);
   const rejected = await material(page);
   service = { status: "suspended", grant: grantB };
@@ -854,19 +901,119 @@ test("a definite conflict offers confirmation for a later Grant without submitti
   expect(calls[1].operation).not.toBe(calls[0].operation);
 });
 
+test("a completed original survives a failed current read and refreshes without another write", async ({
+  page,
+}, info) => {
+  await page.clock.install();
+  await openEntry(page);
+  await confirm(page);
+  await expect(
+    page.getByRole("heading", { name: "此前的员工服务已结束" }),
+  ).toBeVisible();
+  const unavailable = async (route: Route) =>
+    route.fulfill({ status: 503, json: { code: "dependency_unavailable" } });
+  await page.route(origin + "/api/v1/workforce/current/grant", unavailable);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(
+    page.getByText("当前状态暂时无法加载，请重试。", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "此前的员工服务已结束" }),
+  ).toBeVisible();
+  await expect(page.getByText("结束时间：", { exact: false })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "结束当前员工服务", exact: true }),
+  ).toHaveCount(0);
+  const current = page
+    .locator(".termination-panel")
+    .getByRole("button", { name: /秒后可刷新状态/ });
+  await expect(current).toBeDisabled();
+  expect(calls).toHaveLength(1);
+  for (const colorScheme of ["light", "dark"] as const) {
+    await page.emulateMedia({ colorScheme });
+    await page.setViewportSize({
+      width: colorScheme === "light" ? 1440 : 320,
+      height: 1000,
+    });
+    await page.screenshot({
+      path: info.outputPath(`complete-current-unavailable-${colorScheme}.png`),
+      fullPage: true,
+    });
+  }
+  await page.unroute(origin + "/api/v1/workforce/current/grant", unavailable);
+  await page.clock.fastForward(5_100);
+  await page
+    .locator(".termination-panel")
+    .getByRole("button", { name: "刷新当前状态", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "当前员工服务已结束" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "此前的员工服务已结束" }),
+  ).toBeVisible();
+  expect(calls).toHaveLength(1);
+});
+
+test("a denied original remains unknown without offering another result check or termination", async ({
+  page,
+}, info) => {
+  terminate = async (route) =>
+    route.fulfill({ status: 403, json: { code: "permission_denied" } });
+  await openEntry(page);
+  await confirm(page);
+  await expect(
+    page.getByRole("heading", { name: "目前无法查看员工服务" }),
+  ).toBeVisible();
+  await expect(page.locator("main")).not.toContainText(accountA.name);
+  const original = calls[0];
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "结束结果尚不确定" }),
+  ).toBeVisible();
+  await expect(page.locator("main")).toContainText(
+    "目前无法查看结果。可先返回个人账户",
+  );
+  await expect(
+    page.getByRole("button", { name: "查看结束结果", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "结束员工服务", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "返回确认页面", exact: true }),
+  ).toHaveCount(0);
+  await page.setViewportSize({ width: 320, height: 1000 });
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.screenshot({
+    path: info.outputPath("denied-unknown-320-dark.png"),
+    fullPage: true,
+  });
+  expect(await material(page)).toMatchObject({
+    active: {
+      operation: original.operation,
+      grant: grantA,
+      sent: true,
+      outcome: "pending",
+      notice: "denied",
+    },
+  });
+  expect(calls).toEqual([original]);
+});
+
 test("lost pending material stays unknown through explicit recovery and reload", async ({ page }) => {
   await page.clock.install();
   terminate = async (route) => route.abort("connectionclosed");
   await openEntry(page);
   await confirm(page);
-  await expect(page.getByRole("heading", { name: "暂时无法确认是否已结束" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "结束结果尚不确定" })).toBeVisible();
   await page.evaluate(() => sessionStorage.removeItem("halo.workforce-termination"));
   await page.clock.fastForward(5_100);
-  await page.getByRole("button", { name: "继续核对", exact: true }).click();
-  await expect(page.getByRole("heading", { name: "暂时无法查看本次办理结果" })).toBeVisible();
+  await page.getByRole("button", { name: "查看结束结果", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "结束结果尚不确定" })).toBeVisible();
   await expect(page.getByRole("button", { name: "结束员工服务", exact: true })).toHaveCount(0);
   expect(await material(page)).toBe("missing");
   await page.reload();
-  await expect(page.getByRole("heading", { name: "暂时无法查看本次办理结果" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "结束结果尚不确定" })).toBeVisible();
   expect(calls).toHaveLength(1);
 });

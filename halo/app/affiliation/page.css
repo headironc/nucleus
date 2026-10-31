@@ -125,13 +125,6 @@
   box-shadow: 0 1px 0 var(--shadow);
 }
 
-.panel-kicker {
-  color: var(--sub);
-  font-size: 12px;
-  font-weight: 500;
-  letter-spacing: 0.12em;
-}
-
 .state-title {
   margin-top: 12px;
   font: 400 clamp(28px, 3.2vw, 38px) / 1.35 var(--song);
@@ -276,39 +269,12 @@
   color: var(--sub);
 }
 
-.record-heading {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 20px;
-}
-
-.read-only-label {
-  flex: 0 0 auto;
-  padding: 3px 9px;
-  border: 1px solid var(--line);
-  color: var(--sub);
-  font-size: 11px;
-  letter-spacing: 0.08em;
-}
-
 .record-display {
   display: flex;
   align-items: baseline;
   flex-wrap: wrap;
   gap: 12px 16px;
   margin-top: 28px;
-}
-
-.record-code {
-  flex: 0 0 auto;
-  padding: 3px 8px;
-  border: 1px solid var(--line);
-  color: var(--sub);
-  background: var(--muted);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.08em;
 }
 
 .record-name {
@@ -363,12 +329,6 @@
   font-size: 15px;
   font-weight: 500;
   line-height: 1.6;
-}
-
-.option-hint {
-  margin-top: 4px;
-  color: var(--sub);
-  font-size: 12px;
 }
 
 .affiliation-options {
@@ -433,31 +393,9 @@
   line-height: 1.55;
 }
 
-.option-code {
-  color: var(--sub);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.06em;
-}
-
 .option-name {
   color: var(--ink);
   font-size: 14px;
-  overflow-wrap: anywhere;
-}
-
-.selection-status {
-  min-height: 27px;
-  margin-top: 20px;
-  padding-top: 14px;
-  border-top: 1px solid var(--line);
-  color: var(--sub);
-  font-size: 13px;
-}
-
-.selection-status strong {
-  color: var(--ink);
-  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
@@ -554,10 +492,6 @@
   border-top: 3px solid var(--warn-rule);
 }
 
-.unknown-panel .panel-kicker {
-  color: var(--warn);
-}
-
 .success-panel {
   border-top: 3px solid var(--ok-rule);
 }
@@ -580,10 +514,6 @@
   stroke-width: 1.8;
 }
 
-.success-kicker {
-  color: var(--ok);
-}
-
 .current-panel {
   margin-top: 18px;
 }
@@ -602,30 +532,6 @@
 
 .submitting-panel .reading-symbol {
   margin-bottom: 26px;
-}
-
-.affiliation-aside {
-  padding-top: 20px;
-  border-top: 2px solid var(--ink);
-}
-
-.aside-rule {
-  width: 32px;
-  height: 2px;
-  margin-bottom: 16px;
-  background: var(--accent-fill);
-}
-
-.affiliation-aside h2 {
-  font: 400 21px / 1.5 var(--song);
-  letter-spacing: 0.02em;
-}
-
-.affiliation-aside p {
-  margin-top: 14px;
-  color: var(--sub);
-  font-size: 13px;
-  line-height: 1.9;
 }
 
 .affiliation-footer {
@@ -648,6 +554,7 @@
   position: fixed;
   inset: 0;
   width: min(460px, calc(100% - 32px));
+  height: fit-content;
   max-height: calc(100% - 40px);
   margin: auto;
   padding: 26px 30px 30px;
@@ -735,14 +642,6 @@
     gap: 34px;
   }
 
-  .affiliation-aside {
-    max-width: 680px;
-    padding-top: 18px;
-  }
-
-  .affiliation-aside h2 {
-    font-size: 20px;
-  }
 }
 
 @media (max-width: 760px) {

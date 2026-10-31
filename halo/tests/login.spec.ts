@@ -9,6 +9,8 @@ import { ownNumbers } from "./numbers";
 import { ownTermination } from "./termination";
 import { admissionAndFirstNumber } from "./admission-number";
 import { ownBadgeApplications } from "./badge-applications";
+import { reviewBadgeApplications } from "./badge-reviews";
+import { cancelBadgeApplications } from "./badge-cancellations";
 import { ownMobileChange } from "./mobile-change";
 import { cookieDigests, identityObservation, identityReads } from "./identity";
 import { affiliationObservation } from "./affiliation";
@@ -312,7 +314,7 @@ async function prepareBadgeDirectory(
   manager: Session,
   other: { account: Account; session: Session },
 ) {
-  await page.evaluate(async ({ manager, other }) => {
+  return page.evaluate(async ({ manager, other }) => {
     const request = async (
       session: string, path: string, input: unknown, method = "POST", status = 201,
     ) => {
@@ -365,6 +367,7 @@ async function prepareBadgeDirectory(
         departmentId: department.id, position: subtype !== 902,
       }, "PUT");
     }
+    return { role, department };
   }, { manager, other });
 }
 
@@ -1445,7 +1448,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     ])
       await expect(other.getByRole("radio", { name })).toBeVisible();
     await other.getByRole("radio", { name: "民革会员" }).check();
-    await other.getByRole("button", { name: "继续" }).click();
+    await other.getByRole("button", { name: "下一步", exact: true }).click();
     await expect(
       other.getByRole("heading", { name: "确认填写政治面貌" }),
     ).toBeVisible();
@@ -1462,7 +1465,7 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
     expect(JSON.parse(originalBody)).toEqual({ affiliation: "04" });
 
     await other
-      .getByRole("button", { name: "刷新", exact: true })
+      .getByRole("button", { name: "查看当前记录", exact: true })
       .click();
     await expect(
       other.getByRole("heading", { name: "当前政治面貌" }),
@@ -2190,8 +2193,16 @@ test("real SMS login, original recovery, cookie-backed identity and cross-tab co
       choose(page, session),
     );
     const other = await registerRealAccount(page, "13900000018", "Badge Observer", "000000200002298899");
-    await prepareBadgeDirectory(page, replacement, other);
-    await ownBadgeApplications(page, replacement, colleague, other, (session) => choose(page, session));
+    const fixture = await prepareBadgeDirectory(page, replacement, other);
+    const submitted = await ownBadgeApplications(page, replacement, colleague, other, (session) => choose(page, session));
+    const role = await reviewBadgeApplications(page, {
+      manager: replacement, owner: colleague, reviewer: other, fixture, submitted,
+      select: (session) => choose(page, session),
+    });
+    await cancelBadgeApplications(page, {
+      manager: replacement, owner: colleague, reviewer: other, role, submitted,
+      select: (session) => choose(page, session),
+    });
   });
   await ownWorkforce(page, replacement.id, secondSession!.id);
   const recoverTermination = await ownTermination(
@@ -2705,7 +2716,7 @@ async function ownCancellation(page: Page, context: BrowserContext, manager: str
     ).toBeVisible();
     await expect(target.getByText(name, { exact: true })).toBeVisible();
     await expect(
-      target.getByRole("heading", { name: "这不是退出登录", exact: true }),
+      target.getByRole("heading", { name: "注销后会发生什么", exact: true }),
     ).toBeVisible();
   };
   const confirmOpen = async (target: Page) => {
